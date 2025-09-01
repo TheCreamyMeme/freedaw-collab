@@ -1,4 +1,4 @@
-<!-- index.html -->
+<!-- index.html (updated) -->
 
 <!DOCTYPE html>
 <html lang="en">
@@ -8,11 +8,13 @@
     <title>Web App</title>
     <link rel="stylesheet" href="styles.css"> <!-- link to your stylesheet -->
 </head>
+
 <body>
     <header>
         <nav>
             <ul>
                 <li><a href="#">Home</a></li>
+                <li><a href=".#/track-listing">Track Listing</a></li> <!-- add link for track listing section -->
                 <li><a href="#">About</a></li>
                 <li><a href="#">Contact</a></li>
             </ul>
@@ -21,11 +23,12 @@
 
     <!-- main content -->
     <main>
-        <section id="hero">
-            <h1>Welcome to our web app</h1>
-            <p>This is a paragraph of text. Click the link below.</p>
-            <button><a href="#">Learn more</a></button>
+        <section id="track-listing">
+            <div class="tracker-container"></div> <!-- tracker container will render the timeline -->
+            <h2>Track Listing</h2>
+            <p>This is a paragraph of text about your track listing.</p>
         </section>
+
         <section id="features">
             <h2>Our Features</h2>
             <ul>
