@@ -1,5 +1,5 @@
 import React from 'react';
-import TrackCard from './track';
+import TrackCard from './track-card';
 
 const TrackList = ({ tracks, selectedTrack }) => {
   return (

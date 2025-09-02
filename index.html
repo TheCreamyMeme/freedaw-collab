@@ -1,53 +1,18 @@
-<!-- index.html (updated) -->
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Web App</title>
-    <link rel="stylesheet" href="styles.css"> <!-- link to your stylesheet -->
+    <link rel="icon" href="./favicon.png">
+    <title>Timeline UI</title>
+    <link rel="stylesheet" href="styles.css">
 </head>
-
 <body>
-    <header>
-        <nav>
-            <ul>
-                <li><a href="#">Home</a></li>
-                <li><a href=".#/track-listing">Track Listing</a></li> <!-- add link for track listing section -->
-                <li><a href="#">About</a></li>
-                <li><a href="#">Contact</a></li>
-            </ul>
-        </nav>
-    </header>
+    <div class="app-container">
+        <h1>Timeline UI</h1>
+        <div id="track-listing"></div>
+    </div>
 
-    <!-- main content -->
-    <main>
-        <section id="track-listing">
-            <div class="tracker-container"></div> <!-- tracker container will render the timeline -->
-            <h2>Track Listing</h2>
-            <p>This is a paragraph of text about your track listing.</p>
-        </section>
-
-        <section id="features">
-            <h2>Our Features</h2>
-            <ul>
-                <li>Feature 1:</li>
-                <li>Feature 2:</li>
-                <li>Feature 3:</li>
-            </ul>
-        </section>
-    </main>
-
-    <!-- footer -->
-    <footer>
-        &copy; 2023 Web App
-        <ul>
-            <li><a href="#" target="_blank">Social Media</a></li>
-            <li><a href="#" target="_blank">Terms of Service</a></li>
-        </ul>
-    </footer>
-
-    <script src="script.js"></script> <!-- link to your script -->
+    <script src="script.js"></script>
 </body>
 </html>
