@@ -1,22 +1,6 @@
-/* styles.css (updated) */
-
-#track-listing {
-    width: 500px; /* set minimum width */
+body {
+    font-family: Arial, sans-serif;
 }
-
-.tracker-container {
-    display: grid;
-    gap: 10px; /* add separator between tracks */
-    margin-top: 20px;
+canvas {
+    border: 1px solid black; /* Adds a simple border to the canvas for visualization */
 }
-
-.track-card {
-    background-color: #ccc; /* default card background color */
-    padding: 10px; /* extra padding for cards */
-}
-
-.track-name {
-    font-weight: bold; /* display track name in bold */
-}
-
-/* Add additional styles to match your desired appearance */
