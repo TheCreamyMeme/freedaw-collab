@@ -1,6 +1,63 @@
 body {
     font-family: Arial, sans-serif;
+    background-color: #f4f4f4;
+    margin: 0;
+    padding: 0;
 }
 canvas {
     border: 1px solid black; /* Adds a simple border to the canvas for visualization */
+}
+.auth-container {
+    background-color: #ffffff;
+    padding: 20px;
+    border-radius: 8px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    max-width: 400px;
+    margin: 50px auto;
+}
+.dropdown {
+  width: 200px;
+  padding: 10px;
+  border: 1px solid #ccc;
+  background-color: #f9f9f9;
+  border-radius: 4px;
+  box-shadow: inset 0 1px 2px rgba(0,0,0,0.1);
+}
+
+.dropdown option {
+    padding: 8px;
+    background-color: #fff;
+    color: #333;
+    border: none;
+}
+.auth-input {
+    width: 100%;
+    padding: 10px;
+    margin: 10px 0;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 16px;
+}
+.submit-button {
+    width: 100%;
+    padding: 12px;
+    background-color: #007bff;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    font-size: 16px;
+    cursor: pointer;
+}
+.submit-button:hover {
+    background-color: #0056b3;
+}
+.dropdown:hover .dropdown-content {
+    display: block;
+}
+.dropdown-content {
+    display: none;
+    position: absolute;
+    background-color: #f9f9f9;
+    min-width: 200px;
+    box-shadow: 0px 8px 16px 0px rgba(0,0,0,0.2);
 }
