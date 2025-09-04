@@ -1,28 +1,33 @@
 /* Modern UI Components Styling */
 body {
-  margin: 0;
-  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-  box-sizing: border-box;
+    margin: 0;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    box-sizing: border-box;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
 }
 
 /* Header Styles */
 header {
-  background-color: #2c3e50;
-  color: white;
-  padding: 1rem 2rem;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  position: fixed;
-  width: 100%;
-  top: 0;
-  z-index: 1000;
+    background-color: #2c3e50;
+    color: white;
+    padding: 1rem 2rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    position: fixed;
+    width: 100%;
+    top: 0;
+    z-index: 1000;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.3);
 }
 
 header h1 {
-  margin: 0;
-  font-size: 1.5rem;
-  color: #ecf0f1;
+    margin: 0;
+    font-size: 1.8rem;
+    color: #ecf0f1;
+    flex: 1;
 }
 
 /* Navigation Menu */
@@ -45,34 +50,48 @@ nav a:hover {
 
 /* Main Content Area */
 #content {
-  margin-top: 6rem; /* Space for fixed header */
-  padding: 2rem;
-  max-width: 1200px;
-  margin-left: auto;
-  margin-right: auto;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 1.5rem;
+    margin-top: 6rem; /* Space for fixed header */
+    padding: 2rem;
+    max-width: 1400px;
+    margin-left: auto;
+    margin-right: auto;
 }
 
 /* Footer Styles */
 footer {
-  background-color: #34495e;
-  color: white;
-  text-align: center;
-  padding: 1.5rem 0;
-  position: relative;
-  bottom: 0;
-  width: 100%;
+    background-color: #34495e;
+    color: white;
+    text-align: center;
+    padding: 1.5rem 0;
+    position: fixed;
+    width: 100%;
+    bottom: 0;
+    box-shadow: 0 -2px 5px rgba(0,0,0,0.3);
 }
 
 /* Responsive Design */
-@media (max-width: 768px) {
-  header {
-    flex-direction: column;
-    align-items: flex-start;
-  }
+@media (max-width: 1200px) {
+    #content {
+        grid-template-columns: 1fr;
+    }
+}
 
-  nav {
-    flex-direction: column;
-    gap: 0.5rem;
-    margin-top: 1rem;
-  }
+@media (max-width: 768px) {
+    header {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    nav {
+        flex-direction: column;
+        gap: 0.5rem;
+        margin-top: 1rem;
+    }
+
+    #content {
+        padding: 1rem;
+    }
 }
