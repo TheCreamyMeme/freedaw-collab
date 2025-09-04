@@ -2,19 +2,72 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Collaborative DAW</title>
-    <link rel="icon" href="./favicon.png">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DAW Web UI</title>
+    <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-    <canvas id="audioCanvas"></canvas>
-    <button id="startButton">Start</button>
-    <!-- Include your JS files here -->
-    <script src="main.js"></script>
+    <header>
+        <h1>DAW Web UI</h1>
+    </header>
+    <nav>
+        <ul>
+            <li><a href="#">Home</a></li>
+            <li><a href="#">Users</a></li>
+            <li><a href="#">Dashboard</a></li>
+        </ul>
+    </nav>
+    <main id="content">
+        <section class="tracks" aria-label="Audio Tracks">
+            <h2>Tracks</h2>
+            <!-- Track controls and waveform display will go here -->
+        </section>
+
+        <section class="transport-controls" aria-label="Transport Controls">
+            <h2>Transport</h2>
+            <button id="play">Play</button>
+            <button id="stop">Stop</button>
+            <button id="record">Record</button>
+        </section>
+
+        <section class="mixing-console" aria-label="Mixing Console">
+            <h2>Mixing Console</h2>
+            <div class="volume-sliders">
+                <label for="master-volume">Master Volume:</label>
+                <meter id="master-volume" min="0" max="1" value="0.5"></meter>
+                <input type="range" id="master-volume-control" min="0" max="1" step="0.01" value="0.5">
+                
+                <!-- Additional track volume controls would go here -->
+            </div>
+        </section>
+
+        <section class="effects-rack" aria-label="Effects Rack">
+            <h2>Effects</h2>
+            <div class="effect-presets">
+                <button data-effect="reverb">Reverb</button>
+                <button data-effect="delay">Delay</button>
+                <button data-effect="compressor">Compressor</button>
+                <!-- More effect presets can be added here -->
+            </div>
+        </section>
+
+        <section class="instrument-interface" aria-label="Instrument Interface">
+            <h2>Instruments</h2>
+            <div class="synth-controls">
+                <label for="oscillator-type">Oscillator Type:</label>
+                <select id="oscillator-type">
+                    <option value="sine">Sine</option>
+                    <option value="square">Square</option>
+                    <option value="sawtooth">Sawtooth</option>
+                    <option value="triangle">Triangle</option>
+                </select>
+                
+                <!-- Additional instrument controls would go here -->
+            </div>
+        </section>
+    </main>
+    <footer>
+        <p>&copy; 2025 DAW Web UI. All rights reserved.</p>
+    </footer>
 </body>
 </html>
-
-<select class="dropdown" id="myDropdown">
-  <option value="option1">Option 1</option>
-  <option value="option2">Option 2</option>
-  <option value="option3">Option 3</option>
-</select>

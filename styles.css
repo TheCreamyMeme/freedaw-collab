@@ -1,63 +1,78 @@
+/* Modern UI Components Styling */
 body {
-    font-family: Arial, sans-serif;
-    background-color: #f4f4f4;
-    margin: 0;
-    padding: 0;
-}
-canvas {
-    border: 1px solid black; /* Adds a simple border to the canvas for visualization */
-}
-.auth-container {
-    background-color: #ffffff;
-    padding: 20px;
-    border-radius: 8px;
-    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-    max-width: 400px;
-    margin: 50px auto;
-}
-.dropdown {
-  width: 200px;
-  padding: 10px;
-  border: 1px solid #ccc;
-  background-color: #f9f9f9;
-  border-radius: 4px;
-  box-shadow: inset 0 1px 2px rgba(0,0,0,0.1);
+  margin: 0;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  box-sizing: border-box;
 }
 
-.dropdown option {
-    padding: 8px;
-    background-color: #fff;
-    color: #333;
-    border: none;
+/* Header Styles */
+header {
+  background-color: #2c3e50;
+  color: white;
+  padding: 1rem 2rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  position: fixed;
+  width: 100%;
+  top: 0;
+  z-index: 1000;
 }
-.auth-input {
-    width: 100%;
-    padding: 10px;
-    margin: 10px 0;
-    border: 1px solid #ccc;
-    border-radius: 4px;
-    font-size: 16px;
+
+header h1 {
+  margin: 0;
+  font-size: 1.5rem;
+  color: #ecf0f1;
 }
-.submit-button {
-    width: 100%;
-    padding: 12px;
-    background-color: #007bff;
-    color: white;
-    border: none;
-    border-radius: 4px;
-    font-size: 16px;
-    cursor: pointer;
+
+/* Navigation Menu */
+nav {
+  display: flex;
+  gap: 1.5rem;
 }
-.submit-button:hover {
-    background-color: #0056b3;
+
+nav a {
+  text-decoration: none;
+  color: white;
+  transition: color 0.3s ease;
+  padding: 0.5rem 0.75rem;
+  border-radius: 4px;
 }
-.dropdown:hover .dropdown-content {
-    display: block;
+
+nav a:hover {
+  background-color: #3498db;
 }
-.dropdown-content {
-    display: none;
-    position: absolute;
-    background-color: #f9f9f9;
-    min-width: 200px;
-    box-shadow: 0px 8px 16px 0px rgba(0,0,0,0.2);
+
+/* Main Content Area */
+#content {
+  margin-top: 6rem; /* Space for fixed header */
+  padding: 2rem;
+  max-width: 1200px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* Footer Styles */
+footer {
+  background-color: #34495e;
+  color: white;
+  text-align: center;
+  padding: 1.5rem 0;
+  position: relative;
+  bottom: 0;
+  width: 100%;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+  header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  nav {
+    flex-direction: column;
+    gap: 0.5rem;
+    margin-top: 1rem;
+  }
 }
