@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>DAW Track Controls</title>
+    <style>
+        .track-control {
+            display: flex;
+            align-items: center;
+            margin: 10px 0;
+            padding: 8px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        
+        .control-buttons {
+            display: flex;
+            gap: 8px;
+        }
+        
+        button {
+            padding: 6px 12px;
+            font-size: 14px;
+            cursor: pointer;
+        }
+        
+        .mute-button { background-color: #f08080; color: white; }
+        .solo-button { background-color: #add8e6; color: black; }
+        .play-button { background-color: #90ee90; color: black; }
+        .record-button { background-color: #87ceeb; color: black; }
+    </style>
+</head>
+<body>
+    <h2>Track Controls</h2>
+    
+    <div class="track-control" id="track-001">
+        <span>Track 001 - Piano (C Major, 120 BPM)</span>
+        <div class="control-buttons">
+            <!-- Fader Control -->
+            <div class="fader-container">
+                <label for="fader-control">Fader:</label>
+                <input type="range" id="fader-control" name="fader" min="0" max="1" step="0.01" value="0.5">
+                <div class="meter" style="height: 50px; background: linear-gradient(to bottom, #4caf50 0%, #4caf50 50%, #ccc 50%, #ccc 100%);"></div>
+            </div>
+
+            <!-- Pan Control -->
+            <label for="pan-control">Pan:</label>
+            <input type="range" id="pan-control" name="pan" min="-1" max="1" step="0.01" value="0">
+            
+            <!-- Pan Control -->
+            <label for="pan-control">Pan:</label>
+            <input type="range" id="pan-control" name="pan" min="-1" max="1" step="0.01" value="0">
+            
+            <!-- Effect Routing -->
+            <button class="effect-button">Add EQ</button>
+            <button class="effect-button">Add Compression</button>
+            <button class="effect-button">Add Reverb</button>
+            
+            <!-- Original Controls -->
+            <button class="record-button">Record</button>
+            <button class="play-button">Play</button>
+            <button class="solo-button">Solo</button>
+            <button class="mute-button">Mute</button>
+        </div>
+    </div>
+
+    <script>
+        // Volume control handler
+        document.getElementById('volume-control').addEventListener('input', function(event) {
+            const trackId = 'track-' + event.target.name; // Simplified for example
+            const volume = parseFloat(event.target.value);
+            
+            // Update TrackNode volume (this would typically involve finding the corresponding track object)
+            console.log(`Updating volume for ${trackId} to ${volume}`);
+        });
+
+        // Pan control handler
+        document.getElementById('pan-control').addEventListener('input', function(event) {
+            const trackId = 'track-' + event.target.name; // Simplified for example
+            const pan = parseFloat(event.target.value);
+            
+            // Update TrackNode pan (this would typically involve finding the corresponding track object)
+            console.log(`Updating pan for ${trackId} to ${pan}`);
+        });
+
+        // Effect routing handlers
+        document.querySelectorAll('.effect-button').forEach(button => {
+            button.addEventListener('click', function() {
+                const effectType = this.textContent.trim(); // "Add EQ", "Add Compression", etc.
+                const trackId = 'track-' + this.name; // Simplified for example
+                
+                // This would typically involve finding the corresponding track object and adding the effect
+                console.log(`Adding ${effectType} to track ${trackId}`);
+            });
+        });
+    </script>
+
+    <script>
+        // Example JavaScript to handle button interactions
+        document.querySelectorAll('.record-button').forEach(button => {
+            button.addEventListener('click', () => {
+                alert('Record action triggered for track');
+            });
+        });
+
+        document.querySelectorAll('.play-button').forEach(button => {
+            button.addEventListener('click', () => {
+                alert('Play action triggered for track');
+            });
+        });
+
+        document.querySelectorAll('.solo-button').forEach(button => {
+            button.addEventListener('click', () => {
+                alert('Solo action triggered for track');
+            });
+        });
+
+        document.querySelectorAll('.mute-button').forEach(button => {
+            button.addEventListener('click', () => {
+                alert('Mute action triggered for track');
+            });
+        });
+    </script>
+</body>
+</html>

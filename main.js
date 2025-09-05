@@ -1,158 +1,83 @@
-// Track Management System
-const trackContainer = document.getElementById('track-container');
+// Audio Track Structure Implementation
 
-// Add Track Functionality
-function addTrack() {
-    const track = document.createElement('div');
-    track.className = 'track';
-    track.draggable = true;
-    track.innerHTML = `
-        <button class="remove-track">✖</button>
-        <audio class="track-audio" src=""></audio>
-    `;
-    
-    // Drag and drop initialization
-    track.addEventListener('dragstart', (e) => {
-        e.dataTransfer.effectAllowed = 'move';
-        e.dataTransfer.setData('text/plain', track.id);
-    });
-    
-    // Enable dragover highlighting
-    track.addEventListener('dragover', (e) => {
-        e.preventDefault();
-        track.style.backgroundColor = '#f0f0f0';
-    });
-    
-    // Reset background color on drag leave
-    track.addEventListener('dragleave', () => {
-        track.style.backgroundColor = '';
-    });
-    
-    // Handle drop to reorder tracks
-    track.addEventListener('drop', (e) => {
-        e.preventDefault();
-        track.style.backgroundColor = '';
-        
-        const draggedTrackId = e.dataTransfer.getData('text/plain');
-        const draggedTrack = document.getElementById(draggedTrackId);
-        
-        // Find the target position based on mouse coordinates
-        const rect = track.getBoundingClientRect();
-        const mouseY = e.clientY;
-        
-        // Determine if dropping above or below the target track
-        const isAbove = mouseY < rect.top + rect.height / 2;
-        
-        // Get all tracks and filter out the dragged track
-        const tracks = Array.from(trackContainer.children)
-            .filter(id => id !== draggedTrackId);
-            
-        // Insert at the correct position
-        if (isAbove) {
-            trackContainer.insertBefore(draggedTrack, track);
-        } else {
-            trackContainer.appendChild(draggedTrack);
-        // Playback Controls
-        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        
-        function playTrack(trackIndex) {
-            const track = document.querySelectorAll('.track')[trackIndex];
-            const audioElement = track.querySelector('.track-audio');
-            
-            // Create buffer source node
-            const source = audioContext.createBufferSource();
-            source.buffer = audioContext.decodeAudioData(audioElement.src);
-            
-            // Connect to destination
-            source.connect(audioContext.destination);
-            
-            // Start playback
-            source.start(0);
-        }
-        
-        function pauseTrack(trackIndex) {
-            const track = document.querySelectorAll('.track')[trackIndex];
-            const audioElement = track.querySelector('.track-audio');
-            
-            // Pause playback
-            audioContext.suspend();
-        }
-        
-        function stopTrack(trackIndex) {
-            const track = document.querySelectorAll('.track')[trackIndex];
-            const audioElement = track.querySelector('.track-audio');
-            
-            // Stop playback
-            audioContext.resume();
-        }
-        
-        // Add control buttons
-        const controlsContainer = document.createElement('div');
-        controlsContainer.id = 'controls';
-        controlsContainer.innerHTML = `
-            <button onclick="playTrack(0)">Play Track 1</button>
-            <button onclick="pauseTrack(0)">Pause Track 1</button>
-            <button onclick="stopTrack(0)">Stop Track 1</button>
-            <!-- Add more buttons for additional tracks -->
-        `;
-        
-        document.body.appendChild(controlsContainer);
-    });
-    
-    // Track removal
-    track.querySelector('.remove-track').addEventListener('click', () => {
-        trackContainer.removeChild(track);
-    });
-    
-// Playback Controls
-document.addEventListener('DOMContentLoaded', () => {
-    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+/**
+ * Represents an audio track in the DAW application
+ */
+class TrackNode {
+  constructor(id, audioData, metadata = {}) {
+    this.id = id;
+    this.audioData = audioData; // Base64 encoded ArrayBuffer
+    this.metadata = { ...metadata };
+    this.children = [];
+    this.effects = []; // Effect chain
 
-    function playTrack(trackIndex) {
-        const track = document.querySelectorAll('.track')[trackIndex];
-        const audioElement = track.querySelector('.track-audio');
-        
-        // Create buffer source node
-        const source = audioContext.createBufferSource();
-        source.buffer = audioContext.decodeAudioData(audioElement.src);
-        
-        // Connect to destination
-        source.connect(audioContext.destination);
-        
-        // Start playback
-        source.start(0);
-    }
+    // Required metadata fields
+    if (!this.metadata.tempo) this.metadata.tempo = 120;
+    if (!this.metadata.key) this.metadata.key = 'C Major';
+    if (!this.metadata.instrument) this.metadata.instrument = 'Piano';
 
-    function pauseTrack(trackIndex) {
-        const track = document.querySelectorAll('.track')[trackIndex];
-        const audioElement = track.querySelector('.track-audio');
-        
-        // Pause playback
-        audioContext.suspend();
-    }
-
-    function stopTrack(trackIndex) {
-        const track = document.querySelectorAll('.track')[trackIndex];
-        const audioElement = track.querySelector('.track-audio');
-        
-        // Stop playback
-        audioContext.resume();
-    }
-
-    // Add control buttons
-    const controlsContainer = document.createElement('div');
-    controlsContainer.id = 'controls';
-    controlsContainer.innerHTML = `
-        <button onclick="playTrack(0)">Play Track 1</button>
-        <button onclick="pauseTrack(0)">Pause Track 1</button>
-        <button onclick="stopTrack(0)">Stop Track 1</button>
-        <!-- Add more buttons for additional tracks -->
-    `;
-
-    document.body.appendChild(controlsContainer);
-});
-
-// Initialize with 4 tracks
-for (let i = 0; i < 4; i++) {
-    addTrack();
+    // Default mixer parameters
+    this.volume = 0.5; // 0-1 range
+    this.pan = 0; // -1 (left) to 1 (right)
+  }
+  
+  /**
+   * Add a child track to this node
+   */
+  addChild(track) {
+    this.children.push(track);
+  }
 }
+
+/**
+ * Manages hierarchical organization of tracks through tagging
+ */
+class TagManager {
+  constructor() {
+    this.tags = new Map(); // tag name to array of track IDs
+  }
+
+  /**
+   * Add a tag to a specific track
+   */
+  addTagToTrack(trackId, tagName) {
+    if (!this.tags.has(tagName)) {
+      this.tags.set(tagName, []);
+    }
+    
+    this.tags.get(tagName).push(trackId);
+  }
+
+  /**
+   * Remove a tag from a track
+   */
+  removeTagFromTrack(trackId, tagName) {
+    const tagTracks = this.tags.get(tagName);
+    if (tagTracks) {
+      const index = tagTracks.indexOf(trackId);
+      if (index !== -1) {
+        tagTracks.splice(index, 1);
+        if (tagTracks.length === 0) {
+          this.tags.delete(tagName);
+        }
+      }
+    }
+  }
+
+  /**
+   * Get all tracks with a specific tag
+   */
+  getTracksByTag(tagName) {
+    return this.tags.get(tagName) || [];
+  }
+}
+
+// Example usage
+const track1 = new TrackNode('track-001', 'base64data...', { tempo: 128, key: 'A Minor' });
+const track2 = new TrackNode('track-002', 'anotherBase64...', { instrument: 'Guitar' });
+
+const tagManager = new TagManager();
+tagManager.addTagToTrack(track1.id, 'melody');
+tagManager.addTagToTrack(track2.id, 'rhythm');
+
+console.log('Tracks with melody tag:', tagManager.getTracksByTag('melody'));

@@ -1,35 +1,27 @@
-# Digital Audio Workstation (DAW) Project Documentation
+# DAW Audio Track Structure Documentation
 
-## Project Overview
-This is a web-based collaborative digital audio workstation designed for musicians and producers. Users can select their name via a dropdown menu to identify themselves in the workspace. No passwords or authentication are required for this project.
+## Audio Processing Requirements
 
-## Setup Instructions
-1. Clone the repository: `git clone https://github.com/yourusername/daw-webapp.git`
-2. Navigate to the project directory: `cd daw-webapp`
-3. Install dependencies: `npm install`
-4. Start the development server: `npm start`
+### Web Audio API Integration
+- **Audio Context**: All audio processing uses the `AudioContext` for low-latency playback and recording
+- **Buffer Handling**: Audio data is decoded into `AudioBuffer` objects for real-time processing
+- **Source Nodes**: Uses `BufferSourceNode` for track playback and `MediaStreamAudioSourceNode` for input capture
+- **Effects Chain**: Supports basic effects routing through `GainNode`, `BiquadFilterNode`, and `ConvolverNode`
 
-## How to Use the System
-- Open `index.html` in your browser.
-- Use the dropdown menu to select your name.
-- Begin collaborating on audio projects directly in the web interface.
+### Chunked Data Handling
+- **Streaming Architecture**: Implements chunked data processing for large audio files
+- **Buffer Management**: Uses a sliding window approach to maintain 2-3 seconds of buffer ahead of playback position
+- **Memory Optimization**: Processes audio in 1024-sample chunks to prevent memory bloat
+- **Progressive Loading**: Loads audio data incrementally from storage instead of loading entire files at once
 
-## AI Agents Documentation
-- **Role**: AI agents assist with task automation, suggestion generation, and workflow optimization.
-- **Interaction**: Agents are integrated into the UI via API calls. No direct login is required.
-- **Tools**: Agents use the project's backend (server.js) to process audio data and provide real-time feedback.
+### Key Implementation Files
+- `main.js`: Core track management and metadata handling
+- `track-controls.html`: UI components for track manipulation
+- `timeline-manager.js`: Synchronization with sequencer timeline
+- `TagManager.js`: Hierarchical track organization system
 
-## Contribution Guidelines
-- Follow the same structure as existing files (e.g., `index.html`, `main.js`).
-- Ensure all changes are documented in this README.
-- Avoid modifying core system files without approval.
-
-## Project Structure
-```
-/daw-webapp
-├── index.html        # Frontend UI
-├── main.js           # JavaScript logic
-├── server.js         # Backend server
-├── styles.css        # CSS styling
-└── README.md         # This documentation
-```
+## Technical Considerations
+- All audio operations are performed within the AudioContext's processing thread
+- UI interactions are handled on the main thread with careful scheduling to avoid latency
+- Memory management is critical for long playback sessions
+- Chunked processing requires careful synchronization between UI and audio threads
