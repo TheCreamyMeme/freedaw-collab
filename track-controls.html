@@ -4,63 +4,108 @@
     <meta charset="UTF-8">
     <title>DAW Track Controls</title>
     <style>
-        .track-control {
+        .track-strip {
             display: flex;
-            align-items: center;
-            margin: 10px 0;
-            padding: 8px;
-            border: 1px solid #ccc;
-            border-radius: 4px;
+            flex-direction: column;
+            gap: 12px;
+            margin-bottom: 20px;
         }
         
-        .control-buttons {
+        .strip-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 16px;
+            font-weight: bold;
+        }
+        
+        .metering-indicators {
+            display: flex;
+            gap: 8px;
+            margin-top: 10px;
+        }
+        
+        .peak-meter, .rms-meter {
+            width: 100%;
+            height: 50px;
+            background: linear-gradient(to bottom, #ccc 0%, #ccc 100%);
+            border-radius: 4px;
+            overflow: hidden;
+        }
+        
+        .peak-meter {
+            background: linear-gradient(to bottom, #ff4757 0%, #ff4757 60%, #ccc 60%, #ccc 100%);
+        }
+        
+        .rms-meter {
+            background: linear-gradient(to bottom, #4caf50 0%, #4caf50 80%, #ccc 80%, #ccc 100%);
+        }
+        
+        .fader-container, .pan-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 6px;
+        }
+        
+        .pan-knob {
+            width: 20px;
+            height: 50px;
+            background-color: #4caf50;
+            border-radius: 50%;
+            position: relative;
+            top: -25px;
+            left: -10px;
+            transition: transform 0.1s ease;
+        }
+        
+        .effect-rack {
             display: flex;
             gap: 8px;
         }
-        
-        button {
-            padding: 6px 12px;
-            font-size: 14px;
-            cursor: pointer;
-        }
-        
-        .mute-button { background-color: #f08080; color: white; }
-        .solo-button { background-color: #add8e6; color: black; }
-        .play-button { background-color: #90ee90; color: black; }
-        .record-button { background-color: #87ceeb; color: black; }
     </style>
 </head>
 <body>
     <h2>Track Controls</h2>
     
-    <div class="track-control" id="track-001">
-        <span>Track 001 - Piano (C Major, 120 BPM)</span>
-        <div class="control-buttons">
+    <div class="track-strip" id="track-001">
+        <div class="strip-header">
+            <span>Track 001 - Piano (C Major, 120 BPM)</span>
+            <div class="metering-indicators">
+                <div class="peak-meter" style="height: 50px; background: linear-gradient(to bottom, #ff4757 0%, #ff4757 60%, #ccc 60%, #ccc 100%);"></div>
+                <div class="rms-meter" style="height: 50px; background: linear-gradient(to bottom, #4caf50 0%, #4caf50 80%, #ccc 80%, #ccc 100%);"></div>
+            </div>
+        </div>
+        
+        <div class="strip-controls">
             <!-- Fader Control -->
             <div class="fader-container">
                 <label for="fader-control">Fader:</label>
                 <input type="range" id="fader-control" name="fader" min="0" max="1" step="0.01" value="0.5">
                 <div class="meter" style="height: 50px; background: linear-gradient(to bottom, #4caf50 0%, #4caf50 50%, #ccc 50%, #ccc 100%);"></div>
             </div>
-
-            <!-- Pan Control -->
-            <label for="pan-control">Pan:</label>
-            <input type="range" id="pan-control" name="pan" min="-1" max="1" step="0.01" value="0">
             
             <!-- Pan Control -->
-            <label for="pan-control">Pan:</label>
-            <input type="range" id="pan-control" name="pan" min="-1" max="1" step="0.01" value="0">
+            <div class="pan-container">
+                <label for="pan-control">Pan:</label>
+                <input type="range" id="pan-control" name="pan" min="-1" max="1" step="0.01" value="0">
+                <div class="pan-knob" style="width: 20px; height: 50px; background-color: #4caf50; border-radius: 50%; position: relative; top: -25px; left: -10px;"></div>
+            </div>
             
             <!-- Effect Routing -->
-            <button class="effect-button">Add EQ</button>
-            <button class="effect-button">Add Compression</button>
-            <button class="effect-button">Add Reverb</button>
+            <div class="effect-rack">
+                <button class="effect-button">Add EQ</button>
+                <button class="effect-button">Add Compression</button>
+                <button class="effect-button">Add Reverb</button>
+            </div>
             
-            <!-- Original Controls -->
-            <button class="record-button">Record</button>
-            <button class="play-button">Play</button>
-            <button class="solo-button">Solo</button>
-            <button class="mute-button">Mute</button>
+            <!-- Track Controls -->
+            <div class="control-buttons">
+                <button class="record-button">Record</button>
+                <button class="play-button">Play</button>
+                <button class="solo-button">Solo</button>
+                <button class="mute-button">Mute</button>
+            </div>
         </div>
     </div>
 

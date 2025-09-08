@@ -11,27 +11,91 @@
         <h1>Audio Workstation</h1>
     </header>
     <main>
-        <section id="timeline">
-            <h2>Timeline</h2>
-            <div class="timeline"></div>
-        </section>
-        <section id="track-area">
-            <h2>Track Area</h2>
-            <button id="add-track">Add Track</button>
-            <div class="track-area" id="tracks-container">
-                <!-- Tracks will appear here -->
+        <!-- Timeline Area (Top Section) -->
+        <section id="timeline-area" style="flex: 3; display: flex; flex-direction: column;">
+            <div class="timeline-header">
+                <h2>Timeline</h2>
+                <button id="automation-mode">Automation Mode</button>
+            </div>
+            <div class="timeline-editor">
+                <div class="automation-lanes"></div>
+                <div class="audio-tracks"></div>
             </div>
         </section>
-        <section id="mixer-panel">
-            <h2>Mixer Panel</h2>
-            <div class="mixer-panel"></div>
+
+        <!-- Track & Mixer Area (Middle Section) -->
+        <section id="track-mixer-area" style="flex: 5; display: flex;">
+            <!-- Track Area (Left Side) -->
+            <section id="track-area" style="flex: 2; padding-right: 1rem;">
+                <div class="track-header">
+                    <h2>Track Area</h2>
+                    <button id="add-track">Add Track</button>
+                </div>
+                <div class="track-container" id="tracks-container">
+                    <!-- Tracks will appear here -->
+                    <!-- Track Controls -->
+                    <div class="track-strip" id="track-001">
+                        <div class="strip-header">
+                            <span>Track 001 - Piano (C Major, 120 BPM)</span>
+                            <div class="metering-indicators">
+                                <div class="peak-meter" style="height: 50px; background: linear-gradient(to bottom, #ff4757 0%, #ff4757 60%, #ccc 60%, #ccc 100%);"></div>
+                                <div class="rms-meter" style="height: 50px; background: linear-gradient(to bottom, #4caf50 0%, #4caf50 80%, #ccc 80%, #ccc 100%);"></div>
+                            </div>
+                        </div>
+                        
+                        <div class="strip-controls">
+                            <!-- Fader Control -->
+                            <div class="fader-container">
+                                <label for="fader-control">Fader:</label>
+                                <input type="range" id="fader-control" name="fader" min="0" max="1" step="0.01" value="0.5">
+                                <div class="meter" style="height: 50px; background: linear-gradient(to bottom, #4caf50 0%, #4caf50 50%, #ccc 50%, #ccc 100%);"></div>
+                            </div>
+                            
+                            <!-- Pan Control -->
+                            <div class="pan-container">
+                                <label for="pan-control">Pan:</label>
+                                <input type="range" id="pan-control" name="pan" min="-1" max="1" step="0.01" value="0">
+                                <div class="pan-knob" style="width: 20px; height: 50px; background-color: #4caf50; border-radius: 50%; position: relative; top: -25px; left: -10px;"></div>
+                            </div>
+                            
+                            <!-- Effect Routing -->
+                            <div class="effect-rack">
+                                <button class="effect-button">Add EQ</button>
+                                <button class="effect-button">Add Compression</button>
+                                <button class="effect-button">Add Reverb</button>
+                            </div>
+                            
+                            <!-- Track Controls -->
+                            <div class="control-buttons">
+                                <button class="record-button">Record</button>
+                                <button class="play-button">Play</button>
+                                <button class="solo-button">Solo</button>
+                                <button class="mute-button">Mute</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Mixer Panel (Right Side) -->
+            <section id="mixer-panel" style="flex: 1; padding-left: 1rem;">
+                <h2>Mixer Panel</h2>
+                <div class="mixer-content">
+                    <!-- Channel Strips will appear here -->
+                </div>
+            </section>
         </section>
-        <section id="transport-controls">
-            <h2>Transport Controls</h2>
-            <button id="play-button">Play</button>
-            <button id="pause-button">Pause</button>
-            <button id="stop-button">Stop</button>
-            <input type="range" id="timeline-range" min="0" max="100">
+
+        <!-- Transport Controls (Bottom Section) -->
+        <section id="transport-controls" style="flex: 1; display: flex; justify-content: space-between; align-items: center; padding: 1rem;">
+            <div class="transport-group">
+                <button id="play-button">Play</button>
+                <button id="pause-button">Pause</button>
+                <button id="stop-button">Stop</button>
+            </div>
+            <div class="timeline-range-container">
+                <input type="range" id="timeline-range" min="0" max="100" style="flex: 1;">
+            </div>
         </section>
     </main>
     <footer>

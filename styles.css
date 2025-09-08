@@ -1,11 +1,26 @@
 /* Modern UI Components Styling */
 body {
-    margin: 0;
-    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-    box-sizing: border-box;
-    min-height: 100vh;
-    display: flex;
-    flex-direction: column;
+   margin: 0;
+   font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+   box-sizing: border-box;
+   min-height: 100vh;
+   display: flex;
+   flex-direction: column;
+}
+
+/* Metering Indicator Styles */
+.peak-meter {
+    height: 50px;
+    background: linear-gradient(to bottom, #ff4757 0%, #ff4757 60%, #ccc 60%, #ccc 100%);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.rms-meter {
+    height: 50px;
+    background: linear-gradient(to bottom, #4caf50 0%, #4caf50 80%, #ccc 80%, #ccc 100%);
+    border-radius: 4px;
+    overflow: hidden;
 }
 
 /* Header Styles */
@@ -46,6 +61,127 @@ nav a {
 
 nav a:hover {
     background-color: #3498db;
+}
+
+/* Main Content Area */
+main {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    margin-top: 6rem; /* Space for fixed header */
+    padding: 2rem;
+    max-width: 1400px;
+    margin-left: auto;
+    margin-right: auto;
+}
+
+/* Timeline Area Styles */
+#timeline-area {
+    flex: 3;
+    display: flex;
+    flex-direction: column;
+    background-color: #f5f6fa;
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+#timeline-area .timeline-header {
+    padding: 1rem;
+    border-bottom: 1px solid #ddd;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+#timeline-area .timeline-editor {
+    flex: 1;
+    padding: 1rem;
+    overflow-y: auto;
+}
+
+/* Track & Mixer Area Styles */
+#track-mixer-area {
+    display: flex;
+    flex: 5;
+    margin: 1rem 0;
+}
+
+#track-area {
+    flex: 2;
+    padding-right: 1rem;
+    background-color: #fff;
+    border-radius: 8px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.05);
+}
+
+#track-area .track-header {
+    padding: 1rem;
+    border-bottom: 1px solid #ddd;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+#track-area .track-container {
+    padding: 1rem;
+    height: calc(100vh - 12rem);
+    overflow-y: auto;
+}
+
+/* Mixer Panel Styles */
+#mixer-panel {
+    flex: 1;
+    padding-left: 1rem;
+    background-color: #fff;
+    border-radius: 8px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.05);
+}
+
+/* Transport Controls Styles */
+#transport-controls {
+    flex: 1;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem;
+    background-color: #f5f6fa;
+    border-radius: 8px;
+}
+
+.transport-group {
+    display: flex;
+    gap: 0.75rem;
+}
+
+.transport-group button {
+    padding: 0.75rem 1.5rem;
+    font-size: 1rem;
+    background-color: #3498db;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+}
+
+.transport-group button:hover {
+    background-color: #2980b9;
+}
+
+/* Responsive Design */
+@media (max-width: 1200px) {
+    main {
+        flex-direction: column;
+    }
+    
+    #track-mixer-area {
+        flex-direction: column;
+    }
+    
+    #track-area, #mixer-panel {
+        width: 100%;
+        margin-bottom: 1rem;
+    }
 }
 
 /* Main Content Area */
