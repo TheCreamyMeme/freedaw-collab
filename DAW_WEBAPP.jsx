@@ -6,7 +6,7 @@ import {
   Folder, Sliders, History, UserCircle, Piano,
   MousePointer2, Pencil, Eraser, X, Grid, Trash2, Activity,
   Settings2, Plug, Power, LogOut, FileAudio, FileCode, Cpu,
-  Waveform, Repeat, Home, Save, Download, Upload, FileJson
+  Repeat, Home, Save, Download, Upload, FileJson
 } from 'lucide-react';
 
 const TOTAL_BEATS = 256; 
@@ -35,6 +35,19 @@ const INTERNAL_PLUGINS = [
   { id: 'inst-sampler', name: 'Digital Sampler', category: 'instrument', type: 'sampler', vendor: 'WebDAW Core' }
 ];
 
+const DEFAULT_DRUM_MAP = {
+  36: { name: 'Kick (C1)', sampleId: null, tune: 150, decay: 0.5 },
+  38: { name: 'Snare (D1)', sampleId: null, tune: 250, decay: 0.2 },
+  39: { name: 'Clap (D#1)', sampleId: null },
+  42: { name: 'CH Hat (F#1)', sampleId: null },
+  46: { name: 'OH Hat (A#1)', sampleId: null },
+  43: { name: 'Lo Tom (G1)', sampleId: null, tune: 100 },
+  45: { name: 'Mid Tom (A1)', sampleId: null, tune: 150 },
+  48: { name: 'Hi Tom (C2)', sampleId: null, tune: 200 },
+  49: { name: 'Crash (C#2)', sampleId: null },
+  51: { name: 'Ride (D#2)', sampleId: null }
+};
+
 // --- Mock Data ---
 const INITIAL_TRACKS = [
   { id: 1, name: 'Lead Vocals', type: 'audio', color: 'bg-blue-500', volume: 80, pan: 0, muted: false, solo: false, armed: false, icon: Mic, 
@@ -44,7 +57,7 @@ const INITIAL_TRACKS = [
       { id: 'fx-2', type: 'reverb', name: 'Room Reverb', params: { decay: 2.5, mix: 0.4 } }
     ]
   },
-  { id: 2, name: 'Drum Machine', type: 'midi', instrument: 'inst-drum', instrumentParams: { kickPitch: 150, snareDecay: 0.2 }, color: 'bg-orange-500', volume: 90, pan: 0, muted: false, solo: false, armed: false, icon: Radio, 
+  { id: 2, name: 'Drum Machine', type: 'midi', instrument: 'inst-drum', instrumentParams: { drumMap: DEFAULT_DRUM_MAP }, color: 'bg-orange-500', volume: 90, pan: 0, muted: false, solo: false, armed: false, icon: Radio, 
     effects: [
       { id: 'fx-3', type: 'compressor', name: 'Bus Compressor', params: { threshold: -15, ratio: 6 } }
     ],
@@ -83,6 +96,231 @@ const INITIAL_VST_LIBRARY = [
 
 // --- Global Audio Buffer Cache for Samplers ---
 const globalAudioBufferCache = new Map();
+
+// --- DSP Utility: WAV Encoding ---
+function interleaveWav(inputL, inputR) {
+  const length = inputL.length + inputR.length;
+  const result = new Float32Array(length);
+  let index = 0, inputIndex = 0;
+  while (index < length) {
+    result[index++] = inputL[inputIndex];
+    result[index++] = inputR[inputIndex];
+    inputIndex++;
+  }
+  return result;
+}
+
+function encodeWAV(samples, sampleRate, numChannels) {
+  const bitDepth = 16;
+  const bytesPerSample = bitDepth / 8;
+  const blockAlign = numChannels * bytesPerSample;
+  const dataSize = samples.length * bytesPerSample;
+  const buffer = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(buffer);
+
+  const writeString = (view, offset, string) => {
+    for (let i = 0; i < string.length; i++) {
+      view.setUint8(offset + i, string.charCodeAt(i));
+    }
+  };
+
+  writeString(view, 0, 'RIFF');
+  view.setUint32(4, 36 + dataSize, true);
+  writeString(view, 8, 'WAVE');
+  writeString(view, 12, 'fmt ');
+  view.setUint32(16, 16, true); // Format chunk size
+  view.setUint16(20, 1, true); // PCM Format
+  view.setUint16(22, numChannels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * blockAlign, true);
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, bitDepth, true);
+  writeString(view, 36, 'data');
+  view.setUint32(40, dataSize, true);
+
+  let offset = 44;
+  for (let i = 0; i < samples.length; i++, offset += 2) {
+    let s = Math.max(-1, Math.min(1, samples[i]));
+    // Crucial patch: Math.round() forces perfect Int16 PCM encoding
+    view.setInt16(offset, Math.round(s < 0 ? s * 0x8000 : s * 0x7FFF), true);
+  }
+  
+  // Return pure binary Uint8Array so JSZip maps it flawlessly
+  return new Uint8Array(buffer);
+}
+
+const audioBufferToWav = (buffer) => {
+  const numChannels = Math.min(2, buffer.numberOfChannels); // Clamp to max 2 channels
+  const sampleRate = buffer.sampleRate;
+  let result;
+  
+  if (numChannels >= 2) {
+    result = interleaveWav(buffer.getChannelData(0), buffer.getChannelData(1));
+  } else {
+    result = buffer.getChannelData(0);
+  }
+  
+  return encodeWAV(result, sampleRate, numChannels);
+};
+
+// --- DSP Utility: Generate Standard MIDI File (.mid) ---
+function encodeMIDITrack(track, bpm) {
+  const PPQ = 128; // Pulses (ticks) per quarter note
+  let events = [];
+
+  // Merge all clips into an absolute timeline
+  track.clips.forEach(clip => {
+    if (!clip.notes) return;
+    clip.notes.forEach(note => {
+      const absStartBeat = clip.start + note.start;
+      const absEndBeat = clip.start + note.start + note.duration;
+      events.push({ time: Math.round(absStartBeat * PPQ), type: 'noteOn', pitch: Math.floor(note.pitch), velocity: Math.floor(note.velocity || 100) });
+      events.push({ time: Math.round(absEndBeat * PPQ), type: 'noteOff', pitch: Math.floor(note.pitch), velocity: 0 });
+    });
+  });
+
+  // Sort events chronologically
+  events.sort((a, b) => a.time - b.time);
+
+  let trackData = [];
+  
+  // 1. Tempo Meta Event (micro-seconds per quarter note)
+  const tempo = Math.round(60000000 / bpm);
+  trackData.push(0x00, 0xFF, 0x51, 0x03, (tempo >> 16) & 0xFF, (tempo >> 8) & 0xFF, tempo & 0xFF);
+
+  let lastTick = 0;
+  events.forEach(ev => {
+    let delta = ev.time - lastTick;
+    lastTick = ev.time;
+
+    // Convert delta time to Variable-Length Quantity (VLQ)
+    let value = delta;
+    let vlq = [value & 0x7F];
+    while ((value >>= 7) > 0) {
+        vlq.unshift((value & 0x7F) | 0x80);
+    }
+    trackData.push(...vlq);
+
+    // Push MIDI Event Bytes
+    if (ev.type === 'noteOn') {
+      trackData.push(0x90, ev.pitch, ev.velocity);
+    } else {
+      trackData.push(0x80, ev.pitch, 0);
+    }
+  });
+
+  // End of Track Meta Event
+  trackData.push(0x00, 0xFF, 0x2F, 0x00);
+
+  // File Header (MThd, size: 6, format: 0, tracks: 1, division: PPQ)
+  const header = [
+    0x4D, 0x54, 0x68, 0x64, 
+    0x00, 0x00, 0x00, 0x06, 
+    0x00, 0x00, 
+    0x00, 0x01, 
+    (PPQ >> 8) & 0xFF, PPQ & 0xFF 
+  ];
+
+  // Track Header (MTrk, track data size)
+  const trackHeader = [
+    0x4D, 0x54, 0x72, 0x6B, 
+    (trackData.length >> 24) & 0xFF,
+    (trackData.length >> 16) & 0xFF,
+    (trackData.length >> 8) & 0xFF,
+    trackData.length & 0xFF
+  ];
+
+  return new Uint8Array([...header, ...trackHeader, ...trackData]);
+}
+
+// --- DSP Utility: Parse Standard MIDI File (.mid) ---
+function parseMIDIFile(arrayBuffer, bpm) {
+  const view = new DataView(arrayBuffer);
+  let offset = 0;
+  if (view.getUint32(offset) !== 0x4D546864) throw new Error("Not a valid MIDI file");
+  offset += 8;
+  const format = view.getUint16(offset); offset += 2;
+  const numTracks = view.getUint16(offset); offset += 2;
+  const ppq = view.getUint16(offset); offset += 2;
+
+  let notes = [];
+  let currentTrack = 0;
+
+  while (offset < view.byteLength && currentTrack < numTracks) {
+    if (view.getUint32(offset) !== 0x4D54726B) { offset += 1; continue; }
+    offset += 4;
+    const trackLen = view.getUint32(offset); offset += 4;
+    const trackEnd = offset + trackLen;
+
+    let absoluteTick = 0;
+    let activeNotes = {};
+    let runningStatus = 0;
+
+    while (offset < trackEnd) {
+      let delta = 0;
+      while (true) {
+        const byte = view.getUint8(offset++);
+        delta = (delta << 7) | (byte & 0x7F);
+        if (!(byte & 0x80)) break;
+      }
+      absoluteTick += delta;
+
+      const eventTypeByte = view.getUint8(offset);
+      if (eventTypeByte === 0xFF) {
+         offset++;
+         const metaType = view.getUint8(offset++);
+         let metaLen = 0;
+         while (true) {
+           const b = view.getUint8(offset++);
+           metaLen = (metaLen << 7) | (b & 0x7F);
+           if (!(b & 0x80)) break;
+         }
+         offset += metaLen;
+      } else if (eventTypeByte === 0xF0 || eventTypeByte === 0xF7) {
+         offset++;
+         let sysLen = 0;
+         while (true) {
+           const b = view.getUint8(offset++);
+           sysLen = (sysLen << 7) | (b & 0x7F);
+           if (!(b & 0x80)) break;
+         }
+         offset += sysLen;
+      } else {
+         let status = eventTypeByte;
+         if (status < 0x80) { status = runningStatus; } 
+         else { offset++; runningStatus = status; }
+
+         const type = status >> 4;
+         if (type === 0x8 || type === 0x9) {
+            const pitch = view.getUint8(offset++);
+            const velocity = view.getUint8(offset++);
+            const isNoteOn = type === 0x9 && velocity > 0;
+
+            if (isNoteOn) {
+                activeNotes[pitch] = { startTick: absoluteTick, velocity };
+            } else {
+                if (activeNotes[pitch]) {
+                    const startBeat = activeNotes[pitch].startTick / ppq;
+                    const endBeat = absoluteTick / ppq;
+                    notes.push({
+                        id: `m_${Date.now()}_${Math.random()}`,
+                        pitch: pitch,
+                        start: startBeat,
+                        duration: Math.max(0.05, endBeat - startBeat),
+                        velocity: activeNotes[pitch].velocity
+                    });
+                    delete activeNotes[pitch];
+                }
+            }
+         } else if (type === 0xA || type === 0xB || type === 0xE) { offset += 2; } 
+         else if (type === 0xC || type === 0xD) { offset += 1; } 
+         else { break; }
+      }
+    }
+    currentTrack++;
+  }
+  return notes;
+}
 
 // --- DSP Utility: Generate Impulse Response for Reverb ---
 const createReverbIR = (ctx, duration) => {
@@ -514,11 +752,10 @@ const triggerOrgan = (ctx, trackBus, pitch, time, vol, dur, params = {}, velocit
 };
 
 const triggerDrum = (ctx, trackBus, pitch, time, vol, params = {}, velocity = 100) => {
-  let sampleId = null;
-  if (pitch === 36) sampleId = params.kickSampleId;
-  else if (pitch === 38) sampleId = params.snareSampleId;
-  else sampleId = params.hihatSampleId;
-
+  const drumMap = params.drumMap || DEFAULT_DRUM_MAP;
+  const pad = drumMap[pitch];
+  
+  const sampleId = pad ? pad.sampleId : (pitch === 36 ? params.kickSampleId : pitch === 38 ? params.snareSampleId : pitch === 42 ? params.hihatSampleId : null);
   const realVol = vol * (velocity / 127);
 
   if (sampleId && globalAudioBufferCache.has(sampleId)) {
@@ -531,9 +768,8 @@ const triggerDrum = (ctx, trackBus, pitch, time, vol, params = {}, velocity = 10
      source.connect(gain);
      gain.connect(trackBus);
      
-     const baseParamKey = pitch === 36 ? 'kick' : pitch === 38 ? 'snare' : 'hihat';
-     const startOffset = params[`${baseParamKey}Start`] || 0;
-     const endOffset = params[`${baseParamKey}End`] || sampleData.duration;
+     const startOffset = pad?.startOffset || 0;
+     const endOffset = pad?.endOffset || sampleData.duration;
      
      source.start(time, startOffset, Math.max(0, endOffset - startOffset));
      return;
@@ -544,21 +780,21 @@ const triggerDrum = (ctx, trackBus, pitch, time, vol, params = {}, velocity = 10
     const gain = ctx.createGain();
     osc.connect(gain);
     gain.connect(trackBus);
-    const startPitch = params.kickPitch || 150;
+    const startPitch = pad?.tune || params.kickPitch || 150;
     osc.frequency.setValueAtTime(startPitch, time);
     osc.frequency.exponentialRampToValueAtTime(0.001, time + 0.5);
     gain.gain.setValueAtTime(realVol, time);
     gain.gain.exponentialRampToValueAtTime(0.001, time + 0.5);
     osc.start(time);
     osc.stop(time + 0.5);
-  } else if (pitch === 38) { 
+  } else if (pitch === 38 || pitch === 39) { 
     const osc = ctx.createOscillator();
     const oscGain = ctx.createGain();
-    const snareDecay = params.snareDecay || 0.2;
-    osc.type = 'triangle';
+    const snareDecay = pad?.decay || params.snareDecay || 0.2;
+    osc.type = pitch === 39 ? 'square' : 'triangle';
     osc.connect(oscGain);
     oscGain.connect(trackBus);
-    osc.frequency.setValueAtTime(250, time);
+    osc.frequency.setValueAtTime(pitch === 39 ? 400 : 250, time);
     oscGain.gain.setValueAtTime(realVol * 0.5, time);
     oscGain.gain.exponentialRampToValueAtTime(0.01, time + snareDecay);
     osc.start(time);
@@ -571,31 +807,83 @@ const triggerDrum = (ctx, trackBus, pitch, time, vol, params = {}, velocity = 10
     const noise = ctx.createBufferSource();
     noise.buffer = buffer;
     const noiseFilter = ctx.createBiquadFilter();
-    noiseFilter.type = 'highpass';
-    noiseFilter.frequency.value = 1000;
+    noiseFilter.type = pitch === 39 ? 'bandpass' : 'highpass';
+    noiseFilter.frequency.value = pitch === 39 ? 1500 : 1000;
+    if (pitch === 39) noiseFilter.Q.value = 1.5;
     const noiseGain = ctx.createGain();
     noise.connect(noiseFilter);
     noiseFilter.connect(noiseGain);
     noiseGain.connect(trackBus);
-    noiseGain.gain.setValueAtTime(realVol * 0.8, time);
-    noiseGain.gain.exponentialRampToValueAtTime(0.01, time + snareDecay);
+    
+    if (pitch === 39) {
+       noiseGain.gain.setValueAtTime(0, time);
+       noiseGain.gain.linearRampToValueAtTime(realVol, time + 0.01);
+       noiseGain.gain.exponentialRampToValueAtTime(0.1, time + 0.03);
+       noiseGain.gain.linearRampToValueAtTime(realVol * 0.8, time + 0.04);
+       noiseGain.gain.exponentialRampToValueAtTime(0.01, time + snareDecay);
+    } else {
+       noiseGain.gain.setValueAtTime(realVol * 0.8, time);
+       noiseGain.gain.exponentialRampToValueAtTime(0.01, time + snareDecay);
+    }
     noise.start(time);
+  } else if (pitch === 43 || pitch === 45 || pitch === 48) { 
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(trackBus);
+    const startPitch = pad?.tune || (pitch === 43 ? 100 : pitch === 45 ? 150 : 200);
+    osc.frequency.setValueAtTime(startPitch, time);
+    osc.frequency.exponentialRampToValueAtTime(startPitch * 0.1, time + 0.4);
+    gain.gain.setValueAtTime(realVol, time);
+    gain.gain.exponentialRampToValueAtTime(0.001, time + 0.4);
+    osc.start(time);
+    osc.stop(time + 0.4);
   } else { 
-    const bufferSize = ctx.sampleRate * 0.1;
+    const isCrash = pitch === 49;
+    const isRide = pitch === 51;
+    const isOpen = pitch === 46;
+    const decay = pad?.decay || (isCrash ? 1.5 : isRide ? 1.0 : isOpen ? 0.3 : 0.05);
+    
+    if (isCrash || isRide) {
+        const osc1 = ctx.createOscillator();
+        const osc2 = ctx.createOscillator();
+        const fmGain = ctx.createGain();
+        const outGain = ctx.createGain();
+        
+        osc1.type = 'square';
+        osc2.type = 'square';
+        osc1.frequency.value = isCrash ? 300 : 400;
+        osc2.frequency.value = isCrash ? 453 : 605;
+        
+        osc1.connect(fmGain);
+        fmGain.connect(osc2.frequency);
+        fmGain.gain.value = 1000;
+        
+        osc2.connect(outGain);
+        outGain.connect(trackBus);
+        outGain.gain.setValueAtTime(realVol * 0.3, time);
+        outGain.gain.exponentialRampToValueAtTime(0.001, time + decay);
+        
+        osc1.start(time); osc2.start(time);
+        osc1.stop(time + decay); osc2.stop(time + decay);
+    }
+
+    const bufferSize = ctx.sampleRate * decay;
     const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
     const data = buffer.getChannelData(0);
     for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
     const noise = ctx.createBufferSource();
     noise.buffer = buffer;
     const noiseFilter = ctx.createBiquadFilter();
-    noiseFilter.type = 'highpass';
-    noiseFilter.frequency.value = 5000;
+    noiseFilter.type = isCrash ? 'bandpass' : 'highpass';
+    noiseFilter.frequency.value = isCrash ? 4000 : 7000;
+    if (isCrash) noiseFilter.Q.value = 0.5;
     const noiseGain = ctx.createGain();
     noise.connect(noiseFilter);
     noiseFilter.connect(noiseGain);
     noiseGain.connect(trackBus);
-    noiseGain.gain.setValueAtTime(realVol * 0.4, time);
-    noiseGain.gain.exponentialRampToValueAtTime(0.01, time + 0.05);
+    noiseGain.gain.setValueAtTime(realVol * (isCrash ? 0.6 : 0.4), time);
+    noiseGain.gain.exponentialRampToValueAtTime(0.01, time + decay);
     noise.start(time);
   }
 };
@@ -788,7 +1076,7 @@ const initTrackRouting = async (track, ctx, masterGain, library) => {
   faderGain.connect(analyser);
   analyser.connect(masterGain);
   
-  let instrument = { inputBus, faderGain, panner, analyser, fxNodes, currentNoteId: null, type: track.type, wamInstance: instrumentWamInstance, wamError: instrumentWamError, activeSource: null };
+  let instrument = { inputBus, faderGain, panner, analyser, fxNodes, currentNoteId: null, activeNoteIds: new Set(), type: track.type, wamInstance: instrumentWamInstance, wamError: instrumentWamError, activeSource: null };
 
   if (track.type === 'audio') {
     const gateGain = ctx.createGain();
@@ -820,6 +1108,7 @@ export default function App() {
   const [isRecording, setIsRecording] = useState(false);
   const [draggingEdge, setDraggingEdge] = useState(null);
   const [editingTrackId, setEditingTrackId] = useState(null);
+  const [draggedTrackId, setDraggedTrackId] = useState(null);
   const [showAddFxMenu, setShowAddFxMenu] = useState(null); 
   const [isFetchingWAMs, setIsFetchingWAMs] = useState(false); 
   
@@ -830,9 +1119,13 @@ export default function App() {
   
   const [loopRegion, setLoopRegion] = useState({ start: 0, end: 8, enabled: false });
   const [draggingLoop, setDraggingLoop] = useState(null);
+  const [draggingPlayhead, setDraggingPlayhead] = useState(false);
+  const [autoScroll, setAutoScroll] = useState(true);
   const [zoom, setZoom] = useState(1);
   const BEAT_WIDTH = 64 * zoom;
   
+  const [dragOverlay, setDragOverlay] = useState(null);
+
   // Advanced Piano Roll State
   const [snapGrid, setSnapGrid] = useState(0.25); // Default 1/16th note
   const [selectedNotes, setSelectedNotes] = useState([]);
@@ -843,6 +1136,10 @@ export default function App() {
   const pianoKeysRef = useRef(null);
   const pianoRulerRef = useRef(null);
 
+  // Drum Pad State
+  const [newPadPitch, setNewPadPitch] = useState(60);
+  const [newPadName, setNewPadName] = useState('Custom Perc');
+
   // --- I/O & Settings State ---
   const [showIOSettings, setShowIOSettings] = useState(false);
   const [audioInputs, setAudioInputs] = useState([]);
@@ -850,15 +1147,20 @@ export default function App() {
   const [selectedAudioInput, setSelectedAudioInput] = useState('');
   const [selectedMidiInput, setSelectedMidiInput] = useState('');
 
-  const [usersDb, setUsersDb] = useState([]); 
+  const [usersDb, setUsersDb] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('webdaw_users')) || []; } catch(e) { return []; }
+  }); 
   const [activeSessionUsers, setActiveSessionUsers] = useState([]); 
-  const [currentUser, setCurrentUser] = useState(null);
+  const [currentUser, setCurrentUser] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('webdaw_current_user')) || null; } catch(e) { return null; }
+  });
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [showAdminModal, setShowAdminModal] = useState(false);
   const [authMode, setAuthMode] = useState('signin'); 
   const [authName, setAuthName] = useState('');
   const [authPassword, setAuthPassword] = useState('');
   const [authMessage, setAuthMessage] = useState('');
+  const [isProcessingFile, setIsProcessingFile] = useState(false);
 
   const audioCtxRef = useRef(null);
   const masterGainRef = useRef(null);
@@ -882,10 +1184,46 @@ export default function App() {
   const loopRegionRef = useRef(loopRegion);
   useEffect(() => { loopRegionRef.current = loopRegion; }, [loopRegion]);
 
-  const stateRefs = useRef({ currentTime, isPlaying, isRecording, bpm });
+  const stateRefs = useRef({ currentTime: 0, isPlaying, isRecording, bpm, autoScroll: true });
   useEffect(() => { 
-     stateRefs.current = { currentTime, isPlaying, isRecording, bpm }; 
-  }, [currentTime, isPlaying, isRecording, bpm]);
+     // We intentionally exclude currentTime here so the high-speed 
+     // audio engine loop doesn't get throttled/overwritten by React's render batching
+     stateRefs.current.isPlaying = isPlaying;
+     stateRefs.current.isRecording = isRecording;
+     stateRefs.current.bpm = bpm;
+     stateRefs.current.autoScroll = autoScroll;
+  }, [isPlaying, isRecording, bpm, autoScroll]);
+
+  // Custom Scrollbar styling & Persistent Auth sync
+  useEffect(() => {
+    const style = document.createElement('style');
+    style.innerHTML = `
+      .custom-scrollbar::-webkit-scrollbar { width: 8px; height: 8px; }
+      .custom-scrollbar::-webkit-scrollbar-track { background: rgba(0,0,0,0.15); border-radius: 4px; }
+      .custom-scrollbar::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 4px; }
+      .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #52525b; }
+      .custom-scrollbar-hide::-webkit-scrollbar { display: none; }
+    `;
+    document.head.appendChild(style);
+
+    if (currentUser) {
+        setActiveSessionUsers(prev => {
+          if (prev.find(u => u.id === currentUser.id)) return prev;
+          return [...prev, { ...currentUser, activeTrack: null }];
+        });
+    }
+
+    return () => {
+        if (document.head.contains(style)) document.head.removeChild(style);
+    };
+  }, []);
+
+  // Sync Auth states to LocalStorage
+  useEffect(() => { localStorage.setItem('webdaw_users', JSON.stringify(usersDb)); }, [usersDb]);
+  useEffect(() => { 
+    if (currentUser) localStorage.setItem('webdaw_current_user', JSON.stringify(currentUser));
+    else localStorage.removeItem('webdaw_current_user');
+  }, [currentUser]);
 
   // Load local projects list
   useEffect(() => {
@@ -918,6 +1256,22 @@ export default function App() {
     setTracks(prev => prev.map(t => t.id === trackId ? { ...t, clips: t.clips.filter(c => c.id !== clipId) } : t));
     if (bottomDock?.clipId === clipId) setBottomDock(null);
     updateUserPresence(trackId);
+  };
+
+  const handleTrackDrop = (e, targetId) => {
+    e.preventDefault();
+    if (!draggedTrackId || draggedTrackId === targetId) return;
+    
+    setTracks(prev => {
+        const newTracks = [...prev];
+        const draggedIdx = newTracks.findIndex(t => t.id === draggedTrackId);
+        const targetIdx = newTracks.findIndex(t => t.id === targetId);
+        
+        const [draggedTrack] = newTracks.splice(draggedIdx, 1);
+        newTracks.splice(targetIdx, 0, draggedTrack);
+        return newTracks;
+    });
+    setDraggedTrackId(null);
   };
 
   const duplicateClip = (trackId, clipId) => {
@@ -1112,11 +1466,31 @@ export default function App() {
     if (pianoRulerRef.current) pianoRulerRef.current.scrollLeft = e.currentTarget.scrollLeft;
   };
 
+  const playClick = (time, isAccent) => {
+    try {
+      if (!audioCtxRef.current || !masterGainRef.current) return;
+      const ctx = audioCtxRef.current;
+      const safeTime = Math.max(ctx.currentTime, time);
+      const osc = ctx.createOscillator();
+      const gainNode = ctx.createGain();
+      osc.connect(gainNode);
+      gainNode.connect(masterGainRef.current);
+      osc.frequency.value = isAccent ? 1200 : 800;
+      gainNode.gain.setValueAtTime(1, safeTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.001, safeTime + 0.1);
+      osc.start(safeTime);
+      osc.stop(safeTime + 0.1);
+    } catch (e) {
+      console.warn("Metronome click error:", e);
+    }
+  };
+
   const stopAudio = () => {
     Object.values(synthsRef.current).forEach(synth => {
       try {
         if (synth.gateGain) synth.gateGain.gain.setTargetAtTime(0, audioCtxRef.current?.currentTime || 0, 0.05);
         synth.currentNoteId = null;
+        if (synth.activeNoteIds) synth.activeNoteIds.clear();
         if (synth.activeSource) {
            synth.activeSource.stop();
            synth.activeSource = null;
@@ -1291,6 +1665,7 @@ export default function App() {
   const stopPlayback = () => {
     setIsPlaying(false);
     setCurrentTime(0);
+    stateRefs.current.currentTime = 0;
     stopAudio();
     if (isRecording) {
         setIsRecording(false);
@@ -1350,47 +1725,147 @@ export default function App() {
       bpm,
       tracks,
       lastModified: Date.now(),
-      version: "0.6.0"
+      version: "0.9.0"
     };
     
     localStorage.setItem(`webdaw_proj_${projId}`, JSON.stringify(projectData));
     alert(`Project "${projectName}" saved locally!`);
   };
 
-  const exportProjectToFile = () => {
-    const projectData = {
-      id: projectId || `proj_${Date.now()}`,
-      name: projectName,
-      bpm,
-      tracks,
-      lastModified: Date.now(),
-      version: "0.6.0"
-    };
-    
-    const blob = new Blob([JSON.stringify(projectData, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${projectName.replace(/\s+/g, '_')}.webdaw`;
-    a.click();
-    URL.revokeObjectURL(url);
+  const exportProjectToFile = async () => {
+    setIsProcessingFile(true);
+    try {
+      const JSZip = (await import('https://esm.sh/jszip')).default;
+      const zip = new JSZip();
+
+      const projectData = {
+        id: projectId || `proj_${Date.now()}`,
+        name: projectName,
+        bpm,
+        tracks,
+        lastModified: Date.now(),
+        version: "0.9.0"
+      };
+
+      // 1. Add arrangement data
+      zip.file("project.json", JSON.stringify(projectData, null, 2));
+
+      // 2. Identify all used audio samples
+      const usedSampleIds = new Set();
+      tracks.forEach(t => {
+        if (t.type === 'audio') {
+          t.clips.forEach(c => {
+            if (c.sampleId) usedSampleIds.add(c.sampleId);
+          });
+        }
+        if (t.instrumentParams) {
+          if (t.instrumentParams.sampleId) usedSampleIds.add(t.instrumentParams.sampleId);
+          if (t.instrumentParams.drumMap) {
+             Object.values(t.instrumentParams.drumMap).forEach(pad => {
+                if (pad.sampleId) usedSampleIds.add(pad.sampleId);
+             });
+          }
+        }
+      });
+
+      // 3. Render and package samples as true WAV files
+      if (usedSampleIds.size > 0) {
+          const samplesFolder = zip.folder("samples");
+          for (const sampleId of usedSampleIds) {
+             if (globalAudioBufferCache.has(sampleId)) {
+                const cacheItem = globalAudioBufferCache.get(sampleId);
+                const wavBuffer = audioBufferToWav(cacheItem.buffer);
+                samplesFolder.file(`${sampleId}.wav`, wavBuffer);
+             }
+          }
+      }
+
+      // 4. Encode and export all MIDI tracks as standard .mid files
+      const midiFolder = zip.folder("midi");
+      tracks.forEach(t => {
+        if (t.type === 'midi' && t.clips.some(c => c.notes && c.notes.length > 0)) {
+           const midiBytes = encodeMIDITrack(t, bpm);
+           const safeName = t.name.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+           midiFolder.file(`${safeName}_track_${t.id}.mid`, midiBytes);
+        }
+      });
+
+      // 5. Generate the complete archive
+      const content = await zip.generateAsync({ type: "blob", compression: "STORE" });
+      const url = URL.createObjectURL(content);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${projectName.replace(/\s+/g, '_')}.webdaw`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch(e) {
+      console.error("Export failed", e);
+      alert("Failed to export project archive: " + e.message);
+    }
+    setIsProcessingFile(false);
   };
 
-  const handleImportProjectFile = (e) => {
+  const handleImportProjectFile = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
     
-    const reader = new FileReader();
-    reader.onload = (evt) => {
-       try {
-         const data = JSON.parse(evt.target.result);
-         data.id = `proj_${Date.now()}`; 
-         loadProjectToDaw(data);
-       } catch(err) {
-         alert("Invalid project file");
-       }
-    };
-    reader.readAsText(file);
+    setIsProcessingFile(true);
+    try {
+      let isZip = false;
+      let projectData;
+      let zip;
+
+      try {
+        const JSZip = (await import('https://esm.sh/jszip')).default;
+        zip = await JSZip.loadAsync(file);
+        isZip = true;
+      } catch(zipErr) {
+        isZip = false;
+      }
+
+      if (isZip) {
+        if (!audioCtxRef.current) await initAudioEngine();
+        
+        // 1. Read JSON
+        const projectJsonString = await zip.file("project.json").async("string");
+        projectData = JSON.parse(projectJsonString);
+
+        // 2. Decode and inject bundled audio samples
+        const sampleFiles = Object.keys(zip.files).filter(name => name.startsWith('samples/') && !zip.files[name].dir);
+        for (const samplePath of sampleFiles) {
+           const sampleId = samplePath.replace('samples/', '').replace('.wav', '');
+           const sampleData = await zip.file(samplePath).async("arraybuffer");
+           
+           const audioBuffer = await audioCtxRef.current.decodeAudioData(sampleData);
+           
+           const peaks = [];
+           const data = audioBuffer.getChannelData(0);
+           const step = Math.max(1, Math.floor(data.length / 100));
+           for(let i=0; i<100; i++) {
+              let min = 1.0; let max = -1.0;
+              for(let j=0; j<step; j++) {
+                 const val = data[(i*step)+j];
+                 if(val < min) min = val;
+                 if(val > max) max = val;
+              }
+              peaks.push([min, max]);
+           }
+           globalAudioBufferCache.set(sampleId, { buffer: audioBuffer, peaks, duration: audioBuffer.duration });
+        }
+      } else {
+        // Fallback for legacy JSON-only projects
+        const text = await file.text();
+        projectData = JSON.parse(text);
+      }
+
+      projectData.id = `proj_${Date.now()}`; 
+      loadProjectToDaw(projectData);
+    } catch (err) {
+      console.error("Import error:", err);
+      alert("Failed to load project: " + err.message);
+    }
+    
+    setIsProcessingFile(false);
     e.target.value = null;
   };
 
@@ -1408,235 +1883,259 @@ export default function App() {
 
     let reqId;
     const update = () => {
-      if (!audioCtxRef.current) return;
+      if (!audioCtxRef.current) {
+         reqId = requestAnimationFrame(update);
+         return;
+      }
       const now = audioCtxRef.current.currentTime;
       const dt = now - lastTimeRef.current;
       lastTimeRef.current = now;
 
-      setCurrentTime(prevTime => {
-        let newTime = prevTime + (dt * (bpm / 60));
-        const loop = loopRegionRef.current;
-        let wrapped = false;
+      const prevTime = stateRefs.current.currentTime;
+      let newTime = prevTime + (dt * (bpm / 60));
+      const loop = loopRegionRef.current;
+      let wrapped = false;
 
-        if (loop.enabled && prevTime < loop.end && newTime >= loop.end) {
-            newTime = loop.start + (newTime - loop.end);
-            wrapped = true;
-            Object.values(synthsRef.current).forEach(synth => { synth.currentNoteId = null; });
-        } else if (loop.enabled && newTime >= loop.end) {
-            newTime = loop.start;
-            wrapped = true;
-            Object.values(synthsRef.current).forEach(synth => { synth.currentNoteId = null; });
+      if (loop.enabled && prevTime < loop.end && newTime >= loop.end) {
+          newTime = loop.start + (newTime - loop.end);
+          wrapped = true;
+          Object.values(synthsRef.current).forEach(synth => { synth.currentNoteId = null; if (synth.activeNoteIds) synth.activeNoteIds.clear(); });
+      } else if (loop.enabled && newTime >= loop.end) {
+          newTime = loop.start;
+          wrapped = true;
+          Object.values(synthsRef.current).forEach(synth => { synth.currentNoteId = null; if (synth.activeNoteIds) synth.activeNoteIds.clear(); });
+      }
+
+      if (metronomeEnabled && (wrapped || Math.floor(newTime) > Math.floor(prevTime))) {
+        playClick(now, Math.floor(newTime) % 4 === 0);
+      }
+
+      setCurrentTime(newTime);
+      stateRefs.current.currentTime = newTime;
+
+      if (stateRefs.current.autoScroll && timelineRef.current) {
+          const playheadX = newTime * BEAT_WIDTH;
+          const containerWidth = timelineRef.current.clientWidth;
+          const scrollLeft = timelineRef.current.scrollLeft;
+          if (playheadX > scrollLeft + containerWidth * 0.85) {
+              timelineRef.current.scrollLeft = playheadX - (containerWidth * 0.1);
+          } else if (playheadX < scrollLeft) {
+              timelineRef.current.scrollLeft = Math.max(0, playheadX - (containerWidth * 0.1));
+          }
+      }
+
+      const currentTracks = tracksRef.current;
+      const anySolo = currentTracks.some(t => t.solo);
+      
+      currentTracks.forEach(track => {
+        const synth = synthsRef.current[track.id];
+        if (!synth) return;
+
+        const activeClip = track.clips.find(c => newTime >= c.start && newTime < c.start + c.duration);
+        const shouldPlayTrack = activeClip && !track.muted && (!anySolo || track.solo);
+
+        const targetVolume = (!track.muted && (!anySolo || track.solo)) ? track.volume / 100 : 0;
+        if (Math.abs(synth.faderGain.gain.value - targetVolume) > 0.01) {
+          synth.faderGain.gain.setTargetAtTime(targetVolume, now, 0.05);
         }
 
-        if (metronomeEnabled && (wrapped || Math.floor(newTime) > Math.floor(prevTime))) {
-          playClick(now, Math.floor(newTime) % 4 === 0);
-        }
+        if (track.type === 'midi') {
+          if (activeClip && shouldPlayTrack) {
+            const clipTime = newTime - activeClip.start;
+            const activeNotes = activeClip.notes?.filter(n => clipTime >= n.start && clipTime < n.start + n.duration) || [];
 
-        const currentTracks = tracksRef.current;
-        const anySolo = currentTracks.some(t => t.solo);
-        
-        currentTracks.forEach(track => {
-          const synth = synthsRef.current[track.id];
-          if (!synth) return;
-
-          const activeClip = track.clips.find(c => newTime >= c.start && newTime < c.start + c.duration);
-          const shouldPlayTrack = activeClip && !track.muted && (!anySolo || track.solo);
-
-          const targetVolume = (!track.muted && (!anySolo || track.solo)) ? track.volume / 100 : 0;
-          if (Math.abs(synth.faderGain.gain.value - targetVolume) > 0.01) {
-            synth.faderGain.gain.setTargetAtTime(targetVolume, now, 0.05);
-          }
-
-          if (track.type === 'midi') {
-            if (activeClip && shouldPlayTrack) {
-              const clipTime = newTime - activeClip.start;
-              const activeNote = activeClip.notes?.find(n => clipTime >= n.start && clipTime < n.start + n.duration);
-
-              if (activeNote) {
-                if (synth.currentNoteId !== activeNote.id) {
-                  synth.currentNoteId = activeNote.id;
-                  const durSeconds = activeNote.duration * (60/bpm);
-                  const velocity = activeNote.velocity ?? 100; // Grab note velocity
-                  
-                  if (synth.wamInstance && synth.wamInstance.audioNode && synth.wamInstance.audioNode.scheduleEvents) {
-                     synth.wamInstance.audioNode.scheduleEvents({
-                         type: 'wam-midi', time: now, data: { bytes: [0x90, activeNote.pitch, velocity] }
-                     });
-                     synth.wamInstance.audioNode.scheduleEvents({
-                         type: 'wam-midi', time: now + durSeconds, data: { bytes: [0x80, activeNote.pitch, 0] }
-                     });
-                  } else if (track.instrument === 'inst-drum') {
-                    triggerDrum(audioCtxRef.current, synth.inputBus, activeNote.pitch, now, 1, track.instrumentParams, velocity);
-                  } else if (track.instrument === 'inst-fm') {
-                    triggerFMSynth(audioCtxRef.current, synth.inputBus, activeNote.pitch, now, 1, durSeconds, track.instrumentParams, velocity);
-                  } else if (track.instrument === 'inst-sampler') {
-                    triggerSampler(audioCtxRef.current, synth.inputBus, activeNote.pitch, now, 1, durSeconds, track.instrumentParams, velocity);
-                  } else if (track.instrument === 'inst-supersaw') {
-                    triggerSupersaw(audioCtxRef.current, synth.inputBus, activeNote.pitch, now, 1, durSeconds, track.instrumentParams, velocity);
-                  } else if (track.instrument === 'inst-pluck') {
-                    triggerPluck(audioCtxRef.current, synth.inputBus, activeNote.pitch, now, 1, durSeconds, track.instrumentParams, velocity);
-                  } else if (track.instrument === 'inst-acid') {
-                    triggerAcid(audioCtxRef.current, synth.inputBus, activeNote.pitch, now, 1, durSeconds, track.instrumentParams, velocity);
-                  } else if (track.instrument === 'inst-organ') {
-                    triggerOrgan(audioCtxRef.current, synth.inputBus, activeNote.pitch, now, 1, durSeconds, track.instrumentParams, velocity);
-                  } else {
-                    triggerSubtractive(audioCtxRef.current, synth.inputBus, activeNote.pitch, now, 1, durSeconds, track.instrumentParams, velocity);
-                  }
-                }
-              } else {
-                synth.currentNoteId = null;
-              }
-            } else {
-              synth.currentNoteId = null;
-            }
-          } else {
-            if (activeClip && shouldPlayTrack && !activeClip.isRecording) {
-               if (synth.currentNoteId !== activeClip.id) {
-                   synth.currentNoteId = activeClip.id;
-                   
-                   if (activeClip.sampleId && globalAudioBufferCache.has(activeClip.sampleId)) {
-                       const sampleData = globalAudioBufferCache.get(activeClip.sampleId);
-                       const source = audioCtxRef.current.createBufferSource();
-                       source.buffer = sampleData.buffer;
-                       const offset = (newTime - activeClip.start) / (bpm / 60);
-                       source.connect(synth.inputBus);
-                       source.start(now, Math.max(0, offset));
-                       synth.activeSource = source;
-                   } else {
-                       synth.gateGain.gain.setTargetAtTime(1, now, 0.02);
-                   }
-               }
-            } else {
-               if (synth.currentNoteId) {
-                   synth.currentNoteId = null;
-                   synth.gateGain.gain.setTargetAtTime(0, now, 0.02);
-                   if (synth.activeSource) {
-                       try { synth.activeSource.stop(now); } catch(e){}
-                       synth.activeSource = null;
-                   }
-               }
-            }
-          }
-        });
-
-        currentTracks.forEach(track => {
-            const synth = synthsRef.current[track.id];
-            if (synth && synth.analyser) {
-                const data = new Uint8Array(synth.analyser.frequencyBinCount);
-                synth.analyser.getByteFrequencyData(data);
-                let sum = 0;
-                for(let i=0; i<data.length; i++) sum += data[i];
-                const avg = sum / data.length;
+            activeNotes.forEach(activeNote => {
+              if (!synth.activeNoteIds) synth.activeNoteIds = new Set();
+              if (!synth.activeNoteIds.has(activeNote.id)) {
+                synth.activeNoteIds.add(activeNote.id);
+                const durSeconds = activeNote.duration * (60/bpm);
+                const velocity = activeNote.velocity ?? 100; 
                 
-                const vuCanvas = document.getElementById(`vu-meter-${track.id}`);
-                if (vuCanvas) {
-                    const ctx = vuCanvas.getContext('2d');
-                    if (vuCanvas.width !== vuCanvas.clientWidth) vuCanvas.width = vuCanvas.clientWidth;
-                    if (vuCanvas.height !== vuCanvas.clientHeight) vuCanvas.height = vuCanvas.clientHeight;
-                    
-                    ctx.clearRect(0, 0, vuCanvas.width, vuCanvas.height);
-                    const h = (avg / 128) * vuCanvas.height; 
-                    const gradient = ctx.createLinearGradient(0, vuCanvas.height, 0, 0);
-                    gradient.addColorStop(0, '#22c55e');
-                    gradient.addColorStop(0.7, '#eab308');
-                    gradient.addColorStop(1, '#ef4444');
-                    ctx.fillStyle = gradient;
-                    ctx.fillRect(0, vuCanvas.height - h, vuCanvas.width, h);
+                if (synth.wamInstance && synth.wamInstance.audioNode && synth.wamInstance.audioNode.scheduleEvents) {
+                   synth.wamInstance.audioNode.scheduleEvents({
+                       type: 'wam-midi', time: now, data: { bytes: [0x90, activeNote.pitch, velocity] }
+                   });
+                   synth.wamInstance.audioNode.scheduleEvents({
+                       type: 'wam-midi', time: now + durSeconds, data: { bytes: [0x80, activeNote.pitch, 0] }
+                   });
+                } else if (track.instrument === 'inst-drum') {
+                  triggerDrum(audioCtxRef.current, synth.inputBus, activeNote.pitch, now, 1, track.instrumentParams, velocity);
+                } else if (track.instrument === 'inst-fm') {
+                  triggerFMSynth(audioCtxRef.current, synth.inputBus, activeNote.pitch, now, 1, durSeconds, track.instrumentParams, velocity);
+                } else if (track.instrument === 'inst-sampler') {
+                  triggerSampler(audioCtxRef.current, synth.inputBus, activeNote.pitch, now, 1, durSeconds, track.instrumentParams, velocity);
+                } else if (track.instrument === 'inst-supersaw') {
+                  triggerSupersaw(audioCtxRef.current, synth.inputBus, activeNote.pitch, now, 1, durSeconds, track.instrumentParams, velocity);
+                } else if (track.instrument === 'inst-pluck') {
+                  triggerPluck(audioCtxRef.current, synth.inputBus, activeNote.pitch, now, 1, durSeconds, track.instrumentParams, velocity);
+                } else if (track.instrument === 'inst-acid') {
+                  triggerAcid(audioCtxRef.current, synth.inputBus, activeNote.pitch, now, 1, durSeconds, track.instrumentParams, velocity);
+                } else if (track.instrument === 'inst-organ') {
+                  triggerOrgan(audioCtxRef.current, synth.inputBus, activeNote.pitch, now, 1, durSeconds, track.instrumentParams, velocity);
+                } else {
+                  triggerSubtractive(audioCtxRef.current, synth.inputBus, activeNote.pitch, now, 1, durSeconds, track.instrumentParams, velocity);
                 }
-            }
-        });
-
-        if (masterAnalyserRef.current) {
-            const data = new Uint8Array(masterAnalyserRef.current.frequencyBinCount);
-            masterAnalyserRef.current.getByteFrequencyData(data);
-            
-            let sum = 0;
-            for(let i=0; i<data.length; i++) sum += data[i];
-            const avg = sum / data.length;
-
-            ['vu-meter-master-l', 'vu-meter-master-r'].forEach(id => {
-                const vuCanvas = document.getElementById(id);
-                if (vuCanvas) {
-                    const ctx = vuCanvas.getContext('2d');
-                    if (vuCanvas.width !== vuCanvas.clientWidth) vuCanvas.width = vuCanvas.clientWidth;
-                    if (vuCanvas.height !== vuCanvas.clientHeight) vuCanvas.height = vuCanvas.clientHeight;
-                    ctx.clearRect(0, 0, vuCanvas.width, vuCanvas.height);
-                    const mockStereoAvg = Math.max(0, avg + (id === 'vu-meter-master-l' ? Math.random()*2 : -Math.random()*2)); 
-                    const h = Math.min(vuCanvas.height, (mockStereoAvg / 128) * vuCanvas.height);
-                    const gradient = ctx.createLinearGradient(0, vuCanvas.height, 0, 0);
-                    gradient.addColorStop(0, '#22c55e');
-                    gradient.addColorStop(0.7, '#eab308');
-                    gradient.addColorStop(1, '#ef4444');
-                    ctx.fillStyle = gradient;
-                    ctx.fillRect(0, vuCanvas.height - h, vuCanvas.width, h);
-                }
+              }
             });
 
-            const specCanvas = document.getElementById('spectral-canvas');
-            if (specCanvas) {
-                const ctx = specCanvas.getContext('2d');
-                if (specCanvas.width !== specCanvas.clientWidth) specCanvas.width = specCanvas.clientWidth;
-                if (specCanvas.height !== specCanvas.clientHeight) specCanvas.height = specCanvas.clientHeight;
-                
-                ctx.clearRect(0, 0, specCanvas.width, specCanvas.height);
-                
-                const nyquist = audioCtxRef.current.sampleRate / 2;
-                const minFreq = 20; 
-                const minLog = Math.log10(minFreq);
-                const maxLog = Math.log10(nyquist);
-                const logRange = maxLog - minLog;
-
-                ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
-                ctx.lineWidth = 1;
-                [100, 1000, 10000].forEach(f => {
-                    const x = ((Math.log10(f) - minLog) / logRange) * specCanvas.width;
-                    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, specCanvas.height); ctx.stroke();
-                    ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
-                    ctx.font = '10px monospace';
-                    ctx.fillText(`${f >= 1000 ? f/1000+'k' : f}Hz`, x + 5, 15);
-                });
-
-                ctx.beginPath();
-                let firstPoint = true;
-                
-                for (let i = 0; i < data.length; i++) {
-                    const freq = (i * nyquist) / data.length;
-                    if (freq < minFreq) continue; 
-                    const x = ((Math.log10(freq) - minLog) / logRange) * specCanvas.width;
-                    const y = specCanvas.height - ((data[i] / 255) * specCanvas.height);
-                    
-                    if (firstPoint) {
-                        ctx.moveTo(x, y);
-                        firstPoint = false;
-                    } else {
-                        ctx.lineTo(x, y);
-                    }
-                }
-                
-                ctx.strokeStyle = 'rgba(236, 72, 153, 0.9)';
-                ctx.lineWidth = 2;
-                ctx.stroke();
-
-                ctx.lineTo(specCanvas.width, specCanvas.height);
-                ctx.lineTo(0, specCanvas.height);
-                ctx.closePath();
-                
-                const gradient = ctx.createLinearGradient(0, specCanvas.height, 0, 0);
-                gradient.addColorStop(0, 'rgba(59, 130, 246, 0.1)'); 
-                gradient.addColorStop(0.5, 'rgba(168, 85, 247, 0.4)'); 
-                gradient.addColorStop(1, 'rgba(236, 72, 153, 0.8)'); 
-                ctx.fillStyle = gradient;
-                ctx.fill();
+            if (synth.activeNoteIds) {
+               const activeNoteIdsArr = activeNotes.map(n => n.id);
+               for (const id of synth.activeNoteIds) {
+                  if (!activeNoteIdsArr.includes(id)) {
+                     synth.activeNoteIds.delete(id);
+                  }
+               }
             }
+          } else {
+            if (synth.activeNoteIds) synth.activeNoteIds.clear();
+          }
+        } else {
+          // Audio track routing & playback
+          if (activeClip && shouldPlayTrack && !activeClip.isRecording) {
+             if (!synth.activeNoteIds) synth.activeNoteIds = new Set();
+             if (!synth.activeNoteIds.has(activeClip.id)) {
+                 synth.activeNoteIds.add(activeClip.id);
+                 
+                 if (activeClip.sampleId && globalAudioBufferCache.has(activeClip.sampleId)) {
+                     const sampleData = globalAudioBufferCache.get(activeClip.sampleId);
+                     const source = audioCtxRef.current.createBufferSource();
+                     source.buffer = sampleData.buffer;
+                     const offset = (newTime - activeClip.start) / (bpm / 60);
+                     source.connect(synth.inputBus);
+                     source.start(now, Math.max(0, offset));
+                     synth.activeSource = source;
+                 } else {
+                     synth.gateGain.gain.setTargetAtTime(1, now, 0.02);
+                 }
+             }
+          } else {
+             if (synth.activeNoteIds && synth.activeNoteIds.size > 0) {
+                 synth.activeNoteIds.clear();
+                 synth.gateGain.gain.setTargetAtTime(0, now, 0.02);
+                 if (synth.activeSource) {
+                     try { synth.activeSource.stop(now); } catch(e){}
+                     synth.activeSource = null;
+                 }
+             }
+          }
         }
-
-        return newTime;
       });
+
+      currentTracks.forEach(track => {
+          const synth = synthsRef.current[track.id];
+          if (synth && synth.analyser) {
+              const data = new Uint8Array(synth.analyser.frequencyBinCount);
+              synth.analyser.getByteFrequencyData(data);
+              let sum = 0;
+              for(let i=0; i<data.length; i++) sum += data[i];
+              const avg = sum / data.length;
+              
+              const vuCanvas = document.getElementById(`vu-meter-${track.id}`);
+              if (vuCanvas) {
+                  const ctx = vuCanvas.getContext('2d');
+                  if (vuCanvas.width !== vuCanvas.clientWidth) vuCanvas.width = vuCanvas.clientWidth;
+                  if (vuCanvas.height !== vuCanvas.clientHeight) vuCanvas.height = vuCanvas.clientHeight;
+                  
+                  ctx.clearRect(0, 0, vuCanvas.width, vuCanvas.height);
+                  const h = (avg / 128) * vuCanvas.height; 
+                  const gradient = ctx.createLinearGradient(0, vuCanvas.height, 0, 0);
+                  gradient.addColorStop(0, '#22c55e');
+                  gradient.addColorStop(0.7, '#eab308');
+                  gradient.addColorStop(1, '#ef4444');
+                  ctx.fillStyle = gradient;
+                  ctx.fillRect(0, vuCanvas.height - h, vuCanvas.width, h);
+              }
+          }
+      });
+
+      if (masterAnalyserRef.current) {
+          const data = new Uint8Array(masterAnalyserRef.current.frequencyBinCount);
+          masterAnalyserRef.current.getByteFrequencyData(data);
+          
+          let sum = 0;
+          for(let i=0; i<data.length; i++) sum += data[i];
+          const avg = sum / data.length;
+
+          ['vu-meter-master-l', 'vu-meter-master-r'].forEach(id => {
+              const vuCanvas = document.getElementById(id);
+              if (vuCanvas) {
+                  const ctx = vuCanvas.getContext('2d');
+                  if (vuCanvas.width !== vuCanvas.clientWidth) vuCanvas.width = vuCanvas.clientWidth;
+                  if (vuCanvas.height !== vuCanvas.clientHeight) vuCanvas.height = vuCanvas.clientHeight;
+                  ctx.clearRect(0, 0, vuCanvas.width, vuCanvas.height);
+                  const mockStereoAvg = Math.max(0, avg + (id === 'vu-meter-master-l' ? Math.random()*2 : -Math.random()*2)); 
+                  const h = Math.min(vuCanvas.height, (mockStereoAvg / 128) * vuCanvas.height);
+                  const gradient = ctx.createLinearGradient(0, vuCanvas.height, 0, 0);
+                  gradient.addColorStop(0, '#22c55e');
+                  gradient.addColorStop(0.7, '#eab308');
+                  gradient.addColorStop(1, '#ef4444');
+                  ctx.fillStyle = gradient;
+                  ctx.fillRect(0, vuCanvas.height - h, vuCanvas.width, h);
+              }
+          });
+
+          const specCanvas = document.getElementById('spectral-canvas');
+          if (specCanvas) {
+              const ctx = specCanvas.getContext('2d');
+              if (specCanvas.width !== specCanvas.clientWidth) specCanvas.width = specCanvas.clientWidth;
+              if (specCanvas.height !== specCanvas.clientHeight) specCanvas.height = specCanvas.clientHeight;
+              
+              ctx.clearRect(0, 0, specCanvas.width, specCanvas.height);
+              
+              const nyquist = audioCtxRef.current.sampleRate / 2;
+              const minFreq = 20; 
+              const minLog = Math.log10(minFreq);
+              const maxLog = Math.log10(nyquist);
+              const logRange = maxLog - minLog;
+
+              ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
+              ctx.lineWidth = 1;
+              [100, 1000, 10000].forEach(f => {
+                  const x = ((Math.log10(f) - minLog) / logRange) * specCanvas.width;
+                  ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, specCanvas.height); ctx.stroke();
+                  ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+                  ctx.font = '10px monospace';
+                  ctx.fillText(`${f >= 1000 ? f/1000+'k' : f}Hz`, x + 5, 15);
+              });
+
+              ctx.beginPath();
+              let firstPoint = true;
+              
+              for (let i = 0; i < data.length; i++) {
+                  const freq = (i * nyquist) / data.length;
+                  if (freq < minFreq) continue; 
+                  const x = ((Math.log10(freq) - minLog) / logRange) * specCanvas.width;
+                  const y = specCanvas.height - ((data[i] / 255) * specCanvas.height);
+                  
+                  if (firstPoint) {
+                      ctx.moveTo(x, y);
+                      firstPoint = false;
+                  } else {
+                      ctx.lineTo(x, y);
+                  }
+              }
+              
+              ctx.strokeStyle = 'rgba(236, 72, 153, 0.9)';
+              ctx.lineWidth = 2;
+              ctx.stroke();
+
+              ctx.lineTo(specCanvas.width, specCanvas.height);
+              ctx.lineTo(0, specCanvas.height);
+              ctx.closePath();
+              
+              const gradient = ctx.createLinearGradient(0, specCanvas.height, 0, 0);
+              gradient.addColorStop(0, 'rgba(59, 130, 246, 0.1)'); 
+              gradient.addColorStop(0.5, 'rgba(168, 85, 247, 0.4)'); 
+              gradient.addColorStop(1, 'rgba(236, 72, 153, 0.8)'); 
+              ctx.fillStyle = gradient;
+              ctx.fill();
+          }
+      }
 
       reqId = requestAnimationFrame(update);
     };
 
-    lastTimeRef.current = audioCtxRef.current.currentTime;
+    lastTimeRef.current = audioCtxRef.current?.currentTime || 0;
     reqId = requestAnimationFrame(update);
 
     return () => cancelAnimationFrame(reqId);
@@ -1758,7 +2257,7 @@ export default function App() {
         const newTracks = prev.map(t => {
           if (t.id !== trackId) return t;
           let newParams = {};
-          if (newInstrumentId === 'inst-drum') newParams = { kickPitch: 150, snareDecay: 0.2 };
+          if (newInstrumentId === 'inst-drum') newParams = { drumMap: DEFAULT_DRUM_MAP };
           else if (newInstrumentId === 'inst-subtractive') newParams = { oscType: 'sawtooth', cutoff: 2000, res: 1.5, attack: 0.01, release: 0.2 };
           else if (newInstrumentId === 'inst-fm') newParams = { ratio: 2, modIndex: 5, attack: 0.01, release: 0.2 };
           else if (newInstrumentId === 'inst-supersaw') newParams = { detune: 25, attack: 0.05, release: 0.5 };
@@ -1831,6 +2330,108 @@ export default function App() {
       console.error("Failed to decode audio file", err);
     }
     e.target.value = null; 
+  };
+
+  const handleDrumSampleUpload = async (e, trackId, pitch) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (!audioCtxRef.current) await initAudioEngine();
+    
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      const audioBuffer = await audioCtxRef.current.decodeAudioData(arrayBuffer);
+      const sampleId = `sample_${Date.now()}_${file.name}`;
+      
+      const peaks = [];
+      const data = audioBuffer.getChannelData(0);
+      const step = Math.max(1, Math.floor(data.length / 100));
+      for(let i=0; i<100; i++) {
+         let min = 1.0; let max = -1.0;
+         for(let j=0; j<step; j++) {
+            const val = data[(i*step)+j];
+            if(val < min) min = val;
+            if(val > max) max = val;
+         }
+         peaks.push([min, max]);
+      }
+
+      globalAudioBufferCache.set(sampleId, { buffer: audioBuffer, peaks, duration: audioBuffer.duration });
+      
+      setTracks(prev => prev.map(t => {
+        if (t.id !== trackId) return t;
+        const currentMap = t.instrumentParams?.drumMap || DEFAULT_DRUM_MAP;
+        return {
+          ...t,
+          instrumentParams: { 
+              ...t.instrumentParams, 
+              drumMap: {
+                  ...currentMap,
+                  [pitch]: {
+                      ...(currentMap[pitch] || { name: `Pad ${pitch}` }),
+                      sampleId: sampleId,
+                      startOffset: 0,
+                      endOffset: audioBuffer.duration
+                  }
+              }
+          }
+        };
+      }));
+    } catch (err) {
+      console.error("Failed to decode audio file", err);
+    }
+    e.target.value = null; 
+  };
+
+  const handleAddDrumPad = (trackId) => {
+     setTracks(prev => prev.map(t => {
+        if (t.id !== trackId) return t;
+        const currentMap = t.instrumentParams?.drumMap || DEFAULT_DRUM_MAP;
+        return {
+           ...t,
+           instrumentParams: {
+              ...t.instrumentParams,
+              drumMap: {
+                 ...currentMap,
+                 [newPadPitch]: { name: newPadName || `Pad ${newPadPitch}`, sampleId: null, tune: 150, decay: 0.2 }
+              }
+           }
+        };
+     }));
+  };
+
+  const handleRemoveDrumPad = (trackId, pitch) => {
+     setTracks(prev => prev.map(t => {
+        if (t.id !== trackId) return t;
+        const currentMap = { ...(t.instrumentParams?.drumMap || DEFAULT_DRUM_MAP) };
+        delete currentMap[pitch];
+        return {
+           ...t,
+           instrumentParams: {
+              ...t.instrumentParams,
+              drumMap: currentMap
+           }
+        };
+     }));
+  };
+
+  const handleDrumParamChange = (trackId, pitch, param, value) => {
+     setTracks(prev => prev.map(t => {
+        if (t.id !== trackId) return t;
+        const currentMap = t.instrumentParams?.drumMap || DEFAULT_DRUM_MAP;
+        return {
+           ...t,
+           instrumentParams: {
+              ...t.instrumentParams,
+              drumMap: {
+                 ...currentMap,
+                 [pitch]: {
+                     ...currentMap[pitch],
+                     [param]: value
+                 }
+              }
+           }
+        };
+     }));
   };
 
   const handleFetchPublicWAMs = () => {
@@ -1943,6 +2544,161 @@ export default function App() {
     updateUserPresence(trackId);
   };
 
+  // --- Drag and Drop Handlers for Timeline ---
+  const handleTimelineDragOver = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!e.dataTransfer.types.includes('Files')) return;
+
+    let beat = 0;
+    let targetTrackId = 'new';
+
+    if (timelineRef.current) {
+        const timelineRect = timelineRef.current.getBoundingClientRect();
+        if (e.clientX >= timelineRect.left) {
+            const x = e.clientX - timelineRect.left + timelineRef.current.scrollLeft;
+            const snap = snapGrid || 0.25;
+            beat = Math.max(0, Math.round((x / BEAT_WIDTH) / snap) * snap);
+        }
+        
+        const y = e.clientY - timelineRect.top + timelineRef.current.scrollTop;
+        if (y >= 0) {
+            const trackIndex = Math.floor(y / 96); // 96px is track height (h-24)
+            if (trackIndex >= 0 && trackIndex < tracks.length) {
+                targetTrackId = tracks[trackIndex].id;
+            }
+        }
+    }
+
+    setDragOverlay(prev => {
+        if (prev && prev.active && prev.beat === beat && prev.trackId === targetTrackId) return prev;
+        return { active: true, beat, trackId: targetTrackId };
+    });
+  };
+
+  const handleTimelineDragLeave = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.currentTarget.contains(e.relatedTarget)) return;
+    setDragOverlay(null);
+  };
+
+  const handleTimelineDrop = async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const dropState = dragOverlay;
+    setDragOverlay(null);
+
+    if (!dropState || !e.dataTransfer.files || e.dataTransfer.files.length === 0) return;
+
+    const file = e.dataTransfer.files[0];
+    const fileName = file.name.toLowerCase();
+    const isMidi = fileName.endsWith('.mid') || fileName.endsWith('.midi');
+    const isAudio = file.type.startsWith('audio/') || fileName.endsWith('.wav') || fileName.endsWith('.mp3') || fileName.endsWith('.ogg') || fileName.endsWith('.flac');
+
+    if (!isMidi && !isAudio) return;
+
+    try {
+        const arrayBuffer = await file.arrayBuffer();
+        let newClip = null;
+
+        if (isMidi) {
+            const notes = parseMIDIFile(arrayBuffer, bpm);
+            if (notes.length === 0) throw new Error("No notes found in MIDI file");
+
+            const minStart = Math.min(...notes.map(n => n.start));
+            const maxEnd = Math.max(...notes.map(n => n.start + n.duration));
+            const normalizedNotes = notes.map(n => ({
+                ...n,
+                start: n.start - minStart
+            }));
+
+            newClip = {
+                id: Date.now(),
+                start: dropState.beat,
+                duration: Math.max(1, maxEnd - minStart),
+                notes: normalizedNotes
+            };
+        } else if (isAudio) {
+            if (!audioCtxRef.current) await initAudioEngine();
+            const audioBuffer = await audioCtxRef.current.decodeAudioData(arrayBuffer);
+            const sampleId = `import_${Date.now()}_${file.name}`;
+
+            const peaks = [];
+            const data = audioBuffer.getChannelData(0);
+            const step = Math.max(1, Math.floor(data.length / 100));
+            for(let i=0; i<100; i++) {
+               let min = 1.0; let max = -1.0;
+               for(let j=0; j<step; j++) {
+                  const val = data[(i*step)+j];
+                  if(val < min) min = val;
+                  if(val > max) max = val;
+               }
+               peaks.push([min, max]);
+            }
+
+            globalAudioBufferCache.set(sampleId, { buffer: audioBuffer, peaks, duration: audioBuffer.duration });
+            const durationBeats = audioBuffer.duration * (bpm / 60);
+
+            newClip = {
+                id: Date.now(),
+                start: dropState.beat,
+                duration: durationBeats,
+                sampleId: sampleId
+            };
+        }
+
+        setTracks(prevTracks => {
+            let newTracks = [...prevTracks];
+            let trackIdx = newTracks.findIndex(t => t.id === dropState.trackId);
+            let targetTrackId = dropState.trackId;
+
+            if (targetTrackId === 'new') {
+                const newId = newTracks.reduce((max, t) => Math.max(max, t.id), 0) + 1;
+                const newTrack = {
+                   id: newId,
+                   name: file.name.replace(/\.[^/.]+$/, ""),
+                   type: isMidi ? 'midi' : 'audio',
+                   instrument: isMidi ? 'inst-subtractive' : null,
+                   instrumentParams: isMidi ? { oscType: 'sawtooth', cutoff: 2000, res: 1.5, attack: 0.01, release: 0.2 } : null,
+                   color: ['bg-pink-500', 'bg-indigo-500', 'bg-cyan-500', 'bg-emerald-500'][newId % 4],
+                   volume: 80, pan: 0, muted: false, solo: false, armed: false,
+                   icon: isMidi ? Music : Mic,
+                   clips: [newClip],
+                   effects: []
+                };
+                newTracks.push(newTrack);
+                
+                setTimeout(() => {
+                    if (audioCtxRef.current) {
+                        initTrackRouting(newTrack, audioCtxRef.current, masterGainRef.current, vstLibraryRef.current).then(synth => {
+                            synthsRef.current[newId] = synth;
+                        });
+                    }
+                }, 0);
+                return newTracks;
+            }
+
+            const targetTrack = newTracks[trackIdx];
+            if (isMidi && targetTrack.type !== 'midi') {
+                alert("Cannot drop MIDI on an Audio track.");
+                return prevTracks;
+            }
+            if (isAudio && targetTrack.type !== 'audio') {
+                alert("Cannot drop Audio on a MIDI track.");
+                return prevTracks;
+            }
+
+            newTracks[trackIdx] = { ...targetTrack, clips: [...targetTrack.clips, newClip] };
+            return newTracks;
+        });
+
+    } catch (err) {
+        console.error("Import error", err);
+        alert("Failed to parse file: " + err.message);
+    }
+  };
+
   const toggleArmTrack = (trackId) => {
      setTracks(prev => prev.map(t => {
         if (t.id === trackId) return { ...t, armed: !t.armed };
@@ -1951,8 +2707,8 @@ export default function App() {
   };
 
   const PITCH_HEIGHT = 16; 
-  const PITCH_MAX = 72; 
-  const PITCH_MIN = 36; 
+  const PITCH_MAX = 108; // C7
+  const PITCH_MIN = 24;  // C0
 
   const handleClipMouseDown = (e, trackId, clip) => {
     if (e.target.dataset.edge) return; 
@@ -2094,6 +2850,14 @@ export default function App() {
             }
           })
         } : t));
+      } else if (draggingPlayhead) {
+         const rect = timelineRef.current?.getBoundingClientRect();
+         if (rect) {
+             const x = e.clientX - rect.left + (timelineRef.current?.scrollLeft || 0);
+             const newTime = Math.max(0, x / BEAT_WIDTH);
+             setCurrentTime(newTime);
+             stateRefs.current.currentTime = newTime;
+         }
       } else if (draggingNote) {
         if (draggingNote.tool === 'velocity') {
            const deltaY = draggingNote.startY - e.clientY; 
@@ -2145,6 +2909,7 @@ export default function App() {
       setDraggingNote(null);
       setDraggingEdge(null);
       setDraggingLoop(null);
+      setDraggingPlayhead(false);
       
       if (draggingNote) {
          setTracks(prev => prev.map(t => t.id === draggingNote.trackId ? {
@@ -2159,7 +2924,7 @@ export default function App() {
       }
     };
 
-    if (draggingClip || draggingNote || draggingEdge || draggingLoop) {
+    if (draggingClip || draggingNote || draggingEdge || draggingLoop || draggingPlayhead) {
       if (draggingNote && !draggingNote.initialsSet && draggingNote.tool !== 'resize') {
           setTracks(prev => prev.map(t => t.id === draggingNote.trackId ? {
              ...t, clips: t.clips.map(c => c.id === draggingNote.clipId ? {
@@ -2178,10 +2943,11 @@ export default function App() {
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
     };
-  }, [draggingClip, draggingNote, draggingEdge, draggingLoop, BEAT_WIDTH, snapGrid, selectedNotes]);
+  }, [draggingClip, draggingNote, draggingEdge, draggingLoop, draggingPlayhead, BEAT_WIDTH, snapGrid, selectedNotes]);
 
-  const handleTimelineClick = (e) => {
+  const handleTimelineMouseDown = (e) => {
     if (e.target.closest('.group') || draggingClip || draggingNote || draggingLoop) return;
+    setDraggingPlayhead(true);
 
     const rect = e.currentTarget.getBoundingClientRect();
     const scrollLeft = e.currentTarget.scrollLeft || 0;
@@ -2189,11 +2955,16 @@ export default function App() {
     const newTime = Math.max(0, x / BEAT_WIDTH);
     
     setCurrentTime(newTime);
+    stateRefs.current.currentTime = newTime;
     
     if (audioCtxRef.current) {
       Object.values(synthsRef.current).forEach(synth => {
         if (synth.gateGain) synth.gateGain.gain.setTargetAtTime(0, audioCtxRef.current.currentTime, 0.01);
-        synth.currentNoteId = null;
+        if (synth.activeNoteIds) synth.activeNoteIds.clear();
+        if (synth.activeSource) {
+           try { synth.activeSource.stop(audioCtxRef.current.currentTime); } catch(err){}
+           synth.activeSource = null;
+        }
       });
       document.querySelectorAll('canvas').forEach(canvas => {
         const ctx = canvas.getContext('2d');
@@ -2235,6 +3006,159 @@ export default function App() {
     }
   };
 
+  const handleAuthSubmit = (e) => {
+    e.preventDefault();
+    setAuthMessage('');
+    if (authName.trim() && authPassword.trim()) {
+      if (authMode === 'register') {
+        const existing = usersDb.find(u => u.name === authName.trim());
+        if (existing) {
+          setAuthMessage('Name already taken.');
+          return;
+        }
+        
+        const isFirstUser = usersDb.length === 0; 
+        const colors = ['bg-yellow-500', 'bg-red-500', 'bg-cyan-500', 'bg-indigo-500', 'bg-pink-500'];
+        const randomColor = colors[Math.floor(Math.random() * colors.length)];
+        const newUser = { 
+          id: `u-${Date.now()}`, 
+          name: authName.trim(), 
+          password: authPassword.trim(),
+          role: isFirstUser ? 'admin' : 'user',
+          status: isFirstUser ? 'approved' : 'pending',
+          color: randomColor, 
+          activeTrack: null 
+        };
+        
+        setUsersDb(prev => [...prev, newUser]);
+        
+        if (isFirstUser) {
+          setCurrentUser(newUser);
+          setActiveSessionUsers(prev => [...prev, newUser]);
+          setShowAuthModal(false);
+          setAuthName(''); setAuthPassword('');
+        } else {
+          setAuthMessage('Registered! Waiting for admin approval.');
+          setAuthMode('signin');
+        }
+      } else { 
+        const user = usersDb.find(u => u.name === authName.trim() && u.password === authPassword.trim());
+        if (!user) {
+          setAuthMessage('Invalid name or password.');
+          return;
+        }
+        if (user.status === 'pending') {
+          setAuthMessage('Account pending admin approval.');
+          return;
+        }
+        
+        setCurrentUser(user);
+        setActiveSessionUsers(prev => {
+          if (prev.find(u => u.id === user.id)) return prev;
+          return [...prev, { ...user, activeTrack: null }];
+        });
+        setShowAuthModal(false);
+        setAuthName(''); setAuthPassword('');
+      }
+    }
+  };
+
+  const handleSignOut = () => {
+    setActiveSessionUsers(prev => prev.filter(c => c.id !== currentUser.id));
+    setCurrentUser(null);
+  };
+
+  const handleAvatarUpload = (e) => {
+    const file = e.target.files[0];
+    if (!file || !currentUser) return;
+    
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      const img = new Image();
+      img.onload = () => {
+        // Resize and crop the image to a tiny 128x128 square to safely fit in LocalStorage
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        const size = 128;
+        canvas.width = size;
+        canvas.height = size;
+        
+        const minDim = Math.min(img.width, img.height);
+        const sx = (img.width - minDim) / 2;
+        const sy = (img.height - minDim) / 2;
+        
+        ctx.drawImage(img, sx, sy, minDim, minDim, 0, 0, size, size);
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+
+        const updatedUser = { ...currentUser, avatar: dataUrl };
+        setCurrentUser(updatedUser);
+        setUsersDb(prev => prev.map(u => u.id === currentUser.id ? updatedUser : u));
+        setActiveSessionUsers(prev => prev.map(u => u.id === currentUser.id ? updatedUser : u));
+      };
+      img.src = evt.target.result;
+    };
+    reader.readAsDataURL(file);
+    e.target.value = null; // Reset input
+  };
+
+  const openAuthModal = () => {
+    setAuthMode(usersDb.length === 0 ? 'register' : 'signin');
+    setAuthMessage('');
+    setShowAuthModal(true);
+  };
+
+  const renderAuthModal = () => {
+    if (!showAuthModal) return null;
+    return (
+      <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+        <div className="bg-neutral-900 border border-neutral-800 rounded-xl w-full max-w-sm overflow-hidden shadow-2xl animate-in fade-in zoom-in-95 duration-200">
+          <div className="px-6 py-4 border-b border-neutral-800 flex items-center justify-between bg-neutral-950">
+            <h2 className="text-lg font-semibold text-white">{authMode === 'signin' ? 'Sign In to WebDAW' : 'Create an Account'}</h2>
+            <button onClick={() => setShowAuthModal(false)} className="text-neutral-500 hover:text-white transition-colors"><X size={18} /></button>
+          </div>
+          <form onSubmit={handleAuthSubmit} className="p-6 flex flex-col gap-4">
+            {authMessage && (
+              <div className={`text-xs text-center p-2.5 rounded font-medium ${authMessage.includes('Waiting') || authMessage.includes('pending') ? 'bg-yellow-500/10 text-yellow-500 border border-yellow-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'}`}>
+                {authMessage}
+              </div>
+            )}
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-medium text-neutral-400 uppercase tracking-wider">Name</label>
+              <input 
+                type="text" 
+                value={authName} 
+                onChange={(e) => setAuthName(e.target.value)} 
+                required 
+                autoFocus
+                className="bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500 transition-colors" 
+                placeholder="Enter your name" 
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-medium text-neutral-400 uppercase tracking-wider">Password</label>
+              <input 
+                type="password" 
+                value={authPassword} 
+                onChange={(e) => setAuthPassword(e.target.value)} 
+                required 
+                className="bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500 transition-colors" 
+                placeholder="••••••••" 
+              />
+            </div>
+            <button type="submit" className="w-full bg-blue-600 hover:bg-blue-500 text-white font-medium py-2.5 rounded-lg mt-2 transition-colors shadow-lg shadow-blue-500/20">
+              {authMode === 'signin' ? 'Sign In' : 'Register'}
+            </button>
+            <div className="text-center mt-2">
+              <button type="button" onClick={() => { setAuthMode(authMode === 'signin' ? 'register' : 'signin'); setAuthMessage(''); }} className="text-xs text-neutral-500 hover:text-blue-400 transition-colors">
+                {authMode === 'signin' ? "Don't have an account? Register" : "Already have an account? Sign In"}
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    );
+  };
+
   // ==========================================
   // HOME SCREEN RENDER BLOCK
   // ==========================================
@@ -2251,9 +3175,12 @@ export default function App() {
              {currentUser ? (
               <div className="flex items-center gap-3 pl-2">
                  <div className="flex items-center gap-2">
-                   <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center text-xs text-white font-bold shadow-sm">
-                     {currentUser.name.charAt(0).toUpperCase()}
-                   </div>
+                   <label className="relative cursor-pointer group" title="Upload Profile Picture">
+                     <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center text-xs text-white font-bold shadow-sm overflow-hidden border border-neutral-700 group-hover:border-blue-400 transition-colors">
+                       {currentUser.avatar ? <img src={currentUser.avatar} alt="Avatar" className="w-full h-full object-cover" /> : currentUser.name.charAt(0).toUpperCase()}
+                     </div>
+                     <input type="file" accept="image/*" hidden onChange={handleAvatarUpload} />
+                   </label>
                    <span className="text-sm font-medium text-white">{currentUser.name}</span>
                  </div>
                  <button onClick={handleSignOut} className="p-2 text-neutral-500 hover:text-red-400 transition-colors rounded-lg hover:bg-neutral-800" title="Sign Out">
@@ -2261,7 +3188,7 @@ export default function App() {
                  </button>
               </div>
             ) : (
-              <button onClick={() => setShowAuthModal(true)} className="flex items-center gap-2 px-4 py-2 text-neutral-300 hover:text-white transition-colors rounded-full hover:bg-neutral-800 border border-neutral-800 font-medium text-sm">
+              <button onClick={openAuthModal} className="flex items-center gap-2 px-4 py-2 text-neutral-300 hover:text-white transition-colors rounded-full hover:bg-neutral-800 border border-neutral-800 font-medium text-sm">
                 <UserCircle size={18} /> Sign In
               </button>
             )}
@@ -2333,55 +3260,8 @@ export default function App() {
            </div>
         </div>
         
-        {/* Auth Modals remain available on home screen */}
-        {showAuthModal && (
-          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-            <div className="bg-neutral-900 border border-neutral-800 rounded-xl w-full max-w-sm overflow-hidden shadow-2xl animate-in fade-in zoom-in-95 duration-200">
-              <div className="px-6 py-4 border-b border-neutral-800 flex items-center justify-between bg-neutral-950">
-                <h2 className="text-lg font-semibold text-white">{authMode === 'signin' ? 'Sign In to WebDAW' : 'Create an Account'}</h2>
-                <button onClick={() => setShowAuthModal(false)} className="text-neutral-500 hover:text-white transition-colors"><X size={18} /></button>
-              </div>
-              <form onSubmit={handleAuthSubmit} className="p-6 flex flex-col gap-4">
-                {authMessage && (
-                  <div className={`text-xs text-center p-2.5 rounded font-medium ${authMessage.includes('Waiting') || authMessage.includes('pending') ? 'bg-yellow-500/10 text-yellow-500 border border-yellow-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'}`}>
-                    {authMessage}
-                  </div>
-                )}
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-medium text-neutral-400 uppercase tracking-wider">Name</label>
-                  <input 
-                    type="text" 
-                    value={authName} 
-                    onChange={(e) => setAuthName(e.target.value)} 
-                    required 
-                    autoFocus
-                    className="bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500 transition-colors" 
-                    placeholder="Enter your name" 
-                  />
-                </div>
-                <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-medium text-neutral-400 uppercase tracking-wider">Password</label>
-                  <input 
-                    type="password" 
-                    value={authPassword} 
-                    onChange={(e) => setAuthPassword(e.target.value)} 
-                    required 
-                    className="bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500 transition-colors" 
-                    placeholder="••••••••" 
-                  />
-                </div>
-                <button type="submit" className="w-full bg-blue-600 hover:bg-blue-500 text-white font-medium py-2.5 rounded-lg mt-2 transition-colors shadow-lg shadow-blue-500/20">
-                  {authMode === 'signin' ? 'Sign In' : 'Register'}
-                </button>
-                <div className="text-center mt-2">
-                  <button type="button" onClick={() => { setAuthMode(authMode === 'signin' ? 'register' : 'signin'); setAuthMessage(''); }} className="text-xs text-neutral-500 hover:text-blue-400 transition-colors">
-                    {authMode === 'signin' ? "Don't have an account? Register" : "Already have an account? Sign In"}
-                  </button>
-                </div>
-              </form>
-            </div>
-          </div>
-        )}
+        {/* Unified Auth Modal */}
+        {renderAuthModal()}
       </div>
     );
   }
@@ -2392,129 +3272,115 @@ export default function App() {
   return (
     <div className="flex flex-col h-screen bg-neutral-900 text-neutral-300 font-sans selection:bg-blue-500/30">
       
-      {/* Top Navigation / App Bar */}
+      {/* Top Navigation, Transport & App Bar */}
       <header className="h-14 bg-neutral-950 border-b border-neutral-800 flex items-center justify-between px-4 shrink-0 z-40">
-        <div className="flex items-center gap-4">
+        {/* LEFT: Project Info */}
+        <div className="flex items-center gap-4 flex-1">
           <button onClick={closeDawToHome} className="flex items-center justify-center p-2 text-neutral-400 hover:text-white hover:bg-neutral-800 rounded-lg transition-colors group">
              <Home size={18} className="group-active:scale-95 transition-transform" />
           </button>
           <div className="w-px h-6 bg-neutral-800" />
-          
-          <div className="flex items-center gap-2 group">
+          <div className="flex items-center gap-2 group max-w-[150px] lg:max-w-[200px]">
              <input 
                value={projectName}
                onChange={(e) => setProjectName(e.target.value)}
-               className="bg-transparent text-white font-bold text-lg outline-none w-48 focus:border-b-2 focus:border-blue-500 px-1 placeholder:text-neutral-600 truncate"
+               className="bg-transparent text-white font-bold text-sm lg:text-base outline-none w-full focus:border-b-2 focus:border-blue-500 px-1 placeholder:text-neutral-600 truncate"
                placeholder="Project Name"
              />
-             <Pencil size={12} className="text-neutral-600 opacity-0 group-hover:opacity-100 transition-opacity" />
+             <Pencil size={12} className="text-neutral-600 opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
-          <button onClick={saveProjectToLocal} className="flex items-center gap-1.5 px-3 py-1.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-300 hover:text-white text-xs font-bold rounded-lg transition-colors border border-neutral-700 shadow-sm">
-             <Save size={14} /> Local Save
+        {/* CENTER: Transport Controls */}
+        <div className="flex items-center gap-1.5 bg-neutral-900 px-3 py-1.5 rounded-lg border border-neutral-800 shadow-sm shrink-0">
+          <button onClick={stopPlayback} className="p-1.5 text-neutral-400 hover:text-white hover:bg-neutral-800 rounded transition-colors"><SkipBack size={16} /></button>
+          <button onClick={togglePlay} className={`p-2 rounded-full transition-colors flex items-center justify-center ${isPlaying ? 'bg-blue-600 text-white shadow-[0_0_12px_rgba(37,99,235,0.4)]' : 'bg-neutral-800 hover:bg-neutral-700 text-white'}`}>
+            {isPlaying ? <Pause size={16} fill="currentColor" /> : <Play size={16} fill="currentColor" className="ml-0.5" />}
           </button>
-          <button onClick={exportProjectToFile} className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-lg transition-colors shadow-[0_0_10px_rgba(37,99,235,0.3)]">
-             <Download size={14} /> Export .webdaw
+          <button onClick={stopPlayback} className="p-1.5 text-neutral-400 hover:text-white hover:bg-neutral-800 rounded transition-colors"><Square size={16} /></button>
+          <button onClick={toggleRecord} className={`p-1.5 rounded transition-colors ml-1 ${isRecording ? 'text-red-500 bg-red-500/20 shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'text-red-400 hover:text-red-300 hover:bg-neutral-800'}`} title="Record (Requires Armed Track)">
+            <Circle size={16} fill="currentColor" />
           </button>
           
-          <div className="w-px h-6 bg-neutral-800 mx-2" />
+          <div className="w-px h-5 bg-neutral-800 mx-1" />
+          
+          <button onClick={() => setLoopRegion(prev => ({...prev, enabled: !prev.enabled}))} className={`p-1.5 rounded transition-colors ${loopRegion.enabled ? 'text-blue-400 bg-blue-500/20' : 'text-neutral-400 hover:text-white hover:bg-neutral-800'}`} title="Toggle Loop Region">
+            <Repeat size={16} />
+          </button>
+          <button onClick={() => setAutoScroll(!autoScroll)} className={`p-1.5 rounded transition-colors ${autoScroll ? 'text-green-400 bg-green-500/20' : 'text-neutral-400 hover:text-white hover:bg-neutral-800'}`} title="Auto-Scroll Timeline">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M13 5l7 7-7 7M4 12h16"/></svg>
+          </button>
+        </div>
 
-          {/* I/O Settings Button */}
-          <button onClick={() => { requestIO(); setShowIOSettings(true); }} className="p-2 text-neutral-400 hover:text-white transition-colors rounded hover:bg-neutral-800" title="I/O Settings">
+        {/* RIGHT: Info & Settings */}
+        <div className="flex items-center justify-end gap-3 flex-1">
+          <div className="hidden lg:flex items-center gap-4 bg-neutral-900 px-3 py-1.5 rounded-lg border border-neutral-800 font-mono text-[10px]">
+            <div className="flex items-center gap-1.5 text-neutral-400"><span className="uppercase text-[8px] text-neutral-600">Time</span> <span className="text-white">{(currentTime * (60/bpm)).toFixed(2).padStart(5, '0')}</span></div>
+            <div className="flex items-center gap-1.5 text-neutral-400"><span className="uppercase text-[8px] text-neutral-600">Pos</span> <span className="text-white">{Math.floor(currentTime / 4) + 1}.{Math.floor(currentTime % 4) + 1}.1</span></div>
+            <div className="flex items-center gap-1 text-neutral-400"><span className="uppercase text-[8px] text-neutral-600">BPM</span> <input type="number" value={bpm} onChange={(e) => setBpm(Number(e.target.value))} className="bg-transparent w-8 text-white focus:outline-none" min="40" max="300" /></div>
+            <button onClick={() => setMetronomeEnabled(!metronomeEnabled)} className={`flex items-center justify-center p-0.5 rounded-full transition-colors ${metronomeEnabled ? 'text-blue-400 bg-blue-500/10 shadow-[0_0_8px_rgba(59,130,246,0.3)]' : 'text-neutral-500 hover:text-neutral-300'}`} title="Metronome Click">
+               <Activity size={12} />
+            </button>
+          </div>
+          
+          <div className="w-px h-6 bg-neutral-800" />
+
+          <button onClick={() => { requestIO(); setShowIOSettings(true); }} className="p-1.5 text-neutral-400 hover:text-white transition-colors rounded hover:bg-neutral-800" title="Project Settings & I/O">
               <Settings2 size={18} />
           </button>
           
-          <div className="flex items-center gap-2 bg-neutral-900 px-3 py-1.5 rounded-full border border-neutral-800">
-            <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-            <div className="flex -space-x-2">
+          <div className="flex items-center gap-1.5 bg-neutral-900 px-2 py-1.5 rounded-full border border-neutral-800">
+            <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse ml-1" />
+            <div className="flex -space-x-1.5 pr-0.5">
               {activeSessionUsers.map(collab => (
-                <div key={collab.id} className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] text-white font-bold ring-2 ring-neutral-900 ${collab.color}`} title={`${collab.name} is editing`}>
-                  {collab.name.charAt(0).toUpperCase()}
+                <div key={collab.id} className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] text-white font-bold ring-2 ring-neutral-900 ${collab.color} overflow-hidden`} title={`${collab.name} is editing`}>
+                  {collab.avatar ? <img src={collab.avatar} alt={collab.name} className="w-full h-full object-cover" /> : collab.name.charAt(0).toUpperCase()}
                 </div>
               ))}
             </div>
           </div>
           
           {currentUser ? (
-            <div className="flex items-center gap-3 pl-2">
-               <div className="flex items-center gap-2">
-                 <div className="w-7 h-7 rounded-full bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center text-xs text-white font-bold shadow-sm">
-                   {currentUser.name.charAt(0).toUpperCase()}
+            <div className="flex items-center gap-2">
+               <label className="relative cursor-pointer group" title="Upload Profile Picture">
+                 <div className="w-7 h-7 rounded-full bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center text-xs text-white font-bold shadow-sm overflow-hidden border border-neutral-700 group-hover:border-blue-400 transition-colors">
+                   {currentUser.avatar ? <img src={currentUser.avatar} alt="Avatar" className="w-full h-full object-cover" /> : currentUser.name.charAt(0).toUpperCase()}
                  </div>
-               </div>
-               <button onClick={handleSignOut} className="p-1.5 text-neutral-500 hover:text-red-400 transition-colors rounded hover:bg-neutral-800" title="Sign Out">
-                 <LogOut size={16} />
+                 <input type="file" accept="image/*" hidden onChange={handleAvatarUpload} />
+               </label>
+               <button onClick={handleSignOut} className="p-1 text-neutral-500 hover:text-red-400 transition-colors rounded-full hover:bg-neutral-800 flex items-center justify-center" title="Sign Out">
+                  <LogOut size={16} />
                </button>
             </div>
           ) : (
-            <button onClick={() => setShowAuthModal(true)} className="flex items-center gap-2 p-1.5 pr-3 text-neutral-400 hover:text-white transition-colors rounded-full hover:bg-neutral-800 border border-neutral-800">
-              <UserCircle size={22} />
+            <button onClick={openAuthModal} className="p-1 text-neutral-400 hover:text-white transition-colors rounded-full hover:bg-neutral-800">
+              <UserCircle size={20} />
             </button>
           )}
         </div>
       </header>
 
-      {/* Transport Controls */}
-      <div className="h-16 bg-neutral-900 border-b border-neutral-800 flex items-center px-4 gap-8 shrink-0">
-        <div className="flex items-center gap-2">
-          <button onClick={stopPlayback} className="p-2 hover:text-white hover:bg-neutral-800 rounded transition-colors"><SkipBack size={20} /></button>
-          <button onClick={togglePlay} className={`p-3 rounded-full transition-colors flex items-center justify-center ${isPlaying ? 'bg-blue-600 text-white shadow-[0_0_15px_rgba(37,99,235,0.4)]' : 'bg-neutral-800 hover:bg-neutral-700 text-white'}`}>
-            {isPlaying ? <Pause size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" className="ml-1" />}
-          </button>
-          <button onClick={stopPlayback} className="p-2 hover:text-white hover:bg-neutral-800 rounded transition-colors"><Square size={20} /></button>
-          <button onClick={toggleRecord} className={`p-2 rounded transition-colors ml-2 ${isRecording ? 'text-red-500 bg-red-500/20 shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'text-red-400 hover:text-red-300 hover:bg-neutral-800'}`} title="Record (Requires Armed Track)">
-            <Circle size={20} fill="currentColor" />
+      {/* Main Workspace */}
+      <div 
+        className="flex flex-1 overflow-hidden relative"
+        onDragOver={handleTimelineDragOver}
+        onDragLeave={handleTimelineDragLeave}
+        onDrop={handleTimelineDrop}
+      >
+        {/* Left Vertical Navigation Menu */}
+        <div className="w-12 bg-neutral-950 border-r border-neutral-800 flex flex-col items-center py-4 z-30 shrink-0">
+          <button onClick={() => { setActiveView('arrangement'); setBottomDock(null); }} className={`p-2.5 rounded-xl transition-all ${activeView === 'arrangement' && !bottomDock ? 'text-blue-400 bg-blue-500/10 shadow-[0_0_10px_rgba(59,130,246,0.2)]' : 'text-neutral-500 hover:text-neutral-300 hover:bg-neutral-800'}`} title="Arrangement View">
+            <Piano size={20} />
           </button>
           
-          <div className="w-px h-6 bg-neutral-800 mx-2" />
-          <button onClick={() => setLoopRegion(prev => ({...prev, enabled: !prev.enabled}))} className={`p-2 rounded transition-colors ${loopRegion.enabled ? 'text-blue-400 bg-blue-500/20 shadow-[0_0_10px_rgba(59,130,246,0.3)]' : 'text-neutral-400 hover:text-white hover:bg-neutral-800'}`} title="Toggle Loop Region">
-            <Repeat size={20} />
-          </button>
-        </div>
-
-        <div className="flex items-center gap-6 bg-neutral-950 px-6 py-2 rounded-lg border border-neutral-800 font-mono text-sm">
-          <div className="flex flex-col">
-            <span className="text-[10px] text-neutral-500 uppercase tracking-wider">Time</span>
-            <span className="text-white">00:00:{(currentTime * (60/bpm)).toFixed(2).padStart(5, '0')}</span>
+          <div className="mt-auto flex flex-col items-center gap-3">
+            <button onClick={() => setActiveView('mixer')} className={`p-2.5 rounded-xl transition-all ${activeView === 'mixer' ? 'text-blue-400 bg-blue-500/10 shadow-[0_0_10px_rgba(59,130,246,0.2)]' : 'text-neutral-500 hover:text-neutral-300 hover:bg-neutral-800'}`} title="Mixer Console">
+              <Sliders size={20} />
+            </button>
+            <button onClick={() => setActiveView('browser')} className={`p-2.5 rounded-xl transition-all ${activeView === 'browser' ? 'text-blue-400 bg-blue-500/10 shadow-[0_0_10px_rgba(59,130,246,0.2)]' : 'text-neutral-500 hover:text-neutral-300 hover:bg-neutral-800'}`} title="Project Browser">
+              <Folder size={20} />
+            </button>
           </div>
-          <div className="w-px h-6 bg-neutral-800" />
-          <div className="flex flex-col">
-            <span className="text-[10px] text-neutral-500 uppercase tracking-wider">Bar.Beat</span>
-            <span className="text-white">{Math.floor(currentTime / 4) + 1}.{Math.floor(currentTime % 4) + 1}.1</span>
-          </div>
-          <div className="w-px h-6 bg-neutral-800" />
-          <div className="flex items-center gap-2">
-            <div className="flex flex-col">
-              <span className="text-[10px] text-neutral-500 uppercase tracking-wider">Tempo</span>
-              <input type="number" value={bpm} onChange={(e) => setBpm(Number(e.target.value))} className="bg-transparent w-12 text-white focus:outline-none" min="40" max="300" />
-            </div>
-          </div>
-          <div className="w-px h-6 bg-neutral-800" />
-          <button onClick={() => setMetronomeEnabled(!metronomeEnabled)} className={`flex flex-col items-center justify-center p-1 rounded ${metronomeEnabled ? 'text-blue-400' : 'text-neutral-500 hover:text-neutral-300'}`}>
-            <span className="text-[10px] uppercase tracking-wider mb-0.5">Click</span>
-            <div className={`w-2 h-2 rounded-full ${metronomeEnabled ? 'bg-blue-400 shadow-[0_0_8px_rgba(96,165,250,0.8)]' : 'bg-neutral-600'}`} />
-          </button>
-        </div>
-      </div>
-
-      {/* Main Workspace */}
-      <div className="flex flex-1 overflow-hidden relative">
-        <div className="w-14 bg-neutral-950 border-r border-neutral-800 flex flex-col items-center py-4 gap-4 z-30 shrink-0">
-          <button onClick={() => { setActiveView('arrangement'); setBottomDock(null); }} className={`p-2.5 rounded-xl transition-colors ${activeView === 'arrangement' && !bottomDock ? 'text-blue-400 bg-blue-500/10' : 'text-neutral-500 hover:text-neutral-300 hover:bg-neutral-800'}`} title="Arrangement/Mix Window">
-            <MoreHorizontal size={22} />
-          </button>
-          <button onClick={() => setActiveView('mixer')} className={`p-2.5 rounded-xl transition-colors ${activeView === 'mixer' ? 'text-blue-400 bg-blue-500/10' : 'text-neutral-500 hover:text-neutral-300 hover:bg-neutral-800'}`} title="Mixer Panel">
-            <Sliders size={22} />
-          </button>
-          <button onClick={() => { setActiveView('arrangement'); if(!bottomDock || bottomDock.type === 'devices') alert('Double-click a MIDI clip in the Arrangement view to open the Editor Suite!'); }} className={`p-2.5 rounded-xl transition-colors ${bottomDock?.type === 'piano-roll' ? 'text-purple-400 bg-purple-500/10' : 'text-neutral-500 hover:text-neutral-300 hover:bg-neutral-800'}`} title="MIDI Editor Suite">
-            <Piano size={22} />
-          </button>
-          <div className="w-8 h-px bg-neutral-800 my-2" />
-          <button onClick={() => setActiveView('browser')} className={`p-2.5 rounded-xl transition-colors ${activeView === 'browser' ? 'text-blue-400 bg-blue-500/10' : 'text-neutral-500 hover:text-neutral-300 hover:bg-neutral-800'}`} title="Project/Session Browser">
-            <Folder size={22} />
-          </button>
         </div>
 
         {activeView === 'browser' ? (
@@ -2605,7 +3471,7 @@ export default function App() {
                   
                   <div className="w-full px-4 mb-4 flex flex-col items-center">
                      <span className="text-[9px] text-neutral-500 mb-1 font-mono">PAN</span>
-                     <input type="range" min="-50" max="50" value={track.pan} onChange={(e) => handlePanChange(track.id, e.target.value)} className="w-full h-1 bg-neutral-800 rounded-full appearance-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-2 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:bg-neutral-400 hover:[&::-webkit-slider-thumb]:bg-white cursor-pointer" />
+                     <input type="range" min="-50" max="50" value={track.pan} onDoubleClick={() => handlePanChange(track.id, 0)} onChange={(e) => handlePanChange(track.id, e.target.value)} className="w-full h-1 bg-neutral-800 rounded-full appearance-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-2 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:bg-neutral-400 hover:[&::-webkit-slider-thumb]:bg-white cursor-pointer" title="Double-click to reset" />
                   </div>
                   
                   <div className="flex gap-1.5 mb-6">
@@ -2627,9 +3493,11 @@ export default function App() {
                          <input 
                            type="range" orient="vertical" min="0" max="100" 
                            value={track.volume}
+                           onDoubleClick={() => handleVolumeChange(track.id, 80)}
                            onChange={(e) => handleVolumeChange(track.id, e.target.value)}
                            className="h-full w-full appearance-none bg-transparent cursor-pointer z-20 absolute inset-0 opacity-0"
                            style={{ WebkitAppearance: 'slider-vertical' }}
+                           title="Double-click to reset"
                          />
                          <div className="absolute left-1/2 -translate-x-1/2 w-10 h-6 bg-gradient-to-b from-neutral-300 to-neutral-400 rounded shadow-[0_4px_6px_rgba(0,0,0,0.5)] border-b-4 border-neutral-500 pointer-events-none z-10 transition-colors group-hover:from-white group-hover:to-neutral-300" style={{ bottom: `calc(${track.volume}% - 12px)` }}>
                            <div className="w-full h-0.5 bg-black/50 absolute top-1/2 -translate-y-1/2 shadow-[0_1px_0_rgba(255,255,255,0.5)]" />
@@ -2662,7 +3530,7 @@ export default function App() {
                      <div className="w-2 bg-black rounded-full h-full relative shadow-inner border border-neutral-800/50" />
                      
                      <div className="absolute inset-y-4 inset-x-0 group">
-                         <input type="range" orient="vertical" min="0" max="100" value={masterVolume} onChange={(e) => handleMasterVolumeChange(e.target.value)} className="h-full w-full appearance-none bg-transparent cursor-pointer z-20 absolute inset-0 opacity-0" style={{ WebkitAppearance: 'slider-vertical' }} />
+                         <input type="range" orient="vertical" min="0" max="100" value={masterVolume} onDoubleClick={() => handleMasterVolumeChange(80)} onChange={(e) => handleMasterVolumeChange(e.target.value)} className="h-full w-full appearance-none bg-transparent cursor-pointer z-20 absolute inset-0 opacity-0" style={{ WebkitAppearance: 'slider-vertical' }} title="Double-click to reset" />
                          <div className="absolute left-1/2 -translate-x-1/2 w-10 h-6 bg-gradient-to-b from-red-500 to-red-600 rounded shadow-[0_4px_6px_rgba(0,0,0,0.5)] border-b-4 border-red-800 pointer-events-none z-10" style={{ bottom: `calc(${masterVolume}% - 12px)` }}>
                            <div className="w-full h-0.5 bg-black/50 absolute top-1/2 -translate-y-1/2 shadow-[0_1px_0_rgba(255,255,255,0.3)]" />
                          </div>
@@ -2680,13 +3548,23 @@ export default function App() {
             <div className="flex-1 flex overflow-hidden">
               {/* Track Headers (Left Pane) */}
               <div className="w-72 bg-neutral-900 border-r border-neutral-800 flex flex-col z-20 shadow-[4px_0_24px_rgba(0,0,0,0.2)]">
-                <div className="h-8 border-b border-neutral-800 bg-neutral-950 flex justify-end px-2 items-center gap-2">
-                   <button onClick={() => handleAddTrack('midi')} className="flex items-center gap-1 text-[10px] uppercase font-semibold text-neutral-400 hover:text-white bg-neutral-800/50 hover:bg-neutral-800 px-2 py-1 rounded transition-colors" title="Add MIDI Track">
-                      <Plus size={12}/> MIDI
-                   </button>
-                   <button onClick={() => handleAddTrack('audio')} className="flex items-center gap-1 text-[10px] uppercase font-semibold text-neutral-400 hover:text-white bg-neutral-800/50 hover:bg-neutral-800 px-2 py-1 rounded transition-colors" title="Add Audio Track">
-                      <Plus size={12}/> Audio
-                   </button>
+                <div className="h-8 border-b border-neutral-800 bg-neutral-950 flex justify-between px-2 items-center">
+                   {/* Zoom Controls */}
+                   <div className="flex items-center bg-neutral-900 rounded border border-neutral-800 h-5">
+                     <button onClick={() => setZoom(prev => Math.max(0.25, prev - 0.25))} className="px-2 h-full text-neutral-500 hover:text-white hover:bg-neutral-800 rounded-l border-r border-neutral-800 transition-colors">-</button>
+                     <span className="text-[9px] font-mono text-neutral-400 w-10 text-center select-none" title="Zoom Level">{Math.round(zoom * 100)}%</span>
+                     <button onClick={() => setZoom(prev => Math.min(4, prev + 0.25))} className="px-2 h-full text-neutral-500 hover:text-white hover:bg-neutral-800 rounded-r border-l border-neutral-800 transition-colors">+</button>
+                   </div>
+                   
+                   {/* Track Actions */}
+                   <div className="flex gap-1.5">
+                     <button onClick={() => handleAddTrack('midi')} className="flex items-center gap-1 text-[9px] uppercase font-semibold text-neutral-400 hover:text-white bg-neutral-800/50 hover:bg-neutral-800 px-1.5 py-1 rounded transition-colors" title="Add MIDI Track">
+                        <Plus size={10}/> MIDI
+                     </button>
+                     <button onClick={() => handleAddTrack('audio')} className="flex items-center gap-1 text-[9px] uppercase font-semibold text-neutral-400 hover:text-white bg-neutral-800/50 hover:bg-neutral-800 px-1.5 py-1 rounded transition-colors" title="Add Audio Track">
+                        <Plus size={10}/> Audio
+                     </button>
+                   </div>
                 </div>
                 
                 <div className="flex-1 overflow-y-auto overflow-x-hidden">
@@ -2696,7 +3574,15 @@ export default function App() {
                     const isDeviceRackOpen = bottomDock?.type === 'devices' && bottomDock?.trackId === track.id;
                     
                     return (
-                      <div key={track.id} onContextMenu={(e) => handleContextMenu(e, 'track', { trackId: track.id })} className={`h-24 border-b flex flex-col p-2 transition-colors group relative ${isDeviceRackOpen ? 'bg-neutral-800/70 border-neutral-700' : 'hover:bg-neutral-800/50 border-neutral-800'} ${track.armed ? 'border-l-4 border-l-red-500 bg-red-500/5' : ''}`}>
+                      <div 
+                        key={track.id} 
+                        draggable
+                        onDragStart={(e) => setDraggedTrackId(track.id)}
+                        onDragOver={(e) => e.preventDefault()}
+                        onDrop={(e) => handleTrackDrop(e, track.id)}
+                        onContextMenu={(e) => handleContextMenu(e, 'track', { trackId: track.id })} 
+                        className={`h-24 border-b flex flex-col p-2 transition-colors group relative ${isDeviceRackOpen ? 'bg-neutral-800/70 border-neutral-700' : 'hover:bg-neutral-800/50 border-neutral-800'} ${track.armed ? 'border-l-4 border-l-red-500 bg-red-500/5' : ''} cursor-grab active:cursor-grabbing`}
+                      >
                         {hasActiveCollab && <div className={`absolute left-0 top-0 bottom-0 w-1 ${hasActiveCollab.color}`} />}
 
                         <div className="flex items-center justify-between mb-2 pl-2">
@@ -2707,14 +3593,14 @@ export default function App() {
                                 autoFocus onBlur={() => setEditingTrackId(null)} onKeyDown={(e) => e.key === 'Enter' && setEditingTrackId(null)}
                                 onChange={(e) => setTracks(prev => prev.map(t => t.id === track.id ? { ...t, name: e.target.value } : t))}
                                 value={track.name}
-                                className="text-sm font-medium bg-neutral-950 text-white w-[100px] border border-neutral-700 rounded px-1 outline-none"
+                                className="text-sm font-medium bg-neutral-950 text-white w-[80px] border border-neutral-700 rounded px-1 outline-none"
                               />
                             ) : (
-                              <span onDoubleClick={() => setEditingTrackId(track.id)} className="text-sm text-neutral-200 font-medium truncate w-[100px] cursor-text" title="Double-click to rename">{track.name}</span>
+                              <span onDoubleClick={() => setEditingTrackId(track.id)} className="text-sm text-neutral-200 font-medium truncate w-[80px] cursor-text" title="Double-click to rename">{track.name}</span>
                             )}
                           </div>
                           
-                          <div className="flex items-center gap-1">
+                          <div className="flex items-center gap-0.5">
                             <button onClick={() => toggleArmTrack(track.id)} className={`w-6 h-6 rounded flex items-center justify-center transition-all ${track.armed ? 'text-red-500 bg-red-500/20' : 'text-neutral-500 hover:text-red-400 hover:bg-neutral-800'}`} title="Record Arm">
                                <Circle size={10} fill={track.armed ? 'currentColor' : 'none'} />
                             </button>
@@ -2742,7 +3628,7 @@ export default function App() {
 
                         <div className="flex items-center gap-2 px-2 mt-auto pb-1">
                           <Volume2 size={12} className="text-neutral-500" />
-                          <input type="range" min="0" max="100" value={track.volume} onChange={(e) => handleVolumeChange(track.id, e.target.value)} className="w-full h-1.5 bg-neutral-950 rounded-full appearance-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-neutral-400 [&::-webkit-slider-thumb]:rounded-full hover:[&::-webkit-slider-thumb]:bg-white cursor-pointer" />
+                          <input type="range" min="0" max="100" value={track.volume} onDoubleClick={() => handleVolumeChange(track.id, 80)} onChange={(e) => handleVolumeChange(track.id, e.target.value)} className="w-full h-1.5 bg-neutral-950 rounded-full appearance-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-neutral-400 [&::-webkit-slider-thumb]:rounded-full hover:[&::-webkit-slider-thumb]:bg-white cursor-pointer" title="Double-click to reset" />
                           <div className="w-8 flex justify-end"><span className="text-[10px] text-neutral-500 font-mono">{track.volume}</span></div>
                         </div>
                       </div>
@@ -2755,7 +3641,7 @@ export default function App() {
               <div className="flex-1 bg-neutral-900 relative flex flex-col overflow-hidden">
                 
                 {/* Scroll-Synced Header */}
-                <div ref={headerRef} className="h-8 bg-neutral-950 border-b border-neutral-800 overflow-hidden shrink-0 cursor-pointer relative" onMouseDown={handleTimelineClick}>
+                <div ref={headerRef} className="h-8 bg-neutral-950 border-b border-neutral-800 overflow-hidden shrink-0 cursor-pointer relative" onMouseDown={handleTimelineMouseDown}>
                    <div className="absolute top-0 bottom-0" style={{ width: `${TOTAL_BEATS * BEAT_WIDTH}px` }}>
                        {Array.from({ length: TOTAL_BEATS }).map((_, i) => {
                          const isBar = i % 4 === 0;
@@ -2781,7 +3667,7 @@ export default function App() {
                    </div>
                 </div>
 
-                <div ref={timelineRef} onScroll={handleScroll} className="flex-1 overflow-auto relative custom-scrollbar cursor-text" onMouseDown={handleTimelineClick}>
+                <div ref={timelineRef} onScroll={handleScroll} className="flex-1 overflow-auto relative custom-scrollbar cursor-text" onMouseDown={handleTimelineMouseDown}>
                   <div className="relative min-h-full" style={{ width: `${TOTAL_BEATS * BEAT_WIDTH}px` }}>
                       <div className="absolute inset-0 pointer-events-none z-0" style={{ backgroundSize: `${BEAT_WIDTH}px 100%`, backgroundImage: 'linear-gradient(to right, rgba(255,255,255,0.03) 1px, transparent 1px)' }} />
                       <div className="absolute inset-0 pointer-events-none z-0" style={{ backgroundSize: `${BEAT_WIDTH * 4}px 100%`, backgroundImage: 'linear-gradient(to right, rgba(255,255,255,0.08) 1px, transparent 1px)' }} />
@@ -2789,6 +3675,20 @@ export default function App() {
                       <div className="absolute top-0 bottom-0 w-px bg-blue-500 z-30 pointer-events-none flex justify-center shadow-[0_0_10px_rgba(59,130,246,0.5)]" style={{ left: `${currentTime * BEAT_WIDTH}px`, transition: isPlaying ? 'none' : 'left 0.1s' }}>
                         <div className="w-0 h-0 border-l-[6px] border-l-transparent border-r-[6px] border-r-transparent border-t-[8px] border-t-blue-500 absolute -top-0" />
                       </div>
+
+                      {dragOverlay?.active && (
+                        <div 
+                          className="absolute z-[60] rounded-md border-2 border-dashed pointer-events-none flex items-center justify-center font-bold text-xs bg-white/10 border-white/50 text-white shadow-lg backdrop-blur-[2px]"
+                          style={{
+                            left: `${dragOverlay.beat * BEAT_WIDTH}px`,
+                            top: dragOverlay.trackId === 'new' ? `${tracks.length * 96 + 8}px` : `${tracks.findIndex(t => t.id === dragOverlay.trackId) * 96 + 8}px`,
+                            width: `${4 * BEAT_WIDTH}px`,
+                            height: '80px'
+                          }}
+                        >
+                          DROP TO IMPORT {dragOverlay.trackId === 'new' ? 'AS NEW TRACK' : ''}
+                        </div>
+                      )}
 
                       {tracks.map((track) => (
                         <div key={track.id} className={`h-24 border-b relative z-10 w-full ${track.armed && isRecording && isPlaying ? 'border-red-500/30 bg-red-500/5' : 'border-neutral-800/50'}`} onDoubleClick={(e) => handleTrackLaneDoubleClick(e, track)}>
@@ -3061,6 +3961,10 @@ export default function App() {
               const pitches = [];
               for(let p = PITCH_MAX; p >= PITCH_MIN; p--) pitches.push(p);
 
+              const maxNoteEnd = clip.notes?.reduce((max, n) => Math.max(max, n.start + n.duration), 0) || 0;
+              // Make piano roll exactly match the clip duration (or expand to fit trailing notes)
+              const pianoRollDuration = Math.max(clip.duration, maxNoteEnd);
+
               return (
                 <div className="h-[40vh] bg-neutral-900 border-t border-neutral-800 flex flex-col shadow-[0_-10px_30px_rgba(0,0,0,0.3)] z-40 shrink-0">
                   <div className="h-10 bg-neutral-950 border-b border-neutral-800 flex items-center justify-between px-4 shrink-0">
@@ -3090,14 +3994,14 @@ export default function App() {
                     <button onClick={() => setBottomDock(null)} className="p-1.5 text-neutral-500 hover:text-white hover:bg-neutral-800 rounded transition-colors" title="Close Editor"><X size={16} /></button>
                   </div>
 
-                  <div className="flex-1 flex overflow-hidden relative bg-neutral-900">
+                  <div className="flex-1 flex overflow-hidden relative bg-neutral-950">
                     <div className="w-16 flex flex-col shrink-0 bg-neutral-950 border-r border-neutral-800 z-20">
                        <div className="h-8 border-b border-neutral-800 shrink-0 bg-neutral-950" />
                        <div ref={pianoKeysRef} className="flex-1 overflow-y-hidden custom-scrollbar-hide">
                           <div style={{ height: `${pitches.length * PITCH_HEIGHT}px` }}>
                              {pitches.map(p => {
                                 const isBlack = [1, 3, 6, 8, 10].includes(p % 12);
-                                return <div key={p} className={`border-b border-neutral-900 ${isBlack ? 'bg-neutral-950 text-neutral-600' : 'bg-neutral-200 text-neutral-800'} text-[9px] font-bold flex items-center justify-end pr-1 select-none`} style={{height: `${PITCH_HEIGHT}px`}}>{p % 12 === 0 ? `C${Math.floor(p/12)-1}` : ''}</div>
+                                return <div key={p} className={`border-b border-neutral-900 ${isBlack ? 'bg-neutral-950 text-neutral-600' : 'bg-neutral-200 text-neutral-800'} text-[9px] font-bold flex items-center justify-end pr-1 select-none`} style={{height: `${PITCH_HEIGHT}px`}}>{p % 12 === 0 ? `C${Math.floor(p/12)-2}` : ''}</div>
                              })}
                           </div>
                        </div>
@@ -3105,8 +4009,8 @@ export default function App() {
                     
                     <div className="flex-1 flex flex-col overflow-hidden relative">
                        <div ref={pianoRulerRef} className="h-8 bg-neutral-950 border-b border-neutral-800 shrink-0 overflow-x-hidden sticky top-0 z-40">
-                         <div className="relative min-w-max h-full" style={{ width: `${Math.max(clip.duration, 8) * BEAT_WIDTH}px` }}>
-                            {Array.from({ length: Math.ceil(Math.max(clip.duration, 8)) }).map((_, i) => {
+                         <div className="relative min-w-max h-full bg-neutral-900 border-r border-neutral-700" style={{ width: `${pianoRollDuration * BEAT_WIDTH}px` }}>
+                            {Array.from({ length: Math.ceil(pianoRollDuration) }).map((_, i) => {
                                const isBar = i % 4 === 0;
                                return (
                                  <div key={i} className={`absolute top-0 bottom-0 flex items-end border-l ${isBar ? 'border-neutral-600' : 'border-neutral-800/50'} pl-1 text-[10px] ${isBar ? 'text-neutral-400 font-bold' : 'text-neutral-600'} font-mono select-none`} style={{ left: `${i * BEAT_WIDTH}px`, width: `${BEAT_WIDTH}px` }}>
@@ -3117,8 +4021,8 @@ export default function App() {
                          </div>
                        </div>
                        
-                       <div className={`flex-1 overflow-auto relative custom-scrollbar bg-neutral-900 ${editorTool === 'draw' ? 'cursor-crosshair' : editorTool === 'erase' ? 'cursor-cell' : editorTool === 'velocity' ? 'cursor-ns-resize' : 'cursor-text'}`} onScroll={handlePianoScroll}>
-                          <div className="relative min-w-max" style={{ height: `${pitches.length * PITCH_HEIGHT}px`, width: `${Math.max(clip.duration, 8) * BEAT_WIDTH}px`}} onMouseDown={(e) => handleGridMouseDown(e, track.id, clip.id)}>
+                       <div className={`flex-1 overflow-auto relative custom-scrollbar ${editorTool === 'draw' ? 'cursor-crosshair' : editorTool === 'erase' ? 'cursor-cell' : editorTool === 'velocity' ? 'cursor-ns-resize' : 'cursor-text'}`} onScroll={handlePianoScroll}>
+                          <div className="relative min-w-max bg-neutral-900 border-r border-neutral-700 shadow-[4px_0_15px_rgba(0,0,0,0.5)]" style={{ height: `${pitches.length * PITCH_HEIGHT}px`, width: `${pianoRollDuration * BEAT_WIDTH}px`}} onMouseDown={(e) => handleGridMouseDown(e, track.id, clip.id)}>
                             
                             {isPlaying && currentTime >= clip.start && currentTime <= clip.start + clip.duration && (
                                <div className="absolute top-0 bottom-0 w-px bg-white z-40 pointer-events-none shadow-[0_0_8px_rgba(255,255,255,0.8)]" style={{ left: `${(currentTime - clip.start) * BEAT_WIDTH}px` }} />
@@ -3130,7 +4034,7 @@ export default function App() {
                             })}
                             
                             {/* Dynamic Grid Lines based on Snap - FIXED to border-l for exact alignment */}
-                            {Array.from({length: Math.ceil(Math.max(clip.duration, 8) / (snapGrid || 0.25))}).map((_, i) => {
+                            {Array.from({length: Math.ceil(pianoRollDuration / (snapGrid || 0.25))}).map((_, i) => {
                                const snap = snapGrid || 0.25;
                                const isBar = (i * snap) % 4 === 0;
                                const isBeat = (i * snap) % 1 === 0;
@@ -3502,310 +4406,168 @@ export default function App() {
                   </div>
                 ) : (
                   <div className="flex gap-6 h-full p-6 bg-gradient-to-b from-neutral-800 to-neutral-900">
-                     <div className="flex-1 bg-neutral-950/50 rounded-lg border border-neutral-700/50 p-4 flex flex-col">
-                       <h4 className="text-[10px] text-neutral-400 uppercase tracking-widest font-bold mb-4 text-center">808 / Custom Drum Sampler</h4>
-                       <div className="flex justify-around flex-1 items-end pb-8">
+                     <div className="flex-1 bg-neutral-950/50 rounded-lg border border-neutral-700/50 p-4 flex flex-col min-w-0">
+                       <h4 className="text-[10px] text-neutral-400 uppercase tracking-widest font-bold mb-4 text-center shrink-0">Drum Machine / Custom Sampler</h4>
+                       <div className="flex gap-4 overflow-x-auto pb-4 w-full custom-scrollbar items-end h-full">
                          
-                         <div className="flex flex-col items-center gap-3 w-28">
-                           <div className="text-[11px] font-bold text-white bg-neutral-800 px-2 py-1 rounded w-full text-center">KICK (C1)</div>
-                           {!track.instrumentParams?.kickSampleId ? (
-                               <>
-                                 <span className="text-[9px] text-neutral-500 font-mono mb-1">TUNE (Hz)</span>
-                                 <input type="range" min="50" max="300" orient="vertical" value={track.instrumentParams?.kickPitch || 150} onChange={(e) => handleInstrumentParamChange(track.id, 'kickPitch', Number(e.target.value))} className="h-24 w-full appearance-none bg-transparent cursor-pointer relative z-10" style={{ WebkitAppearance: 'slider-vertical' }} />
-                                 <span className="text-[10px] text-orange-400 font-mono mt-1 font-bold">{track.instrumentParams?.kickPitch || 150}</span>
-                               </>
-                           ) : (
-                               <div className="h-24 w-full flex flex-col justify-center items-center opacity-60 relative group">
-                                   <Activity size={24} className="text-blue-400" />
-                                   <span className="text-[8px] mt-2 font-mono text-center">CUSTOM LOADED</span>
-                                   <button onClick={() => handleInstrumentParamChange(track.id, 'kickSampleId', null)} className="absolute top-0 right-0 p-1 bg-red-500/80 rounded opacity-0 group-hover:opacity-100"><X size={10} className="text-white"/></button>
+                         {Object.entries(track.instrumentParams?.drumMap || DEFAULT_DRUM_MAP).map(([pitchStr, pad]) => {
+                             const pitch = Number(pitchStr);
+                             return (
+                             <div key={pitch} className="flex flex-col items-center gap-3 w-28 shrink-0 relative group">
+                               <button onClick={() => handleRemoveDrumPad(track.id, pitch)} className="absolute -top-2 -right-2 p-1 bg-red-500 hover:bg-red-400 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity z-10 shadow-lg"><X size={10} /></button>
+                               <div className="text-[11px] font-bold text-white bg-neutral-800 px-2 py-1 rounded w-full text-center truncate">{pad.name}</div>
+                               {!pad.sampleId ? (
+                                   <div className="flex flex-col w-full h-24 items-center justify-end pb-2">
+                                     <span className="text-[9px] text-neutral-500 font-mono mb-1">TUNE/DECAY</span>
+                                     <input type="range" min="50" max="1000" orient="vertical" value={pad.tune || (pad.decay ? pad.decay * 1000 : 150)} onChange={(e) => handleDrumParamChange(track.id, pitch, pad.tune !== undefined ? 'tune' : 'decay', pad.tune !== undefined ? Number(e.target.value) : Number(e.target.value)/1000)} className="h-16 w-full appearance-none bg-transparent cursor-pointer relative z-10" style={{ WebkitAppearance: 'slider-vertical' }} />
+                                     <span className="text-[10px] text-orange-400 font-mono mt-1 font-bold">{pitch}</span>
+                                   </div>
+                               ) : (
+                                   <div className="h-24 w-full flex flex-col justify-center items-center opacity-60 relative group">
+                                       <Activity size={24} className="text-blue-400" />
+                                       <span className="text-[8px] mt-2 font-mono text-center">CUSTOM</span>
+                                       <span className="text-[10px] font-mono mt-1 font-bold text-orange-400">{pitch}</span>
+                                       <button onClick={() => handleDrumParamChange(track.id, pitch, 'sampleId', null)} className="absolute top-0 right-0 p-1 bg-red-500/80 rounded opacity-0 group-hover:opacity-100"><X size={10} className="text-white"/></button>
+                                   </div>
+                               )}
+                               <div className="flex gap-1 w-full justify-center">
+                                   <div className="w-10 h-10 rounded-full bg-orange-500/20 border-2 border-orange-500/50 flex items-center justify-center shadow-[0_0_15px_rgba(249,115,22,0.2)] mt-2 shrink-0 cursor-pointer hover:bg-orange-500/30 transition-colors" onMouseDown={() => { if(audioCtxRef.current) triggerDrum(audioCtxRef.current, synthsRef.current[track.id].inputBus, pitch, audioCtxRef.current.currentTime, 1, track.instrumentParams); }}><Radio size={16} className="text-orange-500"/></div>
+                                   <label className="w-6 h-10 mt-2 flex items-center justify-center bg-neutral-800 hover:bg-neutral-700 rounded cursor-pointer border border-neutral-600 transition-colors" title="Upload Custom Audio">
+                                      <span className="text-[8px] rotate-[-90deg] uppercase font-bold text-neutral-400 tracking-widest whitespace-nowrap">File</span>
+                                      <input type="file" accept="audio/*" hidden onChange={(e) => handleDrumSampleUpload(e, track.id, pitch)} />
+                                   </label>
                                </div>
-                           )}
-                           <div className="flex gap-1 w-full justify-center">
-                               <div className="w-10 h-10 rounded-full bg-orange-500/20 border-2 border-orange-500/50 flex items-center justify-center shadow-[0_0_15px_rgba(249,115,22,0.2)] mt-2 shrink-0"><Radio size={16} className="text-orange-500"/></div>
-                               <label className="w-6 h-10 mt-2 flex items-center justify-center bg-neutral-800 hover:bg-neutral-700 rounded cursor-pointer border border-neutral-600 transition-colors" title="Upload Custom Kick">
-                                  <span className="text-[8px] rotate-[-90deg] uppercase font-bold text-neutral-400 tracking-widest whitespace-nowrap">File</span>
-                                  <input type="file" accept="audio/*" hidden onChange={(e) => handleSampleUpload(e, track.id, 'kickSampleId')} />
-                               </label>
-                           </div>
+                             </div>
+                             );
+                         })}
+
+                         {/* Add Custom Pad Form */}
+                         <div className="flex flex-col items-center gap-2 w-32 shrink-0 bg-neutral-900/50 p-3 rounded-lg border border-dashed border-neutral-700 justify-center h-48 ml-4">
+                             <span className="text-[10px] font-bold text-neutral-400 text-center uppercase tracking-wider mb-2">Add Drum Pad</span>
+                             <div className="w-full flex flex-col gap-1">
+                               <label className="text-[8px] text-neutral-500">MIDI NOTE</label>
+                               <select value={newPadPitch} onChange={e => setNewPadPitch(Number(e.target.value))} className="w-full bg-neutral-950 text-xs text-white p-1.5 rounded border border-neutral-800 outline-none">
+                                  {Array.from({length: PITCH_MAX - PITCH_MIN + 1}).map((_, i) => {
+                                     const p = PITCH_MIN + i;
+                                     return <option key={p} value={p}>{p} - {['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'][p%12]}{Math.floor(p/12)-2}</option>
+                                  })}
+                               </select>
+                             </div>
+                             <div className="w-full flex flex-col gap-1 mt-1">
+                               <label className="text-[8px] text-neutral-500">PAD NAME</label>
+                               <input type="text" value={newPadName} onChange={e => setNewPadName(e.target.value)} className="w-full bg-neutral-950 text-xs text-white p-1.5 rounded border border-neutral-800 outline-none placeholder:text-neutral-700" placeholder="e.g. Laser Zap" />
+                             </div>
+                             <button onClick={() => { handleAddDrumPad(track.id); setNewPadName(''); }} className="w-full bg-neutral-800 hover:bg-neutral-700 text-[10px] text-white py-2 font-bold uppercase tracking-wider rounded mt-auto transition-colors border border-neutral-700">Add Pad</button>
                          </div>
-                         
-                         <div className="flex flex-col items-center gap-3 w-28">
-                           <div className="text-[11px] font-bold text-white bg-neutral-800 px-2 py-1 rounded w-full text-center">SNARE (D1)</div>
-                           {!track.instrumentParams?.snareSampleId ? (
-                               <>
-                                 <span className="text-[9px] text-neutral-500 font-mono mb-1">DECAY (s)</span>
-                                 <input type="range" min="0.05" max="0.6" step="0.01" orient="vertical" value={track.instrumentParams?.snareDecay || 0.2} onChange={(e) => handleInstrumentParamChange(track.id, 'snareDecay', Number(e.target.value))} className="h-24 w-full appearance-none bg-transparent cursor-pointer relative z-10" style={{ WebkitAppearance: 'slider-vertical' }} />
-                                 <span className="text-[10px] text-orange-400 font-mono mt-1 font-bold">{track.instrumentParams?.snareDecay || 0.2}</span>
-                               </>
-                           ) : (
-                               <div className="h-24 w-full flex flex-col justify-center items-center opacity-60 relative group">
-                                   <Activity size={24} className="text-blue-400" />
-                                   <span className="text-[8px] mt-2 font-mono text-center">CUSTOM LOADED</span>
-                                   <button onClick={() => handleInstrumentParamChange(track.id, 'snareSampleId', null)} className="absolute top-0 right-0 p-1 bg-red-500/80 rounded opacity-0 group-hover:opacity-100"><X size={10} className="text-white"/></button>
-                               </div>
-                           )}
-                           <div className="flex gap-1 w-full justify-center">
-                               <div className="w-10 h-10 rounded-full bg-orange-500/20 border-2 border-orange-500/50 flex items-center justify-center mt-2 shrink-0"><Radio size={16} className="text-orange-500"/></div>
-                               <label className="w-6 h-10 mt-2 flex items-center justify-center bg-neutral-800 hover:bg-neutral-700 rounded cursor-pointer border border-neutral-600 transition-colors" title="Upload Custom Snare">
-                                  <span className="text-[8px] rotate-[-90deg] uppercase font-bold text-neutral-400 tracking-widest whitespace-nowrap">File</span>
-                                  <input type="file" accept="audio/*" hidden onChange={(e) => handleSampleUpload(e, track.id, 'snareSampleId')} />
-                               </label>
-                           </div>
-                         </div>
-                         
-                         <div className="flex flex-col items-center gap-3 w-28">
-                           <div className="text-[11px] font-bold text-white bg-neutral-800 px-2 py-1 rounded w-full text-center">HIHAT (F#1)</div>
-                           {!track.instrumentParams?.hihatSampleId ? (
-                               <div className="h-24 w-full flex flex-col justify-center items-center opacity-40">
-                                   <span className="text-[8px] font-mono text-center">SYNTHETIC (FIXED)</span>
-                               </div>
-                           ) : (
-                               <div className="h-24 w-full flex flex-col justify-center items-center opacity-60 relative group">
-                                   <Activity size={24} className="text-blue-400" />
-                                   <span className="text-[8px] mt-2 font-mono text-center">CUSTOM LOADED</span>
-                                   <button onClick={() => handleInstrumentParamChange(track.id, 'hihatSampleId', null)} className="absolute top-0 right-0 p-1 bg-red-500/80 rounded opacity-0 group-hover:opacity-100"><X size={10} className="text-white"/></button>
-                               </div>
-                           )}
-                           <div className="flex gap-1 w-full justify-center">
-                               <div className="w-10 h-10 rounded-full bg-orange-500/20 border-2 border-orange-500/50 flex items-center justify-center mt-2 shrink-0"><Radio size={16} className="text-orange-500"/></div>
-                               <label className="w-6 h-10 mt-2 flex items-center justify-center bg-neutral-800 hover:bg-neutral-700 rounded cursor-pointer border border-neutral-600 transition-colors" title="Upload Custom HiHat">
-                                  <span className="text-[8px] rotate-[-90deg] uppercase font-bold text-neutral-400 tracking-widest whitespace-nowrap">File</span>
-                                  <input type="file" accept="audio/*" hidden onChange={(e) => handleSampleUpload(e, track.id, 'hihatSampleId')} />
-                               </label>
-                           </div>
-                         </div>
-                         
                        </div>
                      </div>
                   </div>
                 )}
-                
               </div>
             </div>
           </div>
         );
       })()}
 
-      {/* --- I/O Settings Modal --- */}
-      {showIOSettings && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-neutral-900 border border-neutral-800 rounded-xl w-full max-w-md overflow-hidden shadow-2xl animate-in fade-in zoom-in-95 duration-200">
-            <div className="px-6 py-4 border-b border-neutral-800 flex items-center justify-between bg-neutral-950">
-              <h2 className="text-lg font-semibold text-white">Audio & MIDI Settings</h2>
-              <button onClick={() => setShowIOSettings(false)} className="text-neutral-500 hover:text-white transition-colors"><X size={18} /></button>
-            </div>
-            <div className="p-6 flex flex-col gap-6">
-              
-              <div className="flex flex-col gap-2">
-                <label className="text-xs font-bold text-neutral-400 uppercase tracking-wider flex items-center gap-2"><Mic size={14} className="text-blue-400"/> Audio Input Device</label>
-                {audioInputs.length > 0 ? (
-                    <select 
-                      value={selectedAudioInput} 
-                      onChange={(e) => setSelectedAudioInput(e.target.value)}
-                      className="bg-neutral-950 border border-neutral-800 text-white text-sm rounded-lg px-3 py-2.5 outline-none cursor-pointer"
-                    >
-                      {audioInputs.map((input, idx) => (
-                        <option key={input.deviceId} value={input.deviceId}>{input.label || `Microphone ${idx + 1}`}</option>
-                      ))}
-                    </select>
-                ) : (
-                    <div className="bg-red-500/10 border border-red-500/20 text-red-400 text-xs p-3 rounded-lg flex items-center gap-2">
-                       <Activity size={14} /> No Microphones detected. Check browser permissions.
-                    </div>
-                )}
-              </div>
-
-              <div className="flex flex-col gap-2">
-                <label className="text-xs font-bold text-neutral-400 uppercase tracking-wider flex items-center gap-2"><Piano size={14} className="text-purple-400"/> MIDI Input Device</label>
-                {midiInputs.length > 0 ? (
-                    <select 
-                      value={selectedMidiInput} 
-                      onChange={(e) => setSelectedMidiInput(e.target.value)}
-                      className="bg-neutral-950 border border-neutral-800 text-white text-sm rounded-lg px-3 py-2.5 outline-none cursor-pointer"
-                    >
-                      <option value="">Listen to ALL MIDI Channels</option>
-                      {midiInputs.map(input => (
-                        <option key={input.id} value={input.id}>{input.name || `MIDI Device (${input.id})`}</option>
-                      ))}
-                    </select>
-                ) : (
-                    <div className="bg-orange-500/10 border border-orange-500/20 text-orange-400 text-xs p-3 rounded-lg flex flex-col gap-1">
-                       <div className="flex items-center gap-2"><Settings2 size={14} /> No MIDI devices detected.</div>
-                       <span className="text-[10px] text-orange-400/70">Ensure your keyboard is connected or check if MIDI is blocked by the browser environment.</span>
-                    </div>
-                )}
-              </div>
-
-              <button onClick={requestIO} className="w-full bg-neutral-800 hover:bg-neutral-700 text-white font-medium py-2.5 rounded-lg mt-2 transition-colors border border-neutral-700">
-                 Refresh Device List
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* --- Auth Modal --- */}
-      {showAuthModal && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-neutral-900 border border-neutral-800 rounded-xl w-full max-w-sm overflow-hidden shadow-2xl animate-in fade-in zoom-in-95 duration-200">
-            <div className="px-6 py-4 border-b border-neutral-800 flex items-center justify-between bg-neutral-950">
-              <h2 className="text-lg font-semibold text-white">{authMode === 'signin' ? 'Sign In to WebDAW' : 'Create an Account'}</h2>
-              <button onClick={() => setShowAuthModal(false)} className="text-neutral-500 hover:text-white transition-colors"><X size={18} /></button>
-            </div>
-            <form onSubmit={handleAuthSubmit} className="p-6 flex flex-col gap-4">
-              {authMessage && (
-                <div className={`text-xs text-center p-2.5 rounded font-medium ${authMessage.includes('Waiting') || authMessage.includes('pending') ? 'bg-yellow-500/10 text-yellow-500 border border-yellow-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'}`}>
-                  {authMessage}
-                </div>
-              )}
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-medium text-neutral-400 uppercase tracking-wider">Name</label>
-                <input 
-                  type="text" 
-                  value={authName} 
-                  onChange={(e) => setAuthName(e.target.value)} 
-                  required 
-                  autoFocus
-                  className="bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500 transition-colors" 
-                  placeholder="Enter your name" 
-                />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <label className="text-xs font-medium text-neutral-400 uppercase tracking-wider">Password</label>
-                <input 
-                  type="password" 
-                  value={authPassword} 
-                  onChange={(e) => setAuthPassword(e.target.value)} 
-                  required 
-                  className="bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500 transition-colors" 
-                  placeholder="••••••••" 
-                />
-              </div>
-              <button type="submit" className="w-full bg-blue-600 hover:bg-blue-500 text-white font-medium py-2.5 rounded-lg mt-2 transition-colors shadow-lg shadow-blue-500/20">
-                {authMode === 'signin' ? 'Sign In' : 'Register'}
-              </button>
-              <div className="text-center mt-2">
-                <button type="button" onClick={() => { setAuthMode(authMode === 'signin' ? 'register' : 'signin'); setAuthMessage(''); }} className="text-xs text-neutral-500 hover:text-blue-400 transition-colors">
-                  {authMode === 'signin' ? "Don't have an account? Register" : "Already have an account? Sign In"}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* --- Admin Management Modal --- */}
-      {showAdminModal && currentUser?.role === 'admin' && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-neutral-900 border border-neutral-800 rounded-xl w-full max-w-md overflow-hidden shadow-2xl animate-in fade-in zoom-in-95 duration-200">
-            <div className="px-6 py-4 border-b border-neutral-800 flex items-center justify-between bg-neutral-950">
-              <h2 className="text-lg font-semibold text-white">Manage Team Access</h2>
-              <button onClick={() => setShowAdminModal(false)} className="text-neutral-500 hover:text-white transition-colors"><X size={18} /></button>
-            </div>
-            <div className="p-6 max-h-[60vh] overflow-y-auto custom-scrollbar">
-              {usersDb.filter(u => u.id !== currentUser.id).length === 0 ? (
-                <p className="text-sm text-neutral-500 text-center py-4">No other users have registered yet.</p>
-              ) : (
-                <div className="flex flex-col gap-3">
-                  {usersDb.filter(u => u.id !== currentUser.id).map(u => (
-                    <div key={u.id} className="flex items-center justify-between bg-neutral-950 p-3 rounded-lg border border-neutral-800">
-                      <div className="flex items-center gap-3">
-                        <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs text-white font-bold ${u.color}`}>
-                          {u.name.charAt(0).toUpperCase()}
-                        </div>
-                        <div className="flex flex-col">
-                          <span className="text-sm font-medium text-white">{u.name}</span>
-                          <span className={`text-[10px] font-mono uppercase tracking-wider ${u.status === 'pending' ? 'text-yellow-500' : 'text-green-500'}`}>
-                            {u.status}
-                          </span>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        {u.status === 'pending' && (
-                          <button 
-                            onClick={() => setUsersDb(prev => prev.map(user => user.id === u.id ? { ...user, status: 'approved' } : user))}
-                            className="text-xs bg-green-500/20 text-green-400 hover:bg-green-500/30 px-3 py-1.5 rounded transition-colors font-medium"
-                          >
-                            Approve
-                          </button>
-                        )}
-                        {u.status === 'approved' && (
-                          <button 
-                            onClick={() => {
-                              setUsersDb(prev => prev.map(user => user.id === u.id ? { ...user, status: 'pending' } : user));
-                              setActiveSessionUsers(prev => prev.filter(user => user.id !== u.id));
-                            }}
-                            className="text-xs bg-neutral-800 text-neutral-400 hover:text-white px-3 py-1.5 rounded transition-colors font-medium"
-                          >
-                            Revoke
-                          </button>
-                        )}
-                        <button 
-                          onClick={() => {
-                            setUsersDb(prev => prev.filter(user => user.id !== u.id));
-                            setActiveSessionUsers(prev => prev.filter(user => user.id !== u.id));
-                          }}
-                          className="text-neutral-500 hover:text-red-400 p-1.5 transition-colors" title="Delete User"
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
+      {/* --- Context Menu --- */}
       {contextMenu && (
         <div 
-          className="fixed z-[100] bg-neutral-800 border border-neutral-700 shadow-2xl rounded-lg py-1.5 w-48 text-sm text-neutral-300"
-          style={{ top: Math.min(contextMenu.y, window.innerHeight - 150), left: Math.min(contextMenu.x, window.innerWidth - 200) }}
-          onClick={(e) => e.stopPropagation()}
-          onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); }}
+          className="fixed z-50 bg-neutral-800 border border-neutral-700 rounded-lg shadow-2xl py-1 min-w-[160px] text-sm font-medium text-neutral-200 animate-in fade-in zoom-in-95 duration-100"
+          style={{ left: Math.min(contextMenu.x, window.innerWidth - 160), top: Math.min(contextMenu.y, window.innerHeight - 200) }}
         >
-          {contextMenu.type === 'track' && (
-             <>
-               <button onClick={() => { setEditingTrackId(contextMenu.payload.trackId); setContextMenu(null); }} className="w-full text-left px-4 py-1.5 hover:bg-neutral-700 hover:text-white">Rename Track</button>
-               <button onClick={() => { toggleMute(contextMenu.payload.trackId); setContextMenu(null); }} className="w-full text-left px-4 py-1.5 hover:bg-neutral-700 hover:text-white">Toggle Mute</button>
-               <div className="h-px bg-neutral-700 my-1" />
-               <button onClick={() => { handleDeleteTrack(contextMenu.payload.trackId); setContextMenu(null); }} className="w-full text-left px-4 py-1.5 text-red-400 hover:bg-red-500 hover:text-white">Delete Track</button>
-             </>
-          )}
           {contextMenu.type === 'clip' && (
              <>
-               <button onClick={() => { duplicateClip(contextMenu.payload.trackId, contextMenu.payload.clipId); setContextMenu(null); }} className="w-full text-left px-4 py-1.5 hover:bg-neutral-700 hover:text-white">Duplicate Clip</button>
-               <div className="h-px bg-neutral-700 my-1" />
-               <button onClick={() => { deleteClip(contextMenu.payload.trackId, contextMenu.payload.clipId); setContextMenu(null); }} className="w-full text-left px-4 py-1.5 text-red-400 hover:bg-red-500 hover:text-white">Delete Clip</button>
+               <button onClick={(e) => { e.stopPropagation(); duplicateClip(contextMenu.payload.trackId, contextMenu.payload.clipId); setContextMenu(null); }} className="w-full text-left px-4 py-2 hover:bg-blue-600 hover:text-white transition-colors flex items-center gap-2"><Repeat size={14} /> Duplicate Clip</button>
+               <button onClick={(e) => { e.stopPropagation(); handleDeleteClip(e, contextMenu.payload.trackId, contextMenu.payload.clipId); setContextMenu(null); }} className="w-full text-left px-4 py-2 hover:bg-red-600 hover:text-white transition-colors flex items-center gap-2"><Trash2 size={14} /> Delete Clip</button>
              </>
           )}
           {contextMenu.type === 'note' && (
              <>
-               <button onClick={() => { setNoteVelocity(contextMenu.payload.trackId, contextMenu.payload.clipId, contextMenu.payload.noteId, 127); setContextMenu(null); }} className="w-full text-left px-4 py-1.5 hover:bg-neutral-700 hover:text-white">Maximize Velocity</button>
-               <button onClick={() => { setNoteVelocity(contextMenu.payload.trackId, contextMenu.payload.clipId, contextMenu.payload.noteId, 30); setContextMenu(null); }} className="w-full text-left px-4 py-1.5 hover:bg-neutral-700 hover:text-white">Minimize Velocity</button>
-               <div className="h-px bg-neutral-700 my-1" />
-               <button onClick={() => { deleteNote(contextMenu.payload.trackId, contextMenu.payload.clipId, contextMenu.payload.noteId); setContextMenu(null); }} className="w-full text-left px-4 py-1.5 text-red-400 hover:bg-red-500 hover:text-white">Delete Note</button>
+               <button onClick={(e) => { e.stopPropagation(); deleteNote(contextMenu.payload.trackId, contextMenu.payload.clipId, contextMenu.payload.noteId); setContextMenu(null); }} className="w-full text-left px-4 py-2 hover:bg-red-600 hover:text-white transition-colors flex items-center gap-2"><Trash2 size={14} /> Delete Note</button>
              </>
           )}
           {contextMenu.type === 'effect' && (
              <>
-               <button onClick={() => { handleRemoveEffect(contextMenu.payload.trackId, contextMenu.payload.fxId); setContextMenu(null); }} className="w-full text-left px-4 py-1.5 text-red-400 hover:bg-red-500 hover:text-white">Remove Effect</button>
+               <button onClick={(e) => { e.stopPropagation(); handleRemoveEffect(contextMenu.payload.trackId, contextMenu.payload.fxId); setContextMenu(null); }} className="w-full text-left px-4 py-2 hover:bg-red-600 hover:text-white transition-colors flex items-center gap-2"><Trash2 size={14} /> Remove Effect</button>
+             </>
+          )}
+          {contextMenu.type === 'track' && (
+             <>
+               <button onClick={(e) => { e.stopPropagation(); duplicateClip(contextMenu.payload.trackId, Date.now()); setContextMenu(null); }} className="w-full text-left px-4 py-2 hover:bg-blue-600 hover:text-white transition-colors flex items-center gap-2"><Repeat size={14} /> Duplicate Track</button>
+               <button onClick={(e) => { e.stopPropagation(); handleDeleteTrack(contextMenu.payload.trackId); setContextMenu(null); }} className="w-full text-left px-4 py-2 hover:bg-red-600 hover:text-white transition-colors flex items-center gap-2 text-red-400"><Trash2 size={14} /> Delete Track</button>
              </>
           )}
         </div>
       )}
 
-      <style dangerouslySetInnerHTML={{__html: `
-        .custom-scrollbar::-webkit-scrollbar { width: 12px; height: 12px; }
-        .custom-scrollbar::-webkit-scrollbar-track { background: #171717; }
-        .custom-scrollbar::-webkit-scrollbar-thumb { background: #404040; border-radius: 6px; border: 3px solid #171717; }
-        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #525252; }
-        .custom-scrollbar-hide::-webkit-scrollbar { display: none; }
-        .custom-scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
-      `}} />
+      {/* --- Global Settings Modal --- */}
+      {showIOSettings && (
+         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
+           <div className="bg-neutral-900 border border-neutral-800 rounded-xl w-full max-w-md overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200">
+             <div className="px-6 py-4 border-b border-neutral-800 flex items-center justify-between bg-neutral-950">
+               <h2 className="text-lg font-semibold text-white flex items-center gap-2"><Settings2 size={18} className="text-neutral-400" /> Project & Settings</h2>
+               <button onClick={() => setShowIOSettings(false)} className="text-neutral-500 hover:text-white transition-colors"><X size={18} /></button>
+             </div>
+             <div className="p-6 flex flex-col gap-8">
+                {/* Project Actions */}
+                <div className="flex flex-col gap-3">
+                   <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider border-b border-neutral-800 pb-1.5">Project Actions</label>
+                   <div className="flex gap-3">
+                      <button onClick={() => { saveProjectToLocal(); setShowIOSettings(false); }} className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 hover:text-white text-xs font-bold rounded-lg transition-colors border border-neutral-700 shadow-sm">
+                         <Save size={16} /> Local Save
+                      </button>
+                      <button onClick={() => { exportProjectToFile(); setShowIOSettings(false); }} className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-lg transition-colors shadow-[0_0_10px_rgba(37,99,235,0.3)]">
+                         <Download size={16} /> Export .webdaw
+                      </button>
+                   </div>
+                </div>
+
+                {/* Audio & MIDI I/O */}
+                <div className="flex flex-col gap-4">
+                   <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider border-b border-neutral-800 pb-1.5">Audio & MIDI Setup</label>
+                   <div className="flex flex-col gap-2">
+                      <label className="text-[10px] text-neutral-400">Audio Input Device</label>
+                      <select 
+                        value={selectedAudioInput} 
+                        onChange={e => setSelectedAudioInput(e.target.value)}
+                        className="bg-neutral-950 border border-neutral-800 text-sm text-white rounded-lg px-3 py-2.5 outline-none hover:border-neutral-600 transition-colors"
+                      >
+                        <option value="">Default System Microphone</option>
+                        {audioInputs.map(input => (
+                          <option key={input.deviceId} value={input.deviceId}>{input.label || `Microphone (${input.deviceId.slice(0,5)}...)`}</option>
+                        ))}
+                      </select>
+                   </div>
+                   <div className="flex flex-col gap-2">
+                      <label className="text-[10px] text-neutral-400">MIDI Input Device</label>
+                      <select 
+                        value={selectedMidiInput} 
+                        onChange={e => setSelectedMidiInput(e.target.value)}
+                        className="bg-neutral-950 border border-neutral-800 text-sm text-white rounded-lg px-3 py-2.5 outline-none hover:border-neutral-600 transition-colors"
+                      >
+                        <option value="">All MIDI Inputs</option>
+                        {midiInputs.map(input => (
+                          <option key={input.id} value={input.id}>{input.name || input.id}</option>
+                        ))}
+                      </select>
+                   </div>
+                </div>
+             </div>
+           </div>
+         </div>
+      )}
+
+      {/* Global Processing Loader */}
+      {isProcessingFile && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[100] flex flex-col items-center justify-center text-white animate-in fade-in duration-200">
+          <Activity size={48} className="animate-spin text-blue-500 mb-6 drop-shadow-[0_0_15px_rgba(59,130,246,0.8)]" />
+          <h2 className="text-xl font-bold tracking-wider uppercase">Processing Project Archive</h2>
+          <p className="text-neutral-400 mt-2 text-sm font-mono text-center max-w-sm">Packaging/Extracting assets and audio fragments. This may take a moment for large projects.</p>
+        </div>
+      )}
+
+      {/* Unified Auth Modal */}
+      {renderAuthModal()}
     </div>
   );
 }
