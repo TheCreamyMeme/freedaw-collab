@@ -6,19 +6,12 @@ import {
   Folder, Sliders, History, UserCircle, Piano,
   MousePointer2, Pencil, Eraser, X, Grid, Trash2, Activity,
   Settings2, Plug, Power, LogOut, FileAudio, FileCode, Cpu,
-  Repeat, Home, Save, Download, Upload, FileJson, Info, AlertTriangle, CheckCircle2, Cloud
+  Repeat, Home, Save, Download, Upload, FileJson, Info, AlertTriangle, CheckCircle2, Cloud, Network, Zap
 } from 'lucide-react';
 
-import { initializeApp } from 'firebase/app';
-import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
-import { getFirestore, doc, setDoc, collection, onSnapshot, updateDoc, deleteDoc } from 'firebase/firestore';
+import { joinRoom } from 'https://esm.sh/trystero@0.20.1/torrent';
 
-// --- Firebase Configuration ---
-const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'webdaw-default';
 
 const TOTAL_BEATS = 256; 
 
@@ -139,8 +132,8 @@ function encodeWAV(samples, sampleRate, numChannels) {
   view.setUint32(4, 36 + dataSize, true);
   writeString(view, 8, 'WAVE');
   writeString(view, 12, 'fmt ');
-  view.setUint32(16, 16, true); // Format chunk size
-  view.setUint16(20, 1, true); // PCM Format
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true); 
   view.setUint16(22, numChannels, true);
   view.setUint32(24, sampleRate, true);
   view.setUint32(28, sampleRate * blockAlign, true);
@@ -1084,7 +1077,6 @@ export default function App() {
   const [appView, setAppView] = useState('home'); 
   const [projectId, setProjectId] = useState(null);
   const [projectName, setProjectName] = useState('New Project');
-  const [savedProjectsList, setSavedProjectsList] = useState([]);
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [bpm, setBpm] = useState(120);
@@ -1107,7 +1099,6 @@ export default function App() {
   const [toasts, setToasts] = useState([]);
   
   const [openPluginUI, setOpenPluginUI] = useState(null); 
-  
   const [vstStatus, setVstStatus] = useState({}); 
   const vstStatusRef = useRef({});
   
@@ -1141,21 +1132,19 @@ export default function App() {
   const [selectedAudioInput, setSelectedAudioInput] = useState('');
   const [selectedMidiInput, setSelectedMidiInput] = useState('');
 
-  // Authentication & Users State
-  const [fbUser, setFbUser] = useState(null);
-  const [usersDb, setUsersDb] = useState([]); 
-  const [isUsersLoaded, setIsUsersLoaded] = useState(false);
-  const [activeSessionUsers, setActiveSessionUsers] = useState([]); 
+  // P2P State
+  const [peers, setPeers] = useState({}); 
+  const [localProjects, setLocalProjects] = useState([]);
+  const [networkProjects, setNetworkProjects] = useState({});
+  const isRemoteUpdateRef = useRef(false);
+  const currentProjectIdRef = useRef(null);
+  const syncTimeoutRef = useRef(null);
   
-  // Persist Current User login token/state locally so we don't force login on refresh, but data lives in Cloud
   const [currentUser, setCurrentUser] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('webdaw_current_user')) || null; } catch(e) { return null; }
+    try { return JSON.parse(localStorage.getItem('webdaw_p2p_user')) || null; } catch(e) { return null; }
   });
   
-  const [authMode, setAuthMode] = useState('signin'); 
   const [authName, setAuthName] = useState('');
-  const [authPassword, setAuthPassword] = useState('');
-  const [authMessage, setAuthMessage] = useState('');
   const [isProcessingFile, setIsProcessingFile] = useState(false);
 
   const audioCtxRef = useRef(null);
@@ -1195,71 +1184,107 @@ export default function App() {
     setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 4000);
   }, []);
 
-  // --- Initialize Firebase Auth ---
+  // Refs for P2P callbacks to access latest state
+  const localProjectsRef = useRef(localProjects);
+  useEffect(() => { localProjectsRef.current = localProjects; }, [localProjects]);
+  
+  const currentUserRef = useRef(currentUser);
+  useEffect(() => { currentUserRef.current = currentUser; }, [currentUser]);
+
+  // Store actions reference
+  const p2p = useRef({
+      room: null,
+      sendProfile: null,
+      sendProject: null,
+      sendDawSync: null
+  });
+
+  // --- Load Local Projects ---
   useEffect(() => {
-    const initAuth = async () => {
       try {
-        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-          await signInWithCustomToken(auth, __initial_auth_token);
-        } else {
-          await signInAnonymously(auth);
-        }
-      } catch (err) {
-        console.error("Auth Error", err);
-      }
-    };
-    initAuth();
-    const unsubscribe = onAuthStateChanged(auth, setFbUser);
-    return () => unsubscribe();
+          const stored = localStorage.getItem('webdaw_projects');
+          if (stored) {
+              setLocalProjects(JSON.parse(stored));
+          }
+      } catch (err) {}
   }, []);
 
-  // --- Real-time sync for Users Directory (Host registration database) ---
+  const saveProjectLocally = (projectData) => {
+      const updated = [projectData, ...localProjects.filter(p => p.id !== projectData.id)];
+      setLocalProjects(updated);
+      try { localStorage.setItem('webdaw_projects', JSON.stringify(updated)); } catch(e) {}
+  };
+
+  // --- Initialize P2P Trystero Network ---
   useEffect(() => {
-    if (!fbUser) return;
+    if (!currentUser) return;
     
-    const usersRef = collection(db, 'artifacts', appId, 'public', 'data', 'users');
-    const unsub = onSnapshot(usersRef, (snapshot) => {
-        const usersList = [];
-        snapshot.forEach(doc => {
-           if (Object.keys(doc.data()).length > 0) {
-               usersList.push({ id: doc.id, ...doc.data() });
-           }
+    // Using torrent tracker strategy for serverless WebRTC
+    const room = joinRoom({ appId: `webdaw-p2p-${appId}` }, 'global-studio');
+    
+    const [sendProfile, getProfile] = room.makeAction('profile');
+    const [sendProject, getProject] = room.makeAction('project');
+    const [sendDawSync, getDawSync] = room.makeAction('dawSync');
+
+    p2p.current = { room, sendProfile, sendProject, sendDawSync };
+
+    // Broadcast myself initially (after a small delay to ensure listeners are ready)
+    setTimeout(() => {
+       sendProfile(currentUserRef.current);
+    }, 1000);
+
+    room.onPeerJoin(peerId => {
+        // Share presence
+        sendProfile(currentUserRef.current, peerId);
+        // Share publicly shared projects
+        localProjectsRef.current.forEach(p => {
+           if(p.shared) sendProject(p, peerId);
         });
-        setUsersDb(usersList);
-        
-        const activeUsers = usersList.filter(u => u.isOnline);
-        setActiveSessionUsers(activeUsers);
-        
-        setCurrentUser(prev => {
-            if (!prev) return null;
-            const updated = usersList.find(u => u.id === prev.id);
-            return updated || prev;
-        });
-        
-        setIsUsersLoaded(true);
-    }, (error) => {
-        console.error("Firebase Users error:", error);
-        setIsUsersLoaded(true);
+        showToast(`Peer joined the network.`, 'info');
     });
-    return () => unsub();
-  }, [fbUser]);
 
-  // --- Real-time sync for Shared Projects ---
+    room.onPeerLeave(peerId => {
+        setPeers(prev => {
+           const next = {...prev};
+           delete next[peerId];
+           return next;
+        });
+    });
+
+    getProfile((profile, peerId) => {
+        setPeers(prev => ({ ...prev, [peerId]: { ...profile, peerId } }));
+    });
+
+    getProject((projectData, peerId) => {
+        setNetworkProjects(prev => ({ ...prev, [projectData.id]: { ...projectData, peerId } }));
+    });
+
+    getDawSync((syncData, peerId) => {
+        if (syncData.projectId === currentProjectIdRef.current) {
+            isRemoteUpdateRef.current = true;
+            setTracks(syncData.tracks);
+            setBpm(syncData.bpm);
+        }
+    });
+
+    return () => room.leave();
+  }, [currentUser]);
+
+  // --- Real-time Sync Broadcast ---
   useEffect(() => {
-    if (!fbUser) return;
-    const projRef = collection(db, 'artifacts', appId, 'public', 'data', 'projects');
-    const unsub = onSnapshot(projRef, (snapshot) => {
-         const projs = [];
-         snapshot.forEach(d => {
-            if (Object.keys(d.data()).length > 0) projs.push(d.data());
-         });
-         projs.sort((a,b) => b.lastModified - a.lastModified);
-         setSavedProjectsList(projs);
-    }, (error) => console.error("Projects error:", error));
-    return () => unsub();
-  }, [fbUser]);
+    if (isRemoteUpdateRef.current) {
+        isRemoteUpdateRef.current = false;
+        return;
+    }
+    if (!projectId || !p2p.current.sendDawSync) return;
 
-  // Custom Scrollbar styling & Persistent Auth sync
+    clearTimeout(syncTimeoutRef.current);
+    syncTimeoutRef.current = setTimeout(() => {
+        p2p.current.sendDawSync({ projectId, tracks, bpm });
+    }, 200); // 200ms debounce
+  }, [tracks, bpm, projectId]);
+
+  // Custom Scrollbar styling
   useEffect(() => {
     const style = document.createElement('style');
     style.innerHTML = `
@@ -1275,12 +1300,6 @@ export default function App() {
     };
   }, []);
 
-  // Update localStorage Current User whenever it changes
-  useEffect(() => { 
-    if (currentUser) localStorage.setItem('webdaw_current_user', JSON.stringify(currentUser));
-    else localStorage.removeItem('webdaw_current_user');
-  }, [currentUser]);
-
   // Context Menu & Utility Handlers
   useEffect(() => {
     const handleClick = () => setContextMenu(null);
@@ -1292,6 +1311,16 @@ export default function App() {
     e.preventDefault();
     e.stopPropagation();
     setContextMenu({ x: e.clientX, y: e.clientY, type, payload });
+  };
+
+  const updateUserPresence = (trackId) => {
+    if (!currentUser) return;
+    const updated = { ...currentUser, activeTrack: trackId };
+    setCurrentUser(updated);
+    try { localStorage.setItem('webdaw_p2p_user', JSON.stringify(updated)); } catch(e){}
+    if (p2p.current.sendProfile) {
+        p2p.current.sendProfile(updated);
+    }
   };
 
   const deleteClip = (trackId, clipId) => {
@@ -1732,7 +1761,6 @@ export default function App() {
   // Keyboard Shortcuts
   useEffect(() => {
     const handleKeyDown = (e) => {
-      // Don't trigger if user is typing in an input/textarea
       const targetTag = e.target.tagName;
       if (targetTag === 'INPUT' || targetTag === 'TEXTAREA' || targetTag === 'SELECT') return;
 
@@ -1775,6 +1803,7 @@ export default function App() {
     setTracks(projectData.tracks || INITIAL_TRACKS);
     setProjectName(projectData.name || 'Imported Project');
     setProjectId(projectData.id || `proj_${Date.now()}`);
+    currentProjectIdRef.current = projectData.id;
     setAppView('daw');
     showToast(`Loaded ${projectData.name}`, "success");
   };
@@ -1788,9 +1817,12 @@ export default function App() {
     });
   };
 
-  const saveProjectToCloud = async () => {
+  const shareProjectToNetwork = () => {
     const projId = projectId || `proj_${Date.now()}`;
-    if (!projectId) setProjectId(projId);
+    if (!projectId) {
+      setProjectId(projId);
+      currentProjectIdRef.current = projId;
+    }
     
     const projectData = {
       id: projId,
@@ -1798,17 +1830,18 @@ export default function App() {
       bpm,
       tracks,
       lastModified: Date.now(),
-      version: "0.9.0"
+      version: "0.9.0",
+      shared: true,
+      ownerName: currentUser.name
     };
     
-    if (fbUser) {
-       try {
-          await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'projects', projId), projectData);
-          showToast(`Project "${projectName}" saved to cloud host!`, "success");
-       } catch(e) {
-          console.error("Save to cloud error", e);
-          showToast("Failed to save project to cloud", "error");
-       }
+    saveProjectLocally(projectData);
+
+    if (p2p.current.sendProject) {
+        p2p.current.sendProject(projectData);
+        showToast(`Project "${projectName}" shared to P2P network!`, "success");
+    } else {
+        showToast("Saved locally (P2P offline).", "info");
     }
   };
 
@@ -1827,10 +1860,8 @@ export default function App() {
         version: "0.9.0"
       };
 
-      // 1. Add arrangement data
       zip.file("project.json", JSON.stringify(projectData, null, 2));
 
-      // 2. Identify all used audio samples
       const usedSampleIds = new Set();
       tracks.forEach(t => {
         if (t.type === 'audio') {
@@ -1848,7 +1879,6 @@ export default function App() {
         }
       });
 
-      // 3. Render and package samples as true WAV files
       if (usedSampleIds.size > 0) {
           const samplesFolder = zip.folder("samples");
           for (const sampleId of usedSampleIds) {
@@ -1860,7 +1890,6 @@ export default function App() {
           }
       }
 
-      // 4. Encode and export all MIDI tracks as standard .mid files
       const midiFolder = zip.folder("midi");
       tracks.forEach(t => {
         if (t.type === 'midi' && t.clips.some(c => c.notes && c.notes.length > 0)) {
@@ -1870,7 +1899,6 @@ export default function App() {
         }
       });
 
-      // 5. Generate the complete archive
       const content = await zip.generateAsync({ type: "blob", compression: "STORE" });
       const url = URL.createObjectURL(content);
       const a = document.createElement('a');
@@ -1907,11 +1935,9 @@ export default function App() {
       if (isZip) {
         if (!audioCtxRef.current) await initAudioEngine();
         
-        // 1. Read JSON
         const projectJsonString = await zip.file("project.json").async("string");
         projectData = JSON.parse(projectJsonString);
 
-        // 2. Decode and inject bundled audio samples
         const sampleFiles = Object.keys(zip.files).filter(name => name.startsWith('samples/') && !zip.files[name].dir);
         for (const samplePath of sampleFiles) {
            const sampleId = samplePath.replace('samples/', '').replace('.wav', '');
@@ -2560,14 +2586,6 @@ export default function App() {
     }
   };
 
-  const updateUserPresence = async (trackId) => {
-    if (currentUser && fbUser) {
-      try {
-        await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', currentUser.id), { activeTrack: trackId });
-      } catch(e) {}
-    }
-  };
-
   const handleAddTrack = async (trackType = 'midi') => {
     const newId = tracks.reduce((max, t) => Math.max(max, t.id), 0) + 1;
     const isMidi = trackType === 'midi'; 
@@ -2651,7 +2669,7 @@ export default function App() {
         
         const y = e.clientY - timelineRect.top + timelineRef.current.scrollTop;
         if (y >= 0) {
-            const trackIndex = Math.floor(y / 96); // 96px is track height (h-24)
+            const trackIndex = Math.floor(y / 96);
             if (trackIndex >= 0 && trackIndex < tracks.length) {
                 targetTrackId = tracks[trackIndex].id;
             }
@@ -2880,7 +2898,6 @@ export default function App() {
       ...t, clips: t.clips.map(c => c.id === clipId ? { ...c, notes: [...(c.notes || []), newNote] } : c)
     } : t));
 
-    // Immediately trigger resize mode so dragging after clicking extends the note
     setDraggingNote({
       trackId, 
       clipId, 
@@ -3094,82 +3111,31 @@ export default function App() {
     }
   };
 
-  const handleAuthSubmit = async (e) => {
+  const handleAuthSubmit = (e) => {
     e.preventDefault();
-    setAuthMessage('');
-    const isFirstUser = usersDb.length === 0;
-    const currentAuthMode = isFirstUser ? 'register' : authMode;
-
-    if (authName.trim() && authPassword.trim()) {
-      if (currentAuthMode === 'register') {
-        const existing = usersDb.find(u => u.name === authName.trim());
-        if (existing) {
-          setAuthMessage('Name already taken.');
-          return;
-        }
-        
-        const colors = ['bg-yellow-500', 'bg-red-500', 'bg-cyan-500', 'bg-indigo-500', 'bg-pink-500'];
-        const randomColor = colors[Math.floor(Math.random() * colors.length)];
-        const newUser = { 
-          id: `u-${Date.now()}`, 
-          name: authName.trim(), 
-          password: authPassword.trim(),
-          role: isFirstUser ? 'admin' : 'user',
-          status: isFirstUser ? 'approved' : 'pending',
-          color: randomColor, 
-          activeTrack: null,
-          isOnline: true
-        };
-        
-        try {
-            await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', newUser.id), newUser);
-            
-            if (isFirstUser) {
-              setCurrentUser(newUser);
-              setAuthName(''); setAuthPassword('');
-              showToast("Welcome to WebDAW! Admin host created.", "success");
-            } else {
-              await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', newUser.id), { isOnline: false });
-              setAuthMessage('Registered! Waiting for admin approval.');
-              setAuthMode('signin');
-              setAuthPassword('');
-            }
-        } catch (err) {
-            console.error(err);
-            setAuthMessage("Failed to register. Server error.");
-        }
-      } else { 
-        const user = usersDb.find(u => u.name === authName.trim() && u.password === authPassword.trim());
-        if (!user) {
-          setAuthMessage('Invalid name or password.');
-          return;
-        }
-        if (user.status === 'pending') {
-          setAuthMessage('Account pending admin approval.');
-          return;
-        }
-        
-        try {
-            await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user.id), { isOnline: true });
-            setCurrentUser(user);
-            setAuthName(''); setAuthPassword('');
-            showToast(`Welcome back, ${user.name}`, "success");
-        } catch (err) {
-            console.error(err);
-            setAuthMessage("Failed to log in. Server error.");
-        }
-      }
+    if (authName.trim()) {
+      const colors = ['bg-yellow-500', 'bg-red-500', 'bg-cyan-500', 'bg-indigo-500', 'bg-pink-500'];
+      const randomColor = colors[Math.floor(Math.random() * colors.length)];
+      
+      const user = { 
+        id: `u-${Date.now()}`, 
+        name: authName.trim(), 
+        color: randomColor, 
+        activeTrack: null,
+        isOnline: true
+      };
+      
+      setCurrentUser(user);
+      localStorage.setItem('webdaw_p2p_user', JSON.stringify(user));
+      setAuthName('');
+      showToast("Joined P2P Network successfully.", "success");
     }
   };
 
-  const handleSignOut = async () => {
-    if (currentUser && fbUser) {
-        try {
-           await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', currentUser.id), { isOnline: false, activeTrack: null });
-        } catch(e) {}
-    }
+  const handleSignOut = () => {
     setCurrentUser(null);
-    showToast("Signed out successfully");
+    localStorage.removeItem('webdaw_p2p_user');
+    showToast("Disconnected from P2P Network.");
   };
 
   const handleAvatarUpload = (e) => {
@@ -3195,11 +3161,11 @@ export default function App() {
 
         const updatedUser = { ...currentUser, avatar: dataUrl };
         setCurrentUser(updatedUser);
+        localStorage.setItem('webdaw_p2p_user', JSON.stringify(updatedUser));
         
-        if (fbUser) {
-            updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', currentUser.id), { avatar: dataUrl }).catch(console.error);
+        if (p2p.current.sendProfile) {
+            p2p.current.sendProfile(updatedUser);
         }
-        
         showToast("Profile avatar updated", "success");
       };
       img.src = evt.target.result;
@@ -3217,22 +3183,19 @@ export default function App() {
     return `${mins}:${secs}.${ms}`;
   };
 
+  const activeSessionUsers = [currentUser, ...Object.values(peers)].filter(Boolean);
+  const combinedProjectsList = [...localProjects];
+  Object.values(networkProjects).forEach(np => {
+     if (!combinedProjectsList.find(lp => lp.id === np.id)) {
+        combinedProjectsList.push(np);
+     }
+  });
+  combinedProjectsList.sort((a,b) => b.lastModified - a.lastModified);
+
   // ==========================================
   // LOADING / AUTHENTICATION SCREEN RENDER BLOCK
   // ==========================================
-  if (!isUsersLoaded) {
-      return (
-          <div className="flex flex-col h-screen bg-neutral-950 items-center justify-center text-neutral-300 font-sans selection:bg-blue-500/30">
-             <Activity className="animate-spin text-blue-500 mb-4" size={48} />
-             <span className="font-mono text-xs uppercase tracking-widest text-neutral-500">Connecting to Cloud Host...</span>
-          </div>
-      );
-  }
-
   if (!currentUser) {
-    const isFirstUser = usersDb.length === 0;
-    const currentAuthMode = isFirstUser ? 'register' : authMode;
-
     return (
       <div className="flex flex-col h-screen bg-neutral-950 items-center justify-center text-neutral-300 font-sans selection:bg-blue-500/30 overflow-hidden relative">
         <div className="absolute inset-0 pointer-events-none opacity-[0.02]" style={{ backgroundImage: 'radial-gradient(circle at 2px 2px, white 1px, transparent 0)', backgroundSize: '40px 40px' }} />
@@ -3240,39 +3203,15 @@ export default function App() {
         <div className="bg-neutral-900 border border-neutral-800 rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl z-10 animate-in fade-in zoom-in-95 duration-200">
           <div className="px-6 py-8 border-b border-neutral-800 flex flex-col items-center justify-center bg-neutral-950/80 backdrop-blur-md gap-3">
              <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white font-bold text-2xl shadow-lg shadow-blue-500/20">W</div>
-             <h2 className="text-xl font-bold text-white tracking-wide">WebDAW <span className="text-sm font-normal text-blue-400">Pro</span></h2>
+             <h2 className="text-xl font-bold text-white tracking-wide">WebDAW <span className="text-sm font-normal text-blue-400">P2P</span></h2>
              <p className="text-xs text-neutral-500 text-center">
-               {isFirstUser ? 'Host instance empty. Create the first admin account.' : 'Collaborate on your music'}
+               Join the serverless peer-to-peer mesh to collaborate instantly.
              </p>
           </div>
 
-          {!isFirstUser && (
-            <div className="flex w-full bg-neutral-950 border-b border-neutral-800">
-              <button 
-                type="button"
-                className={`flex-1 py-3 text-sm font-semibold transition-all ${currentAuthMode === 'signin' ? 'text-white border-b-2 border-blue-500 bg-neutral-900' : 'text-neutral-500 hover:text-neutral-300 hover:bg-neutral-900/50'}`}
-                onClick={() => { setAuthMode('signin'); setAuthMessage(''); }}
-              >
-                Sign In
-              </button>
-              <button 
-                type="button"
-                className={`flex-1 py-3 text-sm font-semibold transition-all ${currentAuthMode === 'register' ? 'text-white border-b-2 border-blue-500 bg-neutral-900' : 'text-neutral-500 hover:text-neutral-300 hover:bg-neutral-900/50'}`}
-                onClick={() => { setAuthMode('register'); setAuthMessage(''); }}
-              >
-                Register
-              </button>
-            </div>
-          )}
-
           <form onSubmit={handleAuthSubmit} className="p-6 flex flex-col gap-4">
-            {authMessage && (
-              <div className={`text-xs text-center p-2.5 rounded-lg font-medium ${authMessage.includes('Waiting') || authMessage.includes('pending') ? 'bg-yellow-500/10 text-yellow-500 border border-yellow-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'}`}>
-                {authMessage}
-              </div>
-            )}
             <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-medium text-neutral-400 uppercase tracking-wider">Name</label>
+              <label className="text-xs font-medium text-neutral-400 uppercase tracking-wider">Display Name</label>
               <input 
                 type="text" 
                 value={authName} 
@@ -3280,22 +3219,11 @@ export default function App() {
                 required 
                 autoFocus
                 className="bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500 transition-colors shadow-inner" 
-                placeholder="Enter your name" 
+                placeholder="Enter your name to connect" 
               />
             </div>
-            <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-medium text-neutral-400 uppercase tracking-wider">Password</label>
-              <input 
-                type="password" 
-                value={authPassword} 
-                onChange={(e) => setAuthPassword(e.target.value)} 
-                required 
-                className="bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500 transition-colors shadow-inner" 
-                placeholder="••••••••" 
-              />
-            </div>
-            <button type="submit" className="w-full bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400 text-white font-medium py-2.5 rounded-lg mt-2 transition-all shadow-lg shadow-blue-500/20 active:scale-[0.98]">
-              {currentAuthMode === 'signin' ? 'Sign In' : 'Register Host Admin'}
+            <button type="submit" className="w-full bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400 text-white font-medium py-2.5 rounded-lg mt-2 transition-all shadow-lg shadow-blue-500/20 active:scale-[0.98] flex items-center justify-center gap-2">
+              <Network size={16} /> Join Network
             </button>
           </form>
         </div>
@@ -3331,7 +3259,7 @@ export default function App() {
         <header className="h-14 bg-neutral-900/80 backdrop-blur-md border-b border-neutral-800 flex items-center justify-between px-6 shrink-0 shadow-sm z-50">
           <div className="flex items-center gap-3">
             <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white font-bold shadow-lg shadow-blue-500/20">W</div>
-            <span className="text-white font-bold text-lg tracking-wide">WebDAW <span className="text-xs font-normal text-neutral-500 ml-2">v0.9.0 Pro</span></span>
+            <span className="text-white font-bold text-lg tracking-wide">WebDAW <span className="text-xs font-normal text-neutral-500 ml-2">v0.9.0 P2P</span></span>
           </div>
           <div className="flex items-center gap-4">
              <div className="flex items-center gap-3 pl-2">
@@ -3342,7 +3270,7 @@ export default function App() {
                     </div>
                     <input type="file" accept="image/*" hidden onChange={handleAvatarUpload} />
                   </label>
-                  <span className="text-sm font-medium text-white">{currentUser.name} {currentUser.role === 'admin' && <span className="text-[10px] bg-red-500/20 text-red-400 border border-red-500/30 px-1.5 py-0.5 rounded ml-1">ADMIN</span>}</span>
+                  <span className="text-sm font-medium text-white">{currentUser.name}</span>
                 </div>
                 <button onClick={handleSignOut} className="p-2 text-neutral-500 hover:text-red-400 transition-colors rounded-lg hover:bg-neutral-800" title="Sign Out">
                   <LogOut size={16} />
@@ -3358,12 +3286,12 @@ export default function App() {
            <div className="w-full max-w-5xl z-10">
               <div className="flex items-center justify-between mb-12">
                  <div>
-                    <h1 className="text-4xl font-extrabold text-white mb-2 tracking-tight">Your Projects</h1>
-                    <p className="text-neutral-400 max-w-2xl text-lg">Create a new session, resume your saved work, or drop in an exported project file from anywhere.</p>
+                    <h1 className="text-4xl font-extrabold text-white mb-2 tracking-tight">P2P Workspace</h1>
+                    <p className="text-neutral-400 max-w-2xl text-lg">Create a new session, or join a shared project broadcasted by peers on this network.</p>
                  </div>
                  {/* Cloud indicator */}
                  <div className="flex items-center gap-2 bg-blue-500/10 border border-blue-500/20 text-blue-400 px-4 py-2 rounded-full text-sm font-medium shadow-sm">
-                    <Cloud size={16} /> Host Connected
+                    <Network size={16} /> Active Peers: {Object.keys(peers).length}
                  </div>
               </div>
 
@@ -3391,23 +3319,30 @@ export default function App() {
                    <input type="file" accept=".webdaw,.json" hidden onChange={handleImportProjectFile} />
                 </label>
 
-                {/* Saved Projects List */}
-                {savedProjectsList.map((proj) => (
+                {/* Combined Projects List */}
+                {combinedProjectsList.map((proj) => {
+                  const isRemote = proj.peerId !== undefined;
+                  return (
                   <div 
                      key={proj.id} 
                      onClick={() => loadProjectToDaw(proj)}
                      className="group relative bg-neutral-900 border border-neutral-800 hover:border-neutral-600 rounded-2xl p-6 flex flex-col cursor-pointer transition-all duration-300 min-h-[220px] shadow-lg overflow-hidden"
                   >
-                     <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-500 to-purple-500 opacity-0 group-hover:opacity-100 transition-opacity" />
+                     <div className={`absolute top-0 left-0 w-full h-1 bg-gradient-to-r ${isRemote ? 'from-purple-500 to-pink-500' : 'from-blue-500 to-emerald-500'} opacity-0 group-hover:opacity-100 transition-opacity`} />
                      
                      <div className="flex items-start justify-between mb-4">
                        <div className="w-10 h-10 rounded-lg bg-neutral-800 flex items-center justify-center relative">
-                          <FileJson size={20} className="text-blue-400" />
-                          <div className="absolute -top-1 -right-1 w-3 h-3 bg-blue-500 rounded-full border-2 border-neutral-900 flex items-center justify-center"><Cloud size={6} className="text-white" /></div>
+                          <FileJson size={20} className={isRemote ? 'text-purple-400' : 'text-blue-400'} />
+                          <div className={`absolute -top-1 -right-1 w-3 h-3 ${isRemote ? 'bg-purple-500' : 'bg-blue-500'} rounded-full border-2 border-neutral-900 flex items-center justify-center`}>
+                              {isRemote ? <Network size={6} className="text-white"/> : <Save size={6} className="text-white"/>}
+                          </div>
                        </div>
-                       <span className="text-[10px] font-mono text-neutral-500 bg-neutral-950 px-2 py-1 rounded">
-                         {new Date(proj.lastModified).toLocaleDateString()}
-                       </span>
+                       <div className="flex flex-col items-end gap-1">
+                         <span className="text-[10px] font-mono text-neutral-500 bg-neutral-950 px-2 py-1 rounded">
+                           {new Date(proj.lastModified).toLocaleDateString()}
+                         </span>
+                         {isRemote && <span className="text-[9px] font-bold text-purple-400 bg-purple-500/10 px-1.5 py-0.5 rounded">FROM {proj.ownerName}</span>}
+                       </div>
                      </div>
                      
                      <h3 className="text-lg font-bold text-white truncate w-full mb-1 group-hover:text-blue-400 transition-colors">{proj.name}</h3>
@@ -3420,7 +3355,7 @@ export default function App() {
                        {proj.tracks?.length > 5 && <span className="text-[10px] text-neutral-500 font-bold ml-1">+{proj.tracks.length - 5}</span>}
                      </div>
                   </div>
-                ))}
+                )})}
               </div>
            </div>
         </div>
@@ -3492,7 +3427,7 @@ export default function App() {
           </button>
           
           <div className="flex items-center gap-1.5 bg-neutral-900 px-2 py-1.5 rounded-full border border-neutral-800">
-            <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse ml-1" />
+            <span className={`w-1.5 h-1.5 rounded-full ${Object.keys(peers).length > 0 ? 'bg-green-500 animate-pulse' : 'bg-neutral-600'} ml-1`} />
             <div className="flex -space-x-1.5 pr-0.5">
               {activeSessionUsers.map(collab => (
                 <div key={collab.id} className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] text-white font-bold ring-2 ring-neutral-900 ${collab.color} overflow-hidden`} title={`${collab.name} is online`}>
@@ -3509,7 +3444,7 @@ export default function App() {
                </div>
                <input type="file" accept="image/*" hidden onChange={handleAvatarUpload} />
              </label>
-             <button onClick={handleSignOut} className="p-1 text-neutral-500 hover:text-red-400 transition-colors rounded-full hover:bg-neutral-800 flex items-center justify-center" title="Sign Out">
+             <button onClick={handleSignOut} className="p-1 text-neutral-500 hover:text-red-400 transition-colors rounded-full hover:bg-neutral-800 flex items-center justify-center" title="Leave P2P Network">
                 <LogOut size={16} />
              </button>
           </div>
@@ -3726,7 +3661,7 @@ export default function App() {
                 <div className="flex-1 overflow-y-auto overflow-x-hidden">
                   {tracks.map((track) => {
                     const Icon = track.icon;
-                    const hasActiveCollab = activeSessionUsers.find(c => c.activeTrack === track.id);
+                    const hasActiveCollab = activeSessionUsers.find(c => c.activeTrack === track.id && c.id !== currentUser?.id);
                     const isDeviceRackOpen = bottomDock?.type === 'devices' && bottomDock?.trackId === track.id;
                     
                     return (
@@ -3739,7 +3674,7 @@ export default function App() {
                         onContextMenu={(e) => handleContextMenu(e, 'track', { trackId: track.id })} 
                         className={`h-24 border-b flex flex-col p-2 transition-colors group relative ${isDeviceRackOpen ? 'bg-neutral-800/70 border-neutral-700' : 'hover:bg-neutral-800/50 border-neutral-800'} ${track.armed ? 'border-l-4 border-l-red-500 bg-red-500/5' : ''} cursor-grab active:cursor-grabbing`}
                       >
-                        {hasActiveCollab && <div className={`absolute left-0 top-0 bottom-0 w-1 ${hasActiveCollab.color}`} />}
+                        {hasActiveCollab && <div className={`absolute left-0 top-0 bottom-0 w-1 ${hasActiveCollab.color}`} title={`${hasActiveCollab.name} is editing`} />}
 
                         <div className="flex items-center justify-between mb-2 pl-2">
                           <div className="flex items-center gap-2">
@@ -4234,7 +4169,7 @@ export default function App() {
           <span>SAMPLE RATE: 44.1kHz</span>
           <span>BUFFER: 256smp</span>
         </div>
-        <div className="flex items-center gap-2"><span className="flex items-center gap-1"><Maximize2 size={10} /> Sync: Connected to Cloud Host</span></div>
+        <div className="flex items-center gap-2"><span className="flex items-center gap-1"><Maximize2 size={10} /> Sync: P2P Mesh Connected</span></div>
       </footer>
 
       {/* --- Unified Plugin GUI Modal --- */}
@@ -4669,8 +4604,8 @@ export default function App() {
                 <div className="flex flex-col gap-3">
                    <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider border-b border-neutral-800 pb-1.5">Project Actions</label>
                    <div className="flex gap-3">
-                      <button onClick={() => { saveProjectToCloud(); setShowIOSettings(false); }} className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 hover:text-white text-xs font-bold rounded-xl transition-all border border-neutral-700 shadow-sm active:scale-95">
-                         <Cloud size={16} /> Save to Cloud
+                      <button onClick={() => { shareProjectToNetwork(); setShowIOSettings(false); }} className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 hover:text-white text-xs font-bold rounded-xl transition-all border border-neutral-700 shadow-sm active:scale-95">
+                         <Network size={16} /> Share to Peers
                       </button>
                       <button onClick={() => { exportProjectToFile(); setShowIOSettings(false); }} className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400 text-white text-xs font-bold rounded-xl transition-all shadow-[0_0_10px_rgba(37,99,235,0.3)] active:scale-95">
                          <Download size={16} /> Export .webdaw
@@ -4708,36 +4643,6 @@ export default function App() {
                       </select>
                    </div>
                 </div>
-
-                {/* Admin Area */}
-                {currentUser?.role === 'admin' && (
-                  <div className="flex flex-col gap-3">
-                     <label className="text-[10px] font-bold text-red-400 uppercase tracking-wider border-b border-red-500/30 pb-1.5 flex items-center gap-1.5">
-                       <Users size={12} /> Pending Approvals
-                     </label>
-                     <div className="flex flex-col gap-2 max-h-32 overflow-y-auto custom-scrollbar">
-                        {usersDb.filter(u => u.status === 'pending').length === 0 ? (
-                           <div className="text-xs text-neutral-500 italic p-2 bg-neutral-950 rounded border border-neutral-800">No pending users.</div>
-                        ) : (
-                           usersDb.filter(u => u.status === 'pending').map(u => (
-                              <div key={u.id} className="flex items-center justify-between bg-neutral-950 border border-neutral-800 p-2 rounded">
-                                 <span className="text-sm font-medium text-white">{u.name}</span>
-                                 <div className="flex gap-2">
-                                    <button 
-                                      onClick={() => updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', u.id), { status: 'approved' })}
-                                      className="px-2 py-1 bg-green-500/20 text-green-400 hover:bg-green-500 hover:text-white rounded text-xs transition-colors"
-                                    >Approve</button>
-                                    <button 
-                                      onClick={() => deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', u.id))}
-                                      className="px-2 py-1 bg-red-500/20 text-red-400 hover:bg-red-500 hover:text-white rounded text-xs transition-colors"
-                                    >Reject</button>
-                                 </div>
-                              </div>
-                           ))
-                        )}
-                     </div>
-                  </div>
-                )}
              </div>
            </div>
          </div>
