@@ -1085,7 +1085,6 @@ export default function App() {
   const [tracks, setTracks] = useState(INITIAL_TRACKS);
   const [vstLibrary, setVstLibrary] = useState(INITIAL_VST_LIBRARY);
   const [metronomeEnabled, setMetronomeEnabled] = useState(false);
-  const [syncTransport, setSyncTransport] = useState(false);
   const [activeView, setActiveView] = useState('arrangement'); 
   const [draggingClip, setDraggingClip] = useState(null);
   const [bottomDock, setBottomDock] = useState(null); 
@@ -1179,9 +1178,6 @@ export default function App() {
      stateRefs.current.autoScroll = autoScroll;
   }, [isPlaying, isRecording, bpm, autoScroll]);
 
-  const syncTransportRef = useRef(syncTransport);
-  useEffect(() => { syncTransportRef.current = syncTransport; }, [syncTransport]);
-
   // Toast Notification Helper
   const showToast = useCallback((message, type = 'info') => {
     const id = Date.now();
@@ -1203,8 +1199,7 @@ export default function App() {
       sendProject: null,
       sendDawSync: null,
       requestSample: null,
-      sendSample: null,
-      sendTransportSync: null
+      sendSample: null
   });
 
   // --- Load Local Projects ---
@@ -1235,9 +1230,8 @@ export default function App() {
     const [sendDawSync, getDawSync] = room.makeAction('dawSync');
     const [requestSample, getRequestSample] = room.makeAction('reqSample');
     const [sendSample, getSample] = room.makeAction('sample');
-    const [sendTransportSync, getTransportSync] = room.makeAction('transportSync');
 
-    p2p.current = { room, sendProfile, sendProject, sendDawSync, requestSample, sendSample, sendTransportSync };
+    p2p.current = { room, sendProfile, sendProject, sendDawSync, requestSample, sendSample };
 
     // Broadcast myself initially (after a small delay to ensure listeners are ready)
     setTimeout(() => {
@@ -1265,89 +1259,50 @@ export default function App() {
     });
 
     getProfile((profile, peerId) => {
-        if (profile && profile.id) {
-            setPeers(prev => ({ ...prev, [peerId]: { ...profile, peerId } }));
-        }
+        setPeers(prev => ({ ...prev, [peerId]: { ...profile, peerId } }));
     });
 
     getProject((projectData, peerId) => {
-        if (projectData && projectData.id) {
-            setNetworkProjects(prev => ({ ...prev, [projectData.id]: { ...projectData, peerId } }));
-        }
+        setNetworkProjects(prev => ({ ...prev, [projectData.id]: { ...projectData, peerId } }));
     });
 
     getDawSync((syncData, peerId) => {
-        if (syncData && syncData.projectId === currentProjectIdRef.current) {
+        if (syncData.projectId === currentProjectIdRef.current) {
             const missingSamples = new Set();
             
-            if (Array.isArray(syncData.tracks)) {
-                syncData.tracks.forEach(t => {
-                    if (t.type === 'audio') {
-                        t.clips?.forEach(c => {
-                            if (c.sampleId && !globalAudioBufferCache.has(c.sampleId) && !requestedSamplesRef.current.has(c.sampleId)) {
-                                requestedSamplesRef.current.add(c.sampleId);
-                                missingSamples.add(c.sampleId);
+            syncData.tracks.forEach(t => {
+                if (t.type === 'audio') {
+                    t.clips.forEach(c => {
+                        if (c.sampleId && !globalAudioBufferCache.has(c.sampleId) && !requestedSamplesRef.current.has(c.sampleId)) {
+                            requestedSamplesRef.current.add(c.sampleId);
+                            missingSamples.add(c.sampleId);
+                        }
+                    });
+                }
+                if (t.instrumentParams) {
+                    if (t.instrumentParams.sampleId && !globalAudioBufferCache.has(t.instrumentParams.sampleId) && !requestedSamplesRef.current.has(t.instrumentParams.sampleId)) {
+                        requestedSamplesRef.current.add(t.instrumentParams.sampleId);
+                        missingSamples.add(t.instrumentParams.sampleId);
+                    }
+                    if (t.instrumentParams.drumMap) {
+                        Object.values(t.instrumentParams.drumMap).forEach(pad => {
+                            if (pad.sampleId && !globalAudioBufferCache.has(pad.sampleId) && !requestedSamplesRef.current.has(pad.sampleId)) {
+                                requestedSamplesRef.current.add(pad.sampleId);
+                                missingSamples.add(pad.sampleId);
                             }
                         });
                     }
-                    if (t.instrumentParams) {
-                        if (t.instrumentParams.sampleId && !globalAudioBufferCache.has(t.instrumentParams.sampleId) && !requestedSamplesRef.current.has(t.instrumentParams.sampleId)) {
-                            requestedSamplesRef.current.add(t.instrumentParams.sampleId);
-                            missingSamples.add(t.instrumentParams.sampleId);
-                        }
-                        if (t.instrumentParams.drumMap) {
-                            Object.values(t.instrumentParams.drumMap).forEach(pad => {
-                                if (pad.sampleId && !globalAudioBufferCache.has(pad.sampleId) && !requestedSamplesRef.current.has(pad.sampleId)) {
-                                    requestedSamplesRef.current.add(pad.sampleId);
-                                    missingSamples.add(pad.sampleId);
-                                }
-                            });
-                        }
-                    }
-                });
-            }
+                }
+            });
 
             missingSamples.forEach(sid => {
                 if (p2p.current.requestSample) p2p.current.requestSample(sid, peerId);
             });
 
             isRemoteUpdateRef.current = true;
-            
-            setTracks(prev => {
-                if (!Array.isArray(syncData.tracks)) return prev;
-                return syncData.tracks.map(remoteTrack => {
-                    const localTrack = prev.find(t => t.id === remoteTrack.id);
-                    if (localTrack && !syncTransportRef.current) {
-                        return { ...remoteTrack, muted: localTrack.muted, solo: localTrack.solo };
-                    }
-                    return remoteTrack;
-                });
-            });
-            
+            setTracks(syncData.tracks);
             setBpm(syncData.bpm);
             if (syncData.projectName) setProjectName(syncData.projectName);
-        }
-    });
-
-    getTransportSync((syncData, peerId) => {
-        if (syncData && syncData.projectId === currentProjectIdRef.current && syncTransportRef.current) {
-            if (syncData.type === 'playhead') {
-                setCurrentTime(syncData.currentTime);
-                stateRefs.current.currentTime = syncData.currentTime;
-            } else if (syncData.type === 'play') {
-                setIsPlaying(syncData.isPlaying);
-                if (syncData.currentTime !== undefined) {
-                    setCurrentTime(syncData.currentTime);
-                    stateRefs.current.currentTime = syncData.currentTime;
-                }
-                if (syncData.isPlaying) {
-                    initAudioEngine().catch(e => console.warn("Auto-play prevented without user gesture:", e));
-                } else {
-                    stopAudio();
-                }
-            } else if (syncData.type === 'loop') {
-                setLoopRegion(syncData.loopRegion);
-            }
         }
     });
 
@@ -1414,14 +1369,6 @@ export default function App() {
 
     return () => room.leave();
   }, [currentUser?.id]);
-
-  const emitTransport = useCallback((type, data) => {
-      if (syncTransportRef.current && p2p.current.sendTransportSync && currentProjectIdRef.current) {
-          try {
-              p2p.current.sendTransportSync({ projectId: currentProjectIdRef.current, type, ...data });
-          } catch (e) { console.error("Transport Sync Error:", e); }
-      }
-  }, []);
 
   // --- Real-time Sync Broadcast ---
   useEffect(() => {
@@ -1878,28 +1825,25 @@ export default function App() {
     if (!stateRefs.current.isPlaying) {
       await initAudioEngine();
       setIsPlaying(true);
-      emitTransport('play', { isPlaying: true, currentTime: stateRefs.current.currentTime });
       if (stateRefs.current.isRecording) {
          startRecording();
       }
     } else {
       setIsPlaying(false);
-      emitTransport('play', { isPlaying: false, currentTime: stateRefs.current.currentTime });
       stopAudio();
       if (stateRefs.current.isRecording) {
          setIsRecording(false);
          endRecording();
       }
     }
-  }, [emitTransport]);
+  }, []);
 
-  const stopPlayback = useCallback(() => {
+  const stopPlayback = () => {
     setIsPlaying(false);
     setCurrentTime(0);
     stateRefs.current.currentTime = 0;
-    emitTransport('play', { isPlaying: false, currentTime: 0 });
     stopAudio();
-    if (stateRefs.current.isRecording) {
+    if (isRecording) {
         setIsRecording(false);
         endRecording();
     }
@@ -1907,7 +1851,7 @@ export default function App() {
       const ctx = canvas.getContext('2d');
       if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
     });
-  }, [emitTransport]);
+  };
 
   const toggleRecord = () => {
     if (!isRecording) {
@@ -3250,13 +3194,6 @@ export default function App() {
     };
 
     const handleMouseUp = () => {
-      if (draggingLoop) {
-          emitTransport('loop', { loopRegion: loopRegionRef.current });
-      }
-      if (draggingPlayhead) {
-          emitTransport('playhead', { currentTime: stateRefs.current.currentTime });
-      }
-
       setDraggingClip(null);
       setDraggingNote(null);
       setDraggingEdge(null);
@@ -3308,7 +3245,6 @@ export default function App() {
     
     setCurrentTime(newTime);
     stateRefs.current.currentTime = newTime;
-    emitTransport('playhead', { currentTime: newTime });
     
     if (audioCtxRef.current) {
       Object.values(synthsRef.current).forEach(synth => {
@@ -3514,11 +3450,11 @@ export default function App() {
                 <div className="flex items-center gap-2">
                   <label className="relative cursor-pointer group" title="Upload Profile Picture">
                     <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center text-xs text-white font-bold shadow-sm overflow-hidden border border-neutral-700 group-hover:border-blue-400 transition-colors">
-                      {currentUser?.avatar ? <img src={currentUser.avatar} alt="Avatar" className="w-full h-full object-cover" /> : (currentUser?.name?.charAt(0)?.toUpperCase() || '?')}
+                      {currentUser.avatar ? <img src={currentUser.avatar} alt="Avatar" className="w-full h-full object-cover" /> : currentUser.name.charAt(0).toUpperCase()}
                     </div>
                     <input type="file" accept="image/*" hidden onChange={handleAvatarUpload} />
                   </label>
-                  <span className="text-sm font-medium text-white">{currentUser?.name || 'User'}</span>
+                  <span className="text-sm font-medium text-white">{currentUser.name}</span>
                 </div>
                 <button onClick={handleSignOut} className="p-2 text-neutral-500 hover:text-red-400 transition-colors rounded-lg hover:bg-neutral-800" title="Sign Out">
                   <LogOut size={16} />
@@ -3587,18 +3523,18 @@ export default function App() {
                        </div>
                        <div className="flex flex-col items-end gap-1">
                          <span className="text-[10px] font-mono text-neutral-500 bg-neutral-950 px-2 py-1 rounded">
-                           {new Date(proj.lastModified || Date.now()).toLocaleDateString()}
+                           {new Date(proj.lastModified).toLocaleDateString()}
                          </span>
-                         {isRemote && <span className="text-[9px] font-bold text-purple-400 bg-purple-500/10 px-1.5 py-0.5 rounded">FROM {proj.ownerName || 'Peer'}</span>}
+                         {isRemote && <span className="text-[9px] font-bold text-purple-400 bg-purple-500/10 px-1.5 py-0.5 rounded">FROM {proj.ownerName}</span>}
                        </div>
                      </div>
                      
-                     <h3 className="text-lg font-bold text-white truncate w-full mb-1 group-hover:text-blue-400 transition-colors">{proj.name || 'Untitled'}</h3>
-                     <p className="text-xs text-neutral-400 font-mono mb-auto">{proj.bpm || 120} BPM &bull; {proj.tracks?.length || 0} Tracks</p>
+                     <h3 className="text-lg font-bold text-white truncate w-full mb-1 group-hover:text-blue-400 transition-colors">{proj.name}</h3>
+                     <p className="text-xs text-neutral-400 font-mono mb-auto">{proj.bpm} BPM &bull; {proj.tracks?.length || 0} Tracks</p>
                      
                      <div className="flex gap-2 mt-4">
                        {proj.tracks?.slice(0,5).map(t => (
-                         <div key={t.id} className={`w-3 h-3 rounded-full shadow-sm ${t.color || 'bg-neutral-500'}`} title={t.name || 'Track'} />
+                         <div key={t.id} className={`w-3 h-3 rounded-full shadow-sm ${t.color}`} title={t.name} />
                        ))}
                        {proj.tracks?.length > 5 && <span className="text-[10px] text-neutral-500 font-bold ml-1">+{proj.tracks.length - 5}</span>}
                      </div>
@@ -3649,21 +3585,11 @@ export default function App() {
           
           <div className="w-px h-5 bg-neutral-800 mx-1" />
           
-          <button onClick={() => {
-              setLoopRegion(prev => {
-                  const next = {...prev, enabled: !prev.enabled};
-                  emitTransport('loop', { loopRegion: next });
-                  return next;
-              });
-          }} className={`p-1.5 rounded-lg transition-colors ${loopRegion.enabled ? 'text-blue-400 bg-blue-500/20' : 'text-neutral-400 hover:text-white hover:bg-neutral-800'}`} title="Toggle Loop Region">
+          <button onClick={() => setLoopRegion(prev => ({...prev, enabled: !prev.enabled}))} className={`p-1.5 rounded-lg transition-colors ${loopRegion.enabled ? 'text-blue-400 bg-blue-500/20' : 'text-neutral-400 hover:text-white hover:bg-neutral-800'}`} title="Toggle Loop Region">
             <Repeat size={16} />
           </button>
           <button onClick={() => setAutoScroll(!autoScroll)} className={`p-1.5 rounded-lg transition-colors ${autoScroll ? 'text-green-400 bg-green-500/20' : 'text-neutral-400 hover:text-white hover:bg-neutral-800'}`} title="Auto-Scroll Timeline">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M13 5l7 7-7 7M4 12h16"/></svg>
-          </button>
-          <div className="w-px h-5 bg-neutral-800 mx-1" />
-          <button onClick={() => setSyncTransport(!syncTransport)} className={`p-1.5 rounded-lg transition-colors ${syncTransport ? 'text-purple-400 bg-purple-500/20' : 'text-neutral-400 hover:text-white hover:bg-neutral-800'}`} title="P2P Transport Link (Play/Pause/Mute/Solo/Loop)">
-            <Zap size={16} />
           </button>
         </div>
 
@@ -3688,8 +3614,8 @@ export default function App() {
             <span className={`w-1.5 h-1.5 rounded-full ${Object.keys(peers).length > 0 ? 'bg-green-500 animate-pulse' : 'bg-neutral-600'} ml-1`} />
             <div className="flex -space-x-1.5 pr-0.5">
               {activeSessionUsers.map(collab => (
-                <div key={collab?.id || Math.random()} className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] text-white font-bold ring-2 ring-neutral-900 ${collab?.color || 'bg-neutral-600'} overflow-hidden`} title={`${collab?.name || 'Peer'} is online`}>
-                  {collab?.avatar ? <img src={collab.avatar} alt={collab?.name} className="w-full h-full object-cover" /> : (collab?.name?.charAt(0)?.toUpperCase() || '?')}
+                <div key={collab.id} className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] text-white font-bold ring-2 ring-neutral-900 ${collab.color} overflow-hidden`} title={`${collab.name} is online`}>
+                  {collab.avatar ? <img src={collab.avatar} alt={collab.name} className="w-full h-full object-cover" /> : collab.name.charAt(0).toUpperCase()}
                 </div>
               ))}
             </div>
@@ -3698,7 +3624,7 @@ export default function App() {
           <div className="flex items-center gap-2">
              <label className="relative cursor-pointer group" title="Upload Profile Picture">
                <div className="w-7 h-7 rounded-full bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center text-xs text-white font-bold shadow-sm overflow-hidden border border-neutral-700 group-hover:border-blue-400 transition-colors">
-                 {currentUser?.avatar ? <img src={currentUser.avatar} alt="Avatar" className="w-full h-full object-cover" /> : (currentUser?.name?.charAt(0)?.toUpperCase() || '?')}
+                 {currentUser.avatar ? <img src={currentUser.avatar} alt="Avatar" className="w-full h-full object-cover" /> : currentUser.name.charAt(0).toUpperCase()}
                </div>
                <input type="file" accept="image/*" hidden onChange={handleAvatarUpload} />
              </label>
