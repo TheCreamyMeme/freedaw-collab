@@ -6,8 +6,19 @@ import {
   Folder, Sliders, History, UserCircle, Piano,
   MousePointer2, Pencil, Eraser, X, Grid, Trash2, Activity,
   Settings2, Plug, Power, LogOut, FileAudio, FileCode, Cpu,
-  Repeat, Home, Save, Download, Upload, FileJson, Info, AlertTriangle, CheckCircle2
+  Repeat, Home, Save, Download, Upload, FileJson, Info, AlertTriangle, CheckCircle2, Cloud
 } from 'lucide-react';
+
+import { initializeApp } from 'firebase/app';
+import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
+import { getFirestore, doc, setDoc, collection, onSnapshot, updateDoc, deleteDoc } from 'firebase/firestore';
+
+// --- Firebase Configuration ---
+const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
 
 const TOTAL_BEATS = 256; 
 
@@ -1130,13 +1141,17 @@ export default function App() {
   const [selectedAudioInput, setSelectedAudioInput] = useState('');
   const [selectedMidiInput, setSelectedMidiInput] = useState('');
 
-  const [usersDb, setUsersDb] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('webdaw_users')) || []; } catch(e) { return []; }
-  }); 
+  // Authentication & Users State
+  const [fbUser, setFbUser] = useState(null);
+  const [usersDb, setUsersDb] = useState([]); 
+  const [isUsersLoaded, setIsUsersLoaded] = useState(false);
   const [activeSessionUsers, setActiveSessionUsers] = useState([]); 
+  
+  // Persist Current User login token/state locally so we don't force login on refresh, but data lives in Cloud
   const [currentUser, setCurrentUser] = useState(() => {
     try { return JSON.parse(localStorage.getItem('webdaw_current_user')) || null; } catch(e) { return null; }
   });
+  
   const [authMode, setAuthMode] = useState('signin'); 
   const [authName, setAuthName] = useState('');
   const [authPassword, setAuthPassword] = useState('');
@@ -1180,6 +1195,70 @@ export default function App() {
     setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 4000);
   }, []);
 
+  // --- Initialize Firebase Auth ---
+  useEffect(() => {
+    const initAuth = async () => {
+      try {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await signInWithCustomToken(auth, __initial_auth_token);
+        } else {
+          await signInAnonymously(auth);
+        }
+      } catch (err) {
+        console.error("Auth Error", err);
+      }
+    };
+    initAuth();
+    const unsubscribe = onAuthStateChanged(auth, setFbUser);
+    return () => unsubscribe();
+  }, []);
+
+  // --- Real-time sync for Users Directory (Host registration database) ---
+  useEffect(() => {
+    if (!fbUser) return;
+    
+    const usersRef = collection(db, 'artifacts', appId, 'public', 'data', 'users');
+    const unsub = onSnapshot(usersRef, (snapshot) => {
+        const usersList = [];
+        snapshot.forEach(doc => {
+           if (Object.keys(doc.data()).length > 0) {
+               usersList.push({ id: doc.id, ...doc.data() });
+           }
+        });
+        setUsersDb(usersList);
+        
+        const activeUsers = usersList.filter(u => u.isOnline);
+        setActiveSessionUsers(activeUsers);
+        
+        setCurrentUser(prev => {
+            if (!prev) return null;
+            const updated = usersList.find(u => u.id === prev.id);
+            return updated || prev;
+        });
+        
+        setIsUsersLoaded(true);
+    }, (error) => {
+        console.error("Firebase Users error:", error);
+        setIsUsersLoaded(true);
+    });
+    return () => unsub();
+  }, [fbUser]);
+
+  // --- Real-time sync for Shared Projects ---
+  useEffect(() => {
+    if (!fbUser) return;
+    const projRef = collection(db, 'artifacts', appId, 'public', 'data', 'projects');
+    const unsub = onSnapshot(projRef, (snapshot) => {
+         const projs = [];
+         snapshot.forEach(d => {
+            if (Object.keys(d.data()).length > 0) projs.push(d.data());
+         });
+         projs.sort((a,b) => b.lastModified - a.lastModified);
+         setSavedProjectsList(projs);
+    }, (error) => console.error("Projects error:", error));
+    return () => unsub();
+  }, [fbUser]);
+
   // Custom Scrollbar styling & Persistent Auth sync
   useEffect(() => {
     const style = document.createElement('style');
@@ -1191,39 +1270,16 @@ export default function App() {
       .custom-scrollbar-hide::-webkit-scrollbar { display: none; }
     `;
     document.head.appendChild(style);
-
-    if (currentUser) {
-        setActiveSessionUsers(prev => {
-          if (prev.find(u => u.id === currentUser.id)) return prev;
-          return [...prev, { ...currentUser, activeTrack: null }];
-        });
-    }
-
     return () => {
         if (document.head.contains(style)) document.head.removeChild(style);
     };
   }, []);
 
-  // Sync Auth states to LocalStorage
-  useEffect(() => { localStorage.setItem('webdaw_users', JSON.stringify(usersDb)); }, [usersDb]);
+  // Update localStorage Current User whenever it changes
   useEffect(() => { 
     if (currentUser) localStorage.setItem('webdaw_current_user', JSON.stringify(currentUser));
     else localStorage.removeItem('webdaw_current_user');
   }, [currentUser]);
-
-  // Load local projects list
-  useEffect(() => {
-    const loadLocalProjects = () => {
-      const keys = Object.keys(localStorage).filter(k => k.startsWith('webdaw_proj_'));
-      const projs = keys.map(k => {
-          try { return JSON.parse(localStorage.getItem(k)); } catch(e) { return null; }
-      }).filter(Boolean).sort((a,b) => b.lastModified - a.lastModified);
-      setSavedProjectsList(projs);
-    };
-    if (appView === 'home') {
-      loadLocalProjects();
-    }
-  }, [appView]);
 
   // Context Menu & Utility Handlers
   useEffect(() => {
@@ -1732,7 +1788,7 @@ export default function App() {
     });
   };
 
-  const saveProjectToLocal = () => {
+  const saveProjectToCloud = async () => {
     const projId = projectId || `proj_${Date.now()}`;
     if (!projectId) setProjectId(projId);
     
@@ -1745,8 +1801,15 @@ export default function App() {
       version: "0.9.0"
     };
     
-    localStorage.setItem(`webdaw_proj_${projId}`, JSON.stringify(projectData));
-    showToast(`Project "${projectName}" saved locally!`, "success");
+    if (fbUser) {
+       try {
+          await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'projects', projId), projectData);
+          showToast(`Project "${projectName}" saved to cloud host!`, "success");
+       } catch(e) {
+          console.error("Save to cloud error", e);
+          showToast("Failed to save project to cloud", "error");
+       }
+    }
   };
 
   const exportProjectToFile = async () => {
@@ -2497,9 +2560,11 @@ export default function App() {
     }
   };
 
-  const updateUserPresence = (trackId) => {
-    if (currentUser) {
-      setActiveSessionUsers(prev => prev.map(c => c.id === currentUser.id ? { ...c, activeTrack: trackId } : c));
+  const updateUserPresence = async (trackId) => {
+    if (currentUser && fbUser) {
+      try {
+        await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', currentUser.id), { activeTrack: trackId });
+      } catch(e) {}
     }
   };
 
@@ -3029,7 +3094,7 @@ export default function App() {
     }
   };
 
-  const handleAuthSubmit = (e) => {
+  const handleAuthSubmit = async (e) => {
     e.preventDefault();
     setAuthMessage('');
     const isFirstUser = usersDb.length === 0;
@@ -3052,20 +3117,26 @@ export default function App() {
           role: isFirstUser ? 'admin' : 'user',
           status: isFirstUser ? 'approved' : 'pending',
           color: randomColor, 
-          activeTrack: null 
+          activeTrack: null,
+          isOnline: true
         };
         
-        setUsersDb(prev => [...prev, newUser]);
-        
-        if (isFirstUser) {
-          setCurrentUser(newUser);
-          setActiveSessionUsers(prev => [...prev, newUser]);
-          setAuthName(''); setAuthPassword('');
-          showToast("Welcome to WebDAW", "success");
-        } else {
-          setAuthMessage('Registered! Waiting for admin approval.');
-          setAuthMode('signin');
-          setAuthPassword('');
+        try {
+            await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', newUser.id), newUser);
+            
+            if (isFirstUser) {
+              setCurrentUser(newUser);
+              setAuthName(''); setAuthPassword('');
+              showToast("Welcome to WebDAW! Admin host created.", "success");
+            } else {
+              await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', newUser.id), { isOnline: false });
+              setAuthMessage('Registered! Waiting for admin approval.');
+              setAuthMode('signin');
+              setAuthPassword('');
+            }
+        } catch (err) {
+            console.error(err);
+            setAuthMessage("Failed to register. Server error.");
         }
       } else { 
         const user = usersDb.find(u => u.name === authName.trim() && u.password === authPassword.trim());
@@ -3078,19 +3149,25 @@ export default function App() {
           return;
         }
         
-        setCurrentUser(user);
-        setActiveSessionUsers(prev => {
-          if (prev.find(u => u.id === user.id)) return prev;
-          return [...prev, { ...user, activeTrack: null }];
-        });
-        setAuthName(''); setAuthPassword('');
-        showToast(`Welcome back, ${user.name}`, "success");
+        try {
+            await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', user.id), { isOnline: true });
+            setCurrentUser(user);
+            setAuthName(''); setAuthPassword('');
+            showToast(`Welcome back, ${user.name}`, "success");
+        } catch (err) {
+            console.error(err);
+            setAuthMessage("Failed to log in. Server error.");
+        }
       }
     }
   };
 
-  const handleSignOut = () => {
-    setActiveSessionUsers(prev => prev.filter(c => c.id !== currentUser.id));
+  const handleSignOut = async () => {
+    if (currentUser && fbUser) {
+        try {
+           await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', currentUser.id), { isOnline: false, activeTrack: null });
+        } catch(e) {}
+    }
     setCurrentUser(null);
     showToast("Signed out successfully");
   };
@@ -3118,8 +3195,11 @@ export default function App() {
 
         const updatedUser = { ...currentUser, avatar: dataUrl };
         setCurrentUser(updatedUser);
-        setUsersDb(prev => prev.map(u => u.id === currentUser.id ? updatedUser : u));
-        setActiveSessionUsers(prev => prev.map(u => u.id === currentUser.id ? updatedUser : u));
+        
+        if (fbUser) {
+            updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', currentUser.id), { avatar: dataUrl }).catch(console.error);
+        }
+        
         showToast("Profile avatar updated", "success");
       };
       img.src = evt.target.result;
@@ -3138,8 +3218,17 @@ export default function App() {
   };
 
   // ==========================================
-  // AUTHENTICATION SCREEN RENDER BLOCK
+  // LOADING / AUTHENTICATION SCREEN RENDER BLOCK
   // ==========================================
+  if (!isUsersLoaded) {
+      return (
+          <div className="flex flex-col h-screen bg-neutral-950 items-center justify-center text-neutral-300 font-sans selection:bg-blue-500/30">
+             <Activity className="animate-spin text-blue-500 mb-4" size={48} />
+             <span className="font-mono text-xs uppercase tracking-widest text-neutral-500">Connecting to Cloud Host...</span>
+          </div>
+      );
+  }
+
   if (!currentUser) {
     const isFirstUser = usersDb.length === 0;
     const currentAuthMode = isFirstUser ? 'register' : authMode;
@@ -3152,8 +3241,8 @@ export default function App() {
           <div className="px-6 py-8 border-b border-neutral-800 flex flex-col items-center justify-center bg-neutral-950/80 backdrop-blur-md gap-3">
              <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white font-bold text-2xl shadow-lg shadow-blue-500/20">W</div>
              <h2 className="text-xl font-bold text-white tracking-wide">WebDAW <span className="text-sm font-normal text-blue-400">Pro</span></h2>
-             <p className="text-xs text-neutral-500">
-               {isFirstUser ? 'Create the first admin account' : 'Collaborate on your music'}
+             <p className="text-xs text-neutral-500 text-center">
+               {isFirstUser ? 'Host instance empty. Create the first admin account.' : 'Collaborate on your music'}
              </p>
           </div>
 
@@ -3206,7 +3295,7 @@ export default function App() {
               />
             </div>
             <button type="submit" className="w-full bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400 text-white font-medium py-2.5 rounded-lg mt-2 transition-all shadow-lg shadow-blue-500/20 active:scale-[0.98]">
-              {currentAuthMode === 'signin' ? 'Sign In' : 'Register'}
+              {currentAuthMode === 'signin' ? 'Sign In' : 'Register Host Admin'}
             </button>
           </form>
         </div>
@@ -3253,7 +3342,7 @@ export default function App() {
                     </div>
                     <input type="file" accept="image/*" hidden onChange={handleAvatarUpload} />
                   </label>
-                  <span className="text-sm font-medium text-white">{currentUser.name}</span>
+                  <span className="text-sm font-medium text-white">{currentUser.name} {currentUser.role === 'admin' && <span className="text-[10px] bg-red-500/20 text-red-400 border border-red-500/30 px-1.5 py-0.5 rounded ml-1">ADMIN</span>}</span>
                 </div>
                 <button onClick={handleSignOut} className="p-2 text-neutral-500 hover:text-red-400 transition-colors rounded-lg hover:bg-neutral-800" title="Sign Out">
                   <LogOut size={16} />
@@ -3267,8 +3356,16 @@ export default function App() {
            <div className="absolute inset-0 pointer-events-none opacity-[0.02]" style={{ backgroundImage: 'radial-gradient(circle at 2px 2px, white 1px, transparent 0)', backgroundSize: '40px 40px' }} />
            
            <div className="w-full max-w-5xl z-10">
-              <h1 className="text-4xl font-extrabold text-white mb-2 tracking-tight">Your Projects</h1>
-              <p className="text-neutral-400 mb-12 max-w-2xl text-lg">Create a new session, resume your saved work, or drop in an exported project file from anywhere.</p>
+              <div className="flex items-center justify-between mb-12">
+                 <div>
+                    <h1 className="text-4xl font-extrabold text-white mb-2 tracking-tight">Your Projects</h1>
+                    <p className="text-neutral-400 max-w-2xl text-lg">Create a new session, resume your saved work, or drop in an exported project file from anywhere.</p>
+                 </div>
+                 {/* Cloud indicator */}
+                 <div className="flex items-center gap-2 bg-blue-500/10 border border-blue-500/20 text-blue-400 px-4 py-2 rounded-full text-sm font-medium shadow-sm">
+                    <Cloud size={16} /> Host Connected
+                 </div>
+              </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 
@@ -3304,8 +3401,9 @@ export default function App() {
                      <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-500 to-purple-500 opacity-0 group-hover:opacity-100 transition-opacity" />
                      
                      <div className="flex items-start justify-between mb-4">
-                       <div className="w-10 h-10 rounded-lg bg-neutral-800 flex items-center justify-center">
+                       <div className="w-10 h-10 rounded-lg bg-neutral-800 flex items-center justify-center relative">
                           <FileJson size={20} className="text-blue-400" />
+                          <div className="absolute -top-1 -right-1 w-3 h-3 bg-blue-500 rounded-full border-2 border-neutral-900 flex items-center justify-center"><Cloud size={6} className="text-white" /></div>
                        </div>
                        <span className="text-[10px] font-mono text-neutral-500 bg-neutral-950 px-2 py-1 rounded">
                          {new Date(proj.lastModified).toLocaleDateString()}
@@ -3397,7 +3495,7 @@ export default function App() {
             <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse ml-1" />
             <div className="flex -space-x-1.5 pr-0.5">
               {activeSessionUsers.map(collab => (
-                <div key={collab.id} className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] text-white font-bold ring-2 ring-neutral-900 ${collab.color} overflow-hidden`} title={`${collab.name} is editing`}>
+                <div key={collab.id} className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] text-white font-bold ring-2 ring-neutral-900 ${collab.color} overflow-hidden`} title={`${collab.name} is online`}>
                   {collab.avatar ? <img src={collab.avatar} alt={collab.name} className="w-full h-full object-cover" /> : collab.name.charAt(0).toUpperCase()}
                 </div>
               ))}
@@ -4090,7 +4188,6 @@ export default function App() {
                                return <div key={p} className={`absolute left-0 right-0 border-b pointer-events-none ${isBlack ? 'bg-neutral-900/40 border-neutral-800/50' : 'bg-transparent border-neutral-800/20'}`} style={{top: `${i * PITCH_HEIGHT}px`, height: `${PITCH_HEIGHT}px`}} />
                             })}
                             
-                            {/* Dynamic Grid Lines based on Snap - FIXED to border-l for exact alignment */}
                             {Array.from({length: Math.ceil(pianoRollDuration / (snapGrid || 0.25))}).map((_, i) => {
                                const snap = snapGrid || 0.25;
                                const isBar = (i * snap) % 4 === 0;
@@ -4100,7 +4197,6 @@ export default function App() {
                                )
                             })}
                             
-                            {/* Note Rendering - Enhanced with gradients and shadows */}
                             {clip.notes?.map(note => {
                                const isSelected = selectedNotes && selectedNotes.includes(note.id);
                                const velocity = note.velocity ?? 100;
@@ -4138,7 +4234,7 @@ export default function App() {
           <span>SAMPLE RATE: 44.1kHz</span>
           <span>BUFFER: 256smp</span>
         </div>
-        <div className="flex items-center gap-2"><span className="flex items-center gap-1"><Maximize2 size={10} /> Sync: Connected to 'Studio-A'</span></div>
+        <div className="flex items-center gap-2"><span className="flex items-center gap-1"><Maximize2 size={10} /> Sync: Connected to Cloud Host</span></div>
       </footer>
 
       {/* --- Unified Plugin GUI Modal --- */}
@@ -4573,8 +4669,8 @@ export default function App() {
                 <div className="flex flex-col gap-3">
                    <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider border-b border-neutral-800 pb-1.5">Project Actions</label>
                    <div className="flex gap-3">
-                      <button onClick={() => { saveProjectToLocal(); setShowIOSettings(false); }} className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 hover:text-white text-xs font-bold rounded-xl transition-all border border-neutral-700 shadow-sm active:scale-95">
-                         <Save size={16} /> Local Save
+                      <button onClick={() => { saveProjectToCloud(); setShowIOSettings(false); }} className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 hover:text-white text-xs font-bold rounded-xl transition-all border border-neutral-700 shadow-sm active:scale-95">
+                         <Cloud size={16} /> Save to Cloud
                       </button>
                       <button onClick={() => { exportProjectToFile(); setShowIOSettings(false); }} className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400 text-white text-xs font-bold rounded-xl transition-all shadow-[0_0_10px_rgba(37,99,235,0.3)] active:scale-95">
                          <Download size={16} /> Export .webdaw
@@ -4612,6 +4708,36 @@ export default function App() {
                       </select>
                    </div>
                 </div>
+
+                {/* Admin Area */}
+                {currentUser?.role === 'admin' && (
+                  <div className="flex flex-col gap-3">
+                     <label className="text-[10px] font-bold text-red-400 uppercase tracking-wider border-b border-red-500/30 pb-1.5 flex items-center gap-1.5">
+                       <Users size={12} /> Pending Approvals
+                     </label>
+                     <div className="flex flex-col gap-2 max-h-32 overflow-y-auto custom-scrollbar">
+                        {usersDb.filter(u => u.status === 'pending').length === 0 ? (
+                           <div className="text-xs text-neutral-500 italic p-2 bg-neutral-950 rounded border border-neutral-800">No pending users.</div>
+                        ) : (
+                           usersDb.filter(u => u.status === 'pending').map(u => (
+                              <div key={u.id} className="flex items-center justify-between bg-neutral-950 border border-neutral-800 p-2 rounded">
+                                 <span className="text-sm font-medium text-white">{u.name}</span>
+                                 <div className="flex gap-2">
+                                    <button 
+                                      onClick={() => updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', u.id), { status: 'approved' })}
+                                      className="px-2 py-1 bg-green-500/20 text-green-400 hover:bg-green-500 hover:text-white rounded text-xs transition-colors"
+                                    >Approve</button>
+                                    <button 
+                                      onClick={() => deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'users', u.id))}
+                                      className="px-2 py-1 bg-red-500/20 text-red-400 hover:bg-red-500 hover:text-white rounded text-xs transition-colors"
+                                    >Reject</button>
+                                 </div>
+                              </div>
+                           ))
+                        )}
+                     </div>
+                  </div>
+                )}
              </div>
            </div>
          </div>
