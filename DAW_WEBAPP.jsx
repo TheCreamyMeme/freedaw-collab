@@ -1159,6 +1159,7 @@ export default function App() {
   const recordingStartTimeRef = useRef(0);
   const pendingMidiClipsRef = useRef({}); 
   const activeLiveMidiNotesRef = useRef({});
+  const requestedSamplesRef = useRef(new Set());
   
   const tracksRef = useRef(tracks); 
   useEffect(() => { tracksRef.current = tracks; }, [tracks]);
@@ -1196,7 +1197,9 @@ export default function App() {
       room: null,
       sendProfile: null,
       sendProject: null,
-      sendDawSync: null
+      sendDawSync: null,
+      requestSample: null,
+      sendSample: null
   });
 
   // --- Load Local Projects ---
@@ -1225,8 +1228,10 @@ export default function App() {
     const [sendProfile, getProfile] = room.makeAction('profile');
     const [sendProject, getProject] = room.makeAction('project');
     const [sendDawSync, getDawSync] = room.makeAction('dawSync');
+    const [requestSample, getRequestSample] = room.makeAction('reqSample');
+    const [sendSample, getSample] = room.makeAction('sample');
 
-    p2p.current = { room, sendProfile, sendProject, sendDawSync };
+    p2p.current = { room, sendProfile, sendProject, sendDawSync, requestSample, sendSample };
 
     // Broadcast myself initially (after a small delay to ensure listeners are ready)
     setTimeout(() => {
@@ -1263,10 +1268,91 @@ export default function App() {
 
     getDawSync((syncData, peerId) => {
         if (syncData.projectId === currentProjectIdRef.current) {
+            const missingSamples = new Set();
+            
+            syncData.tracks.forEach(t => {
+                if (t.type === 'audio') {
+                    t.clips.forEach(c => {
+                        if (c.sampleId && !globalAudioBufferCache.has(c.sampleId) && !requestedSamplesRef.current.has(c.sampleId)) {
+                            requestedSamplesRef.current.add(c.sampleId);
+                            missingSamples.add(c.sampleId);
+                        }
+                    });
+                }
+                if (t.instrumentParams) {
+                    if (t.instrumentParams.sampleId && !globalAudioBufferCache.has(t.instrumentParams.sampleId) && !requestedSamplesRef.current.has(t.instrumentParams.sampleId)) {
+                        requestedSamplesRef.current.add(t.instrumentParams.sampleId);
+                        missingSamples.add(t.instrumentParams.sampleId);
+                    }
+                    if (t.instrumentParams.drumMap) {
+                        Object.values(t.instrumentParams.drumMap).forEach(pad => {
+                            if (pad.sampleId && !globalAudioBufferCache.has(pad.sampleId) && !requestedSamplesRef.current.has(pad.sampleId)) {
+                                requestedSamplesRef.current.add(pad.sampleId);
+                                missingSamples.add(pad.sampleId);
+                            }
+                        });
+                    }
+                }
+            });
+
+            missingSamples.forEach(sid => {
+                if (p2p.current.requestSample) p2p.current.requestSample(sid, peerId);
+            });
+
             isRemoteUpdateRef.current = true;
             setTracks(syncData.tracks);
             setBpm(syncData.bpm);
             if (syncData.projectName) setProjectName(syncData.projectName);
+        }
+    });
+
+    getRequestSample((sampleId, peerId) => {
+        if (globalAudioBufferCache.has(sampleId)) {
+            const cacheItem = globalAudioBufferCache.get(sampleId);
+            const wavBytes = audioBufferToWav(cacheItem.buffer);
+            const blob = new Blob([wavBytes], { type: 'audio/wav' });
+            
+            const reader = new FileReader();
+            reader.onloadend = () => {
+                const base64data = reader.result.split(',')[1];
+                if (p2p.current.sendSample) {
+                    p2p.current.sendSample({ sampleId, base64: base64data }, peerId);
+                }
+            };
+            reader.readAsDataURL(blob);
+        }
+    });
+
+    getSample(async ({ sampleId, base64 }) => {
+        if (!globalAudioBufferCache.has(sampleId)) {
+            try {
+                const res = await fetch(`data:audio/wav;base64,${base64}`);
+                const arrayBuffer = await res.arrayBuffer();
+                
+                if (!audioCtxRef.current) {
+                    audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
+                }
+                const audioBuffer = await audioCtxRef.current.decodeAudioData(arrayBuffer);
+                
+                const peaks = [];
+                const data = audioBuffer.getChannelData(0);
+                const step = Math.max(1, Math.floor(data.length / 100));
+                for(let i=0; i<100; i++) {
+                   let min = 1.0; let max = -1.0;
+                   for(let j=0; j<step; j++) {
+                      const val = data[(i*step)+j];
+                      if(val < min) min = val;
+                      if(val > max) max = val;
+                   }
+                   peaks.push([min, max]);
+                }
+
+                globalAudioBufferCache.set(sampleId, { buffer: audioBuffer, peaks, duration: audioBuffer.duration });
+                setTracks(prev => [...prev]); 
+                showToast("Received audio sample from peer.", "success");
+            } catch (err) {
+                console.error("Failed to decode received sample:", err);
+            }
         }
     });
 
