@@ -1265,41 +1265,47 @@ export default function App() {
     });
 
     getProfile((profile, peerId) => {
-        setPeers(prev => ({ ...prev, [peerId]: { ...profile, peerId } }));
+        if (profile && profile.id) {
+            setPeers(prev => ({ ...prev, [peerId]: { ...profile, peerId } }));
+        }
     });
 
     getProject((projectData, peerId) => {
-        setNetworkProjects(prev => ({ ...prev, [projectData.id]: { ...projectData, peerId } }));
+        if (projectData && projectData.id) {
+            setNetworkProjects(prev => ({ ...prev, [projectData.id]: { ...projectData, peerId } }));
+        }
     });
 
     getDawSync((syncData, peerId) => {
-        if (syncData.projectId === currentProjectIdRef.current) {
+        if (syncData && syncData.projectId === currentProjectIdRef.current) {
             const missingSamples = new Set();
             
-            syncData.tracks.forEach(t => {
-                if (t.type === 'audio') {
-                    t.clips.forEach(c => {
-                        if (c.sampleId && !globalAudioBufferCache.has(c.sampleId) && !requestedSamplesRef.current.has(c.sampleId)) {
-                            requestedSamplesRef.current.add(c.sampleId);
-                            missingSamples.add(c.sampleId);
-                        }
-                    });
-                }
-                if (t.instrumentParams) {
-                    if (t.instrumentParams.sampleId && !globalAudioBufferCache.has(t.instrumentParams.sampleId) && !requestedSamplesRef.current.has(t.instrumentParams.sampleId)) {
-                        requestedSamplesRef.current.add(t.instrumentParams.sampleId);
-                        missingSamples.add(t.instrumentParams.sampleId);
-                    }
-                    if (t.instrumentParams.drumMap) {
-                        Object.values(t.instrumentParams.drumMap).forEach(pad => {
-                            if (pad.sampleId && !globalAudioBufferCache.has(pad.sampleId) && !requestedSamplesRef.current.has(pad.sampleId)) {
-                                requestedSamplesRef.current.add(pad.sampleId);
-                                missingSamples.add(pad.sampleId);
+            if (Array.isArray(syncData.tracks)) {
+                syncData.tracks.forEach(t => {
+                    if (t.type === 'audio') {
+                        t.clips?.forEach(c => {
+                            if (c.sampleId && !globalAudioBufferCache.has(c.sampleId) && !requestedSamplesRef.current.has(c.sampleId)) {
+                                requestedSamplesRef.current.add(c.sampleId);
+                                missingSamples.add(c.sampleId);
                             }
                         });
                     }
-                }
-            });
+                    if (t.instrumentParams) {
+                        if (t.instrumentParams.sampleId && !globalAudioBufferCache.has(t.instrumentParams.sampleId) && !requestedSamplesRef.current.has(t.instrumentParams.sampleId)) {
+                            requestedSamplesRef.current.add(t.instrumentParams.sampleId);
+                            missingSamples.add(t.instrumentParams.sampleId);
+                        }
+                        if (t.instrumentParams.drumMap) {
+                            Object.values(t.instrumentParams.drumMap).forEach(pad => {
+                                if (pad.sampleId && !globalAudioBufferCache.has(pad.sampleId) && !requestedSamplesRef.current.has(pad.sampleId)) {
+                                    requestedSamplesRef.current.add(pad.sampleId);
+                                    missingSamples.add(pad.sampleId);
+                                }
+                            });
+                        }
+                    }
+                });
+            }
 
             missingSamples.forEach(sid => {
                 if (p2p.current.requestSample) p2p.current.requestSample(sid, peerId);
@@ -1308,6 +1314,7 @@ export default function App() {
             isRemoteUpdateRef.current = true;
             
             setTracks(prev => {
+                if (!Array.isArray(syncData.tracks)) return prev;
                 return syncData.tracks.map(remoteTrack => {
                     const localTrack = prev.find(t => t.id === remoteTrack.id);
                     if (localTrack && !syncTransportRef.current) {
@@ -1323,7 +1330,7 @@ export default function App() {
     });
 
     getTransportSync((syncData, peerId) => {
-        if (syncData.projectId === currentProjectIdRef.current && syncTransportRef.current) {
+        if (syncData && syncData.projectId === currentProjectIdRef.current && syncTransportRef.current) {
             if (syncData.type === 'playhead') {
                 setCurrentTime(syncData.currentTime);
                 stateRefs.current.currentTime = syncData.currentTime;
@@ -3507,11 +3514,11 @@ export default function App() {
                 <div className="flex items-center gap-2">
                   <label className="relative cursor-pointer group" title="Upload Profile Picture">
                     <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center text-xs text-white font-bold shadow-sm overflow-hidden border border-neutral-700 group-hover:border-blue-400 transition-colors">
-                      {currentUser.avatar ? <img src={currentUser.avatar} alt="Avatar" className="w-full h-full object-cover" /> : currentUser.name.charAt(0).toUpperCase()}
+                      {currentUser?.avatar ? <img src={currentUser.avatar} alt="Avatar" className="w-full h-full object-cover" /> : (currentUser?.name?.charAt(0)?.toUpperCase() || '?')}
                     </div>
                     <input type="file" accept="image/*" hidden onChange={handleAvatarUpload} />
                   </label>
-                  <span className="text-sm font-medium text-white">{currentUser.name}</span>
+                  <span className="text-sm font-medium text-white">{currentUser?.name || 'User'}</span>
                 </div>
                 <button onClick={handleSignOut} className="p-2 text-neutral-500 hover:text-red-400 transition-colors rounded-lg hover:bg-neutral-800" title="Sign Out">
                   <LogOut size={16} />
@@ -3580,18 +3587,18 @@ export default function App() {
                        </div>
                        <div className="flex flex-col items-end gap-1">
                          <span className="text-[10px] font-mono text-neutral-500 bg-neutral-950 px-2 py-1 rounded">
-                           {new Date(proj.lastModified).toLocaleDateString()}
+                           {new Date(proj.lastModified || Date.now()).toLocaleDateString()}
                          </span>
-                         {isRemote && <span className="text-[9px] font-bold text-purple-400 bg-purple-500/10 px-1.5 py-0.5 rounded">FROM {proj.ownerName}</span>}
+                         {isRemote && <span className="text-[9px] font-bold text-purple-400 bg-purple-500/10 px-1.5 py-0.5 rounded">FROM {proj.ownerName || 'Peer'}</span>}
                        </div>
                      </div>
                      
-                     <h3 className="text-lg font-bold text-white truncate w-full mb-1 group-hover:text-blue-400 transition-colors">{proj.name}</h3>
-                     <p className="text-xs text-neutral-400 font-mono mb-auto">{proj.bpm} BPM &bull; {proj.tracks?.length || 0} Tracks</p>
+                     <h3 className="text-lg font-bold text-white truncate w-full mb-1 group-hover:text-blue-400 transition-colors">{proj.name || 'Untitled'}</h3>
+                     <p className="text-xs text-neutral-400 font-mono mb-auto">{proj.bpm || 120} BPM &bull; {proj.tracks?.length || 0} Tracks</p>
                      
                      <div className="flex gap-2 mt-4">
                        {proj.tracks?.slice(0,5).map(t => (
-                         <div key={t.id} className={`w-3 h-3 rounded-full shadow-sm ${t.color}`} title={t.name} />
+                         <div key={t.id} className={`w-3 h-3 rounded-full shadow-sm ${t.color || 'bg-neutral-500'}`} title={t.name || 'Track'} />
                        ))}
                        {proj.tracks?.length > 5 && <span className="text-[10px] text-neutral-500 font-bold ml-1">+{proj.tracks.length - 5}</span>}
                      </div>
@@ -3681,8 +3688,8 @@ export default function App() {
             <span className={`w-1.5 h-1.5 rounded-full ${Object.keys(peers).length > 0 ? 'bg-green-500 animate-pulse' : 'bg-neutral-600'} ml-1`} />
             <div className="flex -space-x-1.5 pr-0.5">
               {activeSessionUsers.map(collab => (
-                <div key={collab.id} className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] text-white font-bold ring-2 ring-neutral-900 ${collab.color} overflow-hidden`} title={`${collab.name} is online`}>
-                  {collab.avatar ? <img src={collab.avatar} alt={collab.name} className="w-full h-full object-cover" /> : collab.name.charAt(0).toUpperCase()}
+                <div key={collab?.id || Math.random()} className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] text-white font-bold ring-2 ring-neutral-900 ${collab?.color || 'bg-neutral-600'} overflow-hidden`} title={`${collab?.name || 'Peer'} is online`}>
+                  {collab?.avatar ? <img src={collab.avatar} alt={collab?.name} className="w-full h-full object-cover" /> : (collab?.name?.charAt(0)?.toUpperCase() || '?')}
                 </div>
               ))}
             </div>
@@ -3691,7 +3698,7 @@ export default function App() {
           <div className="flex items-center gap-2">
              <label className="relative cursor-pointer group" title="Upload Profile Picture">
                <div className="w-7 h-7 rounded-full bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center text-xs text-white font-bold shadow-sm overflow-hidden border border-neutral-700 group-hover:border-blue-400 transition-colors">
-                 {currentUser.avatar ? <img src={currentUser.avatar} alt="Avatar" className="w-full h-full object-cover" /> : currentUser.name.charAt(0).toUpperCase()}
+                 {currentUser?.avatar ? <img src={currentUser.avatar} alt="Avatar" className="w-full h-full object-cover" /> : (currentUser?.name?.charAt(0)?.toUpperCase() || '?')}
                </div>
                <input type="file" accept="image/*" hidden onChange={handleAvatarUpload} />
              </label>
