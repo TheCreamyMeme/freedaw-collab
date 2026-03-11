@@ -54,14 +54,14 @@ const DEFAULT_DRUM_MAP = {
 
 // --- Mock Data ---
 const INITIAL_TRACKS = [
-  { id: 1, name: 'Lead Vocals', type: 'audio', color: 'bg-blue-500', volume: 80, pan: 0, muted: false, solo: false, armed: false, icon: Mic, 
+  { id: 1, name: 'Lead Vocals', type: 'audio', color: 'bg-blue-500', volume: 80, pan: 0, muted: false, solo: false, armed: false, 
     clips: [{ id: 101, start: 0, duration: 4 }, { id: 102, start: 5, duration: 3 }],
     effects: [
       { id: 'fx-1', type: 'eq3', name: '3-Band EQ', params: { low: -4, mid: 2, high: 3 } },
       { id: 'fx-2', type: 'reverb', name: 'Room Reverb', params: { decay: 2.5, mix: 0.4 } }
     ]
   },
-  { id: 2, name: 'Drum Machine', type: 'midi', instrument: 'inst-drum', instrumentParams: { drumMap: DEFAULT_DRUM_MAP }, color: 'bg-orange-500', volume: 90, pan: 0, muted: false, solo: false, armed: false, icon: Radio, 
+  { id: 2, name: 'Drum Machine', type: 'midi', instrument: 'inst-drum', instrumentParams: { drumMap: DEFAULT_DRUM_MAP }, color: 'bg-orange-500', volume: 90, pan: 0, muted: false, solo: false, armed: false, 
     effects: [
       { id: 'fx-3', type: 'compressor', name: 'Bus Compressor', params: { threshold: -15, ratio: 6 } }
     ],
@@ -74,7 +74,7 @@ const INITIAL_TRACKS = [
       ]}
     ] 
   },
-  { id: 3, name: 'Acid Bass', type: 'midi', instrument: 'inst-acid', instrumentParams: { oscType: 'square', cutoff: 150, envMod: 2500, decay: 0.3, res: 5 }, color: 'bg-purple-500', volume: 75, pan: 0, muted: false, solo: false, armed: false, icon: Music, 
+  { id: 3, name: 'Acid Bass', type: 'midi', instrument: 'inst-acid', instrumentParams: { oscType: 'square', cutoff: 150, envMod: 2500, decay: 0.3, res: 5 }, color: 'bg-purple-500', volume: 75, pan: 0, muted: false, solo: false, armed: false, 
     effects: [
       { id: 'fx-4', type: 'distortion', name: 'Tube Distortion', params: { amount: 30, mix: 0.6 } }
     ],
@@ -86,7 +86,7 @@ const INITIAL_TRACKS = [
       ]}
     ] 
   },
-  { id: 4, name: 'Drawbar Organ', type: 'midi', instrument: 'inst-organ', instrumentParams: { sub: 0.8, fund: 1.0, fifth: 0.6, oct: 0.4 }, color: 'bg-teal-500', volume: 60, pan: -20, muted: false, solo: false, armed: false, icon: Music, 
+  { id: 4, name: 'Drawbar Organ', type: 'midi', instrument: 'inst-organ', instrumentParams: { sub: 0.8, fund: 1.0, fifth: 0.6, oct: 0.4 }, color: 'bg-teal-500', volume: 60, pan: -20, muted: false, solo: false, armed: false, 
     effects: [
       { id: 'fx-6', type: 'tremolo', name: 'Tremolo', params: { rate: 6, depth: 0.7 } }
     ], 
@@ -1230,15 +1230,17 @@ export default function App() {
 
     // Broadcast myself initially (after a small delay to ensure listeners are ready)
     setTimeout(() => {
-       sendProfile(currentUserRef.current);
+       try { sendProfile(currentUserRef.current); } catch(e){}
     }, 1000);
 
     room.onPeerJoin(peerId => {
         // Share presence
-        sendProfile(currentUserRef.current, peerId);
+        try { sendProfile(currentUserRef.current, peerId); } catch(e){}
         // Share publicly shared projects
         localProjectsRef.current.forEach(p => {
-           if(p.shared) sendProject(p, peerId);
+           if(p.shared) {
+              try { sendProject(p, peerId); } catch(e){}
+           }
         });
         showToast(`Peer joined the network.`, 'info');
     });
@@ -1280,7 +1282,11 @@ export default function App() {
 
     clearTimeout(syncTimeoutRef.current);
     syncTimeoutRef.current = setTimeout(() => {
-        p2p.current.sendDawSync({ projectId, tracks, bpm });
+        try {
+            p2p.current.sendDawSync({ projectId, tracks, bpm });
+        } catch(e) {
+            console.error("P2P Daw Sync Error (usually non-serializable object in state):", e);
+        }
     }, 200); // 200ms debounce
   }, [tracks, bpm, projectId]);
 
@@ -1838,8 +1844,13 @@ export default function App() {
     saveProjectLocally(projectData);
 
     if (p2p.current.sendProject) {
-        p2p.current.sendProject(projectData);
-        showToast(`Project "${projectName}" shared to P2P network!`, "success");
+        try {
+            p2p.current.sendProject(projectData);
+            showToast(`Project "${projectName}" shared to P2P network!`, "success");
+        } catch(err) {
+            console.error("Broadcast failed:", err);
+            showToast("Failed to share over network. Make sure no plugins are corrupted.", "error");
+        }
     } else {
         showToast("Saved locally (P2P offline).", "info");
     }
@@ -2376,8 +2387,7 @@ export default function App() {
           return { 
             ...t, 
             instrument: newInstrumentId,
-            instrumentParams: newParams,
-            icon: newInstrumentId === 'inst-drum' ? Radio : Music 
+            instrumentParams: newParams
           };
         });
         rebuildTrackRouting(trackId, newTracks);
@@ -2601,7 +2611,6 @@ export default function App() {
       muted: false, 
       solo: false,
       armed: false,
-      icon: isMidi ? Music : Mic,
       clips: [],
       effects: []
     };
@@ -3660,7 +3669,7 @@ export default function App() {
                 
                 <div className="flex-1 overflow-y-auto overflow-x-hidden">
                   {tracks.map((track) => {
-                    const Icon = track.icon;
+                    const Icon = track.type === 'audio' ? Mic : (track.instrument?.includes('drum') ? Radio : Music);
                     const hasActiveCollab = activeSessionUsers.find(c => c.activeTrack === track.id && c.id !== currentUser?.id);
                     const isDeviceRackOpen = bottomDock?.type === 'devices' && bottomDock?.trackId === track.id;
                     
