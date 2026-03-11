@@ -1217,7 +1217,7 @@ export default function App() {
 
   // --- Initialize P2P Trystero Network ---
   useEffect(() => {
-    if (!currentUser) return;
+    if (!currentUser?.id) return;
     
     // Using torrent tracker strategy for serverless WebRTC
     const room = joinRoom({ appId: `webdaw-p2p-${appId}` }, 'global-studio');
@@ -1230,16 +1230,16 @@ export default function App() {
 
     // Broadcast myself initially (after a small delay to ensure listeners are ready)
     setTimeout(() => {
-       try { sendProfile(currentUserRef.current); } catch(e){}
+       try { sendProfile(JSON.parse(JSON.stringify(currentUserRef.current))); } catch(e){}
     }, 1000);
 
     room.onPeerJoin(peerId => {
         // Share presence
-        try { sendProfile(currentUserRef.current, peerId); } catch(e){}
+        try { sendProfile(JSON.parse(JSON.stringify(currentUserRef.current)), peerId); } catch(e){}
         // Share publicly shared projects
         localProjectsRef.current.forEach(p => {
            if(p.shared) {
-              try { sendProject(p, peerId); } catch(e){}
+              try { sendProject(JSON.parse(JSON.stringify(p)), peerId); } catch(e){}
            }
         });
         showToast(`Peer joined the network.`, 'info');
@@ -1270,7 +1270,7 @@ export default function App() {
     });
 
     return () => room.leave();
-  }, [currentUser]);
+  }, [currentUser?.id]);
 
   // --- Real-time Sync Broadcast ---
   useEffect(() => {
@@ -1283,7 +1283,8 @@ export default function App() {
     clearTimeout(syncTimeoutRef.current);
     syncTimeoutRef.current = setTimeout(() => {
         try {
-            p2p.current.sendDawSync({ projectId, tracks, bpm });
+            const cleanTracks = JSON.parse(JSON.stringify(tracks));
+            p2p.current.sendDawSync({ projectId, tracks: cleanTracks, bpm });
         } catch(e) {
             console.error("P2P Daw Sync Error (usually non-serializable object in state):", e);
         }
@@ -1325,7 +1326,7 @@ export default function App() {
     setCurrentUser(updated);
     try { localStorage.setItem('webdaw_p2p_user', JSON.stringify(updated)); } catch(e){}
     if (p2p.current.sendProfile) {
-        p2p.current.sendProfile(updated);
+        try { p2p.current.sendProfile(JSON.parse(JSON.stringify(updated))); } catch(e) {}
     }
   };
 
@@ -1845,7 +1846,8 @@ export default function App() {
 
     if (p2p.current.sendProject) {
         try {
-            p2p.current.sendProject(projectData);
+            const cleanProj = JSON.parse(JSON.stringify(projectData));
+            p2p.current.sendProject(cleanProj);
             showToast(`Project "${projectName}" shared to P2P network!`, "success");
         } catch(err) {
             console.error("Broadcast failed:", err);
@@ -3173,7 +3175,7 @@ export default function App() {
         localStorage.setItem('webdaw_p2p_user', JSON.stringify(updatedUser));
         
         if (p2p.current.sendProfile) {
-            p2p.current.sendProfile(updatedUser);
+            try { p2p.current.sendProfile(JSON.parse(JSON.stringify(updatedUser))); } catch(e) {}
         }
         showToast("Profile avatar updated", "success");
       };
