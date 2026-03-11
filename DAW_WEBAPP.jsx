@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
   Play, Pause, Square, Circle, SkipBack, 
   Volume2, VolumeX, Mic, Music, Radio, 
@@ -6,7 +6,7 @@ import {
   Folder, Sliders, History, UserCircle, Piano,
   MousePointer2, Pencil, Eraser, X, Grid, Trash2, Activity,
   Settings2, Plug, Power, LogOut, FileAudio, FileCode, Cpu,
-  Repeat, Home, Save, Download, Upload, FileJson
+  Repeat, Home, Save, Download, Upload, FileJson, Info, AlertTriangle, CheckCircle2
 } from 'lucide-react';
 
 const TOTAL_BEATS = 256; 
@@ -141,34 +141,28 @@ function encodeWAV(samples, sampleRate, numChannels) {
   let offset = 44;
   for (let i = 0; i < samples.length; i++, offset += 2) {
     let s = Math.max(-1, Math.min(1, samples[i]));
-    // Crucial patch: Math.round() forces perfect Int16 PCM encoding
     view.setInt16(offset, Math.round(s < 0 ? s * 0x8000 : s * 0x7FFF), true);
   }
-  
-  // Return pure binary Uint8Array so JSZip maps it flawlessly
   return new Uint8Array(buffer);
 }
 
 const audioBufferToWav = (buffer) => {
-  const numChannels = Math.min(2, buffer.numberOfChannels); // Clamp to max 2 channels
+  const numChannels = Math.min(2, buffer.numberOfChannels); 
   const sampleRate = buffer.sampleRate;
   let result;
-  
   if (numChannels >= 2) {
     result = interleaveWav(buffer.getChannelData(0), buffer.getChannelData(1));
   } else {
     result = buffer.getChannelData(0);
   }
-  
   return encodeWAV(result, sampleRate, numChannels);
 };
 
 // --- DSP Utility: Generate Standard MIDI File (.mid) ---
 function encodeMIDITrack(track, bpm) {
-  const PPQ = 128; // Pulses (ticks) per quarter note
+  const PPQ = 128; 
   let events = [];
 
-  // Merge all clips into an absolute timeline
   track.clips.forEach(clip => {
     if (!clip.notes) return;
     clip.notes.forEach(note => {
@@ -179,12 +173,9 @@ function encodeMIDITrack(track, bpm) {
     });
   });
 
-  // Sort events chronologically
   events.sort((a, b) => a.time - b.time);
 
   let trackData = [];
-  
-  // 1. Tempo Meta Event (micro-seconds per quarter note)
   const tempo = Math.round(60000000 / bpm);
   trackData.push(0x00, 0xFF, 0x51, 0x03, (tempo >> 16) & 0xFF, (tempo >> 8) & 0xFF, tempo & 0xFF);
 
@@ -193,7 +184,6 @@ function encodeMIDITrack(track, bpm) {
     let delta = ev.time - lastTick;
     lastTick = ev.time;
 
-    // Convert delta time to Variable-Length Quantity (VLQ)
     let value = delta;
     let vlq = [value & 0x7F];
     while ((value >>= 7) > 0) {
@@ -201,7 +191,6 @@ function encodeMIDITrack(track, bpm) {
     }
     trackData.push(...vlq);
 
-    // Push MIDI Event Bytes
     if (ev.type === 'noteOn') {
       trackData.push(0x90, ev.pitch, ev.velocity);
     } else {
@@ -209,10 +198,8 @@ function encodeMIDITrack(track, bpm) {
     }
   });
 
-  // End of Track Meta Event
   trackData.push(0x00, 0xFF, 0x2F, 0x00);
 
-  // File Header (MThd, size: 6, format: 0, tracks: 1, division: PPQ)
   const header = [
     0x4D, 0x54, 0x68, 0x64, 
     0x00, 0x00, 0x00, 0x06, 
@@ -221,7 +208,6 @@ function encodeMIDITrack(track, bpm) {
     (PPQ >> 8) & 0xFF, PPQ & 0xFF 
   ];
 
-  // Track Header (MTrk, track data size)
   const trackHeader = [
     0x4D, 0x54, 0x72, 0x6B, 
     (trackData.length >> 24) & 0xFF,
@@ -508,7 +494,6 @@ const createFXNode = (ctx, fx) => {
       osc.frequency.value = fx.params.freq || 400;
       osc.start();
       
-      // Map Osc -> Gain.gain (Audio Rate Modulation)
       osc.connect(multiplier.gain);
       
       wet.gain.value = fx.params.mix !== undefined ? fx.params.mix : 0.5;
@@ -588,7 +573,6 @@ const triggerFMSynth = (ctx, trackBus, pitch, time, vol, dur, params = {}, veloc
   const realVol = vol * (velocity / 127);
   const freq = 440 * Math.pow(2, (pitch - 69) / 12);
   const ratio = params.ratio || 2;
-  // Scale modulation index by velocity for expressive timbre
   const modIndex = (params.modIndex || 5) * (velocity / 100);
 
   carrier.type = 'sine';
@@ -660,7 +644,6 @@ const triggerPluck = (ctx, trackBus, pitch, time, vol, dur, params = {}, velocit
   
   const noiseFilter = ctx.createBiquadFilter();
   noiseFilter.type = 'lowpass';
-  // Harder velocity = brighter pluck
   noiseFilter.frequency.value = (params.damping || 4000) * (velocity / 100);
   
   const delay = ctx.createDelay(1.0);
@@ -697,7 +680,6 @@ const triggerAcid = (ctx, trackBus, pitch, time, vol, dur, params = {}, velocity
   filter.Q.value = params.res || 5; 
   
   const baseCutoff = params.cutoff || 150;
-  // Harder velocity = higher envelope peak
   const envMod = (params.envMod || 2500) * (velocity / 100);
   const decay = params.decay || 0.3;
 
@@ -999,10 +981,10 @@ const WamHostWrapper = ({ pluginName, wamInstance, wamError }) => {
   }, [wamInstance, wamError]);
 
   return (
-    <div className="flex-1 relative flex flex-col border-t border-neutral-800 rounded-b-lg overflow-hidden bg-neutral-950 min-h-[400px]">
+    <div className="flex-1 relative flex flex-col border-t border-neutral-800 rounded-b-xl overflow-hidden bg-neutral-950 min-h-[400px]">
       {errorStr && (
          <div className="absolute inset-0 z-10 bg-neutral-950 flex flex-col items-center justify-center p-6 text-center">
-           <div className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded text-xs font-mono max-w-md leading-relaxed">
+           <div className="bg-red-500/10 border border-red-500/30 text-red-400 p-4 rounded-xl text-xs font-mono max-w-md leading-relaxed">
              {errorStr}
            </div>
          </div>
@@ -1080,7 +1062,7 @@ const initTrackRouting = async (track, ctx, masterGain, library) => {
 
   if (track.type === 'audio') {
     const gateGain = ctx.createGain();
-    gateGain.gain.value = 0; // Starts closed unless a clip is active or live monitoring
+    gateGain.gain.value = 0; 
     instrument.gateGain = gateGain;
     gateGain.connect(inputBus);
   }
@@ -1088,7 +1070,7 @@ const initTrackRouting = async (track, ctx, masterGain, library) => {
 };
 
 export default function App() {
-  const [appView, setAppView] = useState('home'); // 'home' | 'daw'
+  const [appView, setAppView] = useState('home'); 
   const [projectId, setProjectId] = useState(null);
   const [projectName, setProjectName] = useState('New Project');
   const [savedProjectsList, setSavedProjectsList] = useState([]);
@@ -1111,6 +1093,7 @@ export default function App() {
   const [draggedTrackId, setDraggedTrackId] = useState(null);
   const [showAddFxMenu, setShowAddFxMenu] = useState(null); 
   const [isFetchingWAMs, setIsFetchingWAMs] = useState(false); 
+  const [toasts, setToasts] = useState([]);
   
   const [openPluginUI, setOpenPluginUI] = useState(null); 
   
@@ -1127,7 +1110,7 @@ export default function App() {
   const [dragOverlay, setDragOverlay] = useState(null);
 
   // Advanced Piano Roll State
-  const [snapGrid, setSnapGrid] = useState(0.25); // Default 1/16th note
+  const [snapGrid, setSnapGrid] = useState(0.25);
   const [selectedNotes, setSelectedNotes] = useState([]);
   const [contextMenu, setContextMenu] = useState(null);
 
@@ -1154,8 +1137,6 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState(() => {
     try { return JSON.parse(localStorage.getItem('webdaw_current_user')) || null; } catch(e) { return null; }
   });
-  const [showAuthModal, setShowAuthModal] = useState(false);
-  const [showAdminModal, setShowAdminModal] = useState(false);
   const [authMode, setAuthMode] = useState('signin'); 
   const [authName, setAuthName] = useState('');
   const [authPassword, setAuthPassword] = useState('');
@@ -1172,8 +1153,8 @@ export default function App() {
   const mediaRecorderRef = useRef(null);
   const recordedChunksRef = useRef([]);
   const recordingStartTimeRef = useRef(0);
-  const pendingMidiClipsRef = useRef({}); // { trackId: [{pitch, start, dur, velocity}] }
-  const activeLiveMidiNotesRef = useRef({}); // { pitch: { startBeat, velocity } }
+  const pendingMidiClipsRef = useRef({}); 
+  const activeLiveMidiNotesRef = useRef({});
   
   const tracksRef = useRef(tracks); 
   useEffect(() => { tracksRef.current = tracks; }, [tracks]);
@@ -1186,13 +1167,18 @@ export default function App() {
 
   const stateRefs = useRef({ currentTime: 0, isPlaying, isRecording, bpm, autoScroll: true });
   useEffect(() => { 
-     // We intentionally exclude currentTime here so the high-speed 
-     // audio engine loop doesn't get throttled/overwritten by React's render batching
      stateRefs.current.isPlaying = isPlaying;
      stateRefs.current.isRecording = isRecording;
      stateRefs.current.bpm = bpm;
      stateRefs.current.autoScroll = autoScroll;
   }, [isPlaying, isRecording, bpm, autoScroll]);
+
+  // Toast Notification Helper
+  const showToast = useCallback((message, type = 'info') => {
+    const id = Date.now();
+    setToasts(prev => [...prev, { id, message, type }]);
+    setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 4000);
+  }, []);
 
   // Custom Scrollbar styling & Persistent Auth sync
   useEffect(() => {
@@ -1298,12 +1284,6 @@ export default function App() {
     } : t));
   };
 
-  const setNoteVelocity = (trackId, clipId, noteId, velocity) => {
-    setTracks(prev => prev.map(t => t.id === trackId ? {
-        ...t, clips: t.clips.map(c => c.id === clipId ? { ...c, notes: c.notes.map(n => n.id === noteId ? {...n, velocity} : n) } : c)
-    } : t));
-  };
-
   // I/O Initialization
   const requestIO = async () => {
     try {
@@ -1312,7 +1292,10 @@ export default function App() {
       const aInputs = devices.filter(d => d.kind === 'audioinput');
       setAudioInputs(aInputs);
       if(aInputs.length && !selectedAudioInput) setSelectedAudioInput(aInputs[0].deviceId);
-    } catch(e) { console.warn("Mic access denied or unavailable", e); }
+    } catch(e) { 
+      console.warn("Mic access denied or unavailable", e);
+      showToast("Microphone access denied or unavailable", "error");
+    }
 
     if (navigator.requestMIDIAccess) {
        try {
@@ -1320,8 +1303,12 @@ export default function App() {
            const mInputs = Array.from(midiAccess.inputs.values());
            setMidiInputs(mInputs);
            if(mInputs.length && !selectedMidiInput) setSelectedMidiInput(mInputs[0].id);
-         }).catch(e => console.warn("MIDI access denied", e));
-       } catch (e) { console.warn("MIDI access denied synchronously", e); }
+         }).catch(e => {
+           console.warn("MIDI access denied", e);
+         });
+       } catch (e) { 
+         console.warn("MIDI access denied synchronously", e); 
+       }
     }
   };
 
@@ -1344,7 +1331,6 @@ export default function App() {
       const state = stateRefs.current;
 
       if (isNoteOn) {
-          // Live preview
           if (armedTrack.instrument === 'inst-drum') triggerDrum(audioCtxRef.current, synth.inputBus, note, now, 1, armedTrack.instrumentParams, velocity);
           else if (armedTrack.instrument === 'inst-fm') triggerFMSynth(audioCtxRef.current, synth.inputBus, note, now, 1, 0.25, armedTrack.instrumentParams, velocity);
           else if (armedTrack.instrument === 'inst-sampler') triggerSampler(audioCtxRef.current, synth.inputBus, note, now, 1, 0.25, armedTrack.instrumentParams, velocity);
@@ -1539,7 +1525,7 @@ export default function App() {
      const armedMidiTrack = tracksRef.current.find(t => t.type === 'midi' && t.armed);
      
      if (!armedAudioTrack && !armedMidiTrack) {
-        alert("Please arm a track first by clicking the circle icon next to its Mute/Solo buttons.");
+        showToast("Please arm a track first by clicking the record circle icon.", "error");
         setIsRecording(false);
         return;
      }
@@ -1605,7 +1591,7 @@ export default function App() {
            mediaRecorder.start();
         } catch(e) {
            console.error("Failed to start audio recording", e);
-           alert("Could not access microphone. Please check permissions or select a device in Settings.");
+           showToast("Could not access microphone. Please check permissions or settings.", "error");
            setIsRecording(false);
            setTracks(prev => prev.map(t => ({ ...t, clips: t.clips.filter(c => !c.isRecording) })));
         }
@@ -1645,22 +1631,22 @@ export default function App() {
      pendingMidiClipsRef.current = {};
   };
 
-  const togglePlay = async () => {
-    if (!isPlaying) {
+  const togglePlay = useCallback(async () => {
+    if (!stateRefs.current.isPlaying) {
       await initAudioEngine();
       setIsPlaying(true);
-      if (isRecording) {
+      if (stateRefs.current.isRecording) {
          startRecording();
       }
     } else {
       setIsPlaying(false);
       stopAudio();
-      if (isRecording) {
+      if (stateRefs.current.isRecording) {
          setIsRecording(false);
          endRecording();
       }
     }
-  };
+  }, []);
 
   const stopPlayback = () => {
     setIsPlaying(false);
@@ -1687,6 +1673,36 @@ export default function App() {
     }
   };
 
+  // Keyboard Shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      // Don't trigger if user is typing in an input/textarea
+      const targetTag = e.target.tagName;
+      if (targetTag === 'INPUT' || targetTag === 'TEXTAREA' || targetTag === 'SELECT') return;
+
+      if (e.code === 'Space') {
+        e.preventDefault();
+        togglePlay();
+      } else if ((e.code === 'Delete' || e.code === 'Backspace') && bottomDock?.type === 'piano-roll') {
+        if (selectedNotes.length > 0) {
+          e.preventDefault();
+          setTracks(prev => prev.map(t => t.id === bottomDock.trackId ? {
+              ...t,
+              clips: t.clips.map(c => c.id === bottomDock.clipId ? {
+                  ...c,
+                  notes: c.notes.filter(n => !selectedNotes.includes(n.id))
+              } : c)
+          } : t));
+          setSelectedNotes([]);
+          showToast(`Deleted ${selectedNotes.length} note(s)`);
+        }
+      }
+    };
+    
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [togglePlay, bottomDock, selectedNotes, showToast]);
+
   const closeDawToHome = () => {
     stopPlayback();
     if (audioCtxRef.current && audioCtxRef.current.state === 'running') {
@@ -1704,6 +1720,7 @@ export default function App() {
     setProjectName(projectData.name || 'Imported Project');
     setProjectId(projectData.id || `proj_${Date.now()}`);
     setAppView('daw');
+    showToast(`Loaded ${projectData.name}`, "success");
   };
 
   const createNewProject = () => {
@@ -1729,7 +1746,7 @@ export default function App() {
     };
     
     localStorage.setItem(`webdaw_proj_${projId}`, JSON.stringify(projectData));
-    alert(`Project "${projectName}" saved locally!`);
+    showToast(`Project "${projectName}" saved locally!`, "success");
   };
 
   const exportProjectToFile = async () => {
@@ -1798,9 +1815,10 @@ export default function App() {
       a.download = `${projectName.replace(/\s+/g, '_')}.webdaw`;
       a.click();
       URL.revokeObjectURL(url);
+      showToast(`Exported ${projectName}.webdaw`, "success");
     } catch(e) {
       console.error("Export failed", e);
-      alert("Failed to export project archive: " + e.message);
+      showToast("Failed to export project archive: " + e.message, "error");
     }
     setIsProcessingFile(false);
   };
@@ -1853,7 +1871,6 @@ export default function App() {
            globalAudioBufferCache.set(sampleId, { buffer: audioBuffer, peaks, duration: audioBuffer.duration });
         }
       } else {
-        // Fallback for legacy JSON-only projects
         const text = await file.text();
         projectData = JSON.parse(text);
       }
@@ -1862,7 +1879,7 @@ export default function App() {
       loadProjectToDaw(projectData);
     } catch (err) {
       console.error("Import error:", err);
-      alert("Failed to load project: " + err.message);
+      showToast("Failed to load project: " + err.message, "error");
     }
     
     setIsProcessingFile(false);
@@ -2172,6 +2189,7 @@ export default function App() {
       rebuildTrackRouting(trackId, newTracks);
       return newTracks;
     });
+    showToast(`Added ${fxDef.name}`, 'success');
   };
 
   const handleRemoveEffect = (trackId, fxId) => {
@@ -2326,8 +2344,10 @@ export default function App() {
           }
         };
       }));
+      showToast("Sample loaded successfully", "success");
     } catch (err) {
       console.error("Failed to decode audio file", err);
+      showToast("Failed to process audio file", "error");
     }
     e.target.value = null; 
   };
@@ -2378,6 +2398,7 @@ export default function App() {
       }));
     } catch (err) {
       console.error("Failed to decode audio file", err);
+      showToast("Failed to decode audio file", "error");
     }
     e.target.value = null; 
   };
@@ -2454,6 +2475,7 @@ export default function App() {
         return [...prev, ...newLibs];
       });
       setIsFetchingWAMs(false);
+      showToast("Fetched public plugins from registry.", "success");
     }, 1800); 
   };
 
@@ -2471,6 +2493,7 @@ export default function App() {
       };
       setVstLibrary(prev => [...prev, newVst]);
       e.target.value = null; 
+      showToast(`Added VST: ${customName}`, "success");
     }
   };
 
@@ -2681,11 +2704,11 @@ export default function App() {
 
             const targetTrack = newTracks[trackIdx];
             if (isMidi && targetTrack.type !== 'midi') {
-                alert("Cannot drop MIDI on an Audio track.");
+                showToast("Cannot drop MIDI on an Audio track.", "error");
                 return prevTracks;
             }
             if (isAudio && targetTrack.type !== 'audio') {
-                alert("Cannot drop Audio on a MIDI track.");
+                showToast("Cannot drop Audio on a MIDI track.", "error");
                 return prevTracks;
             }
 
@@ -2695,7 +2718,7 @@ export default function App() {
 
     } catch (err) {
         console.error("Import error", err);
-        alert("Failed to parse file: " + err.message);
+        showToast("Failed to parse file: " + err.message, "error");
     }
   };
 
@@ -3009,15 +3032,17 @@ export default function App() {
   const handleAuthSubmit = (e) => {
     e.preventDefault();
     setAuthMessage('');
+    const isFirstUser = usersDb.length === 0;
+    const currentAuthMode = isFirstUser ? 'register' : authMode;
+
     if (authName.trim() && authPassword.trim()) {
-      if (authMode === 'register') {
+      if (currentAuthMode === 'register') {
         const existing = usersDb.find(u => u.name === authName.trim());
         if (existing) {
           setAuthMessage('Name already taken.');
           return;
         }
         
-        const isFirstUser = usersDb.length === 0; 
         const colors = ['bg-yellow-500', 'bg-red-500', 'bg-cyan-500', 'bg-indigo-500', 'bg-pink-500'];
         const randomColor = colors[Math.floor(Math.random() * colors.length)];
         const newUser = { 
@@ -3035,11 +3060,12 @@ export default function App() {
         if (isFirstUser) {
           setCurrentUser(newUser);
           setActiveSessionUsers(prev => [...prev, newUser]);
-          setShowAuthModal(false);
           setAuthName(''); setAuthPassword('');
+          showToast("Welcome to WebDAW", "success");
         } else {
           setAuthMessage('Registered! Waiting for admin approval.');
           setAuthMode('signin');
+          setAuthPassword('');
         }
       } else { 
         const user = usersDb.find(u => u.name === authName.trim() && u.password === authPassword.trim());
@@ -3057,8 +3083,8 @@ export default function App() {
           if (prev.find(u => u.id === user.id)) return prev;
           return [...prev, { ...user, activeTrack: null }];
         });
-        setShowAuthModal(false);
         setAuthName(''); setAuthPassword('');
+        showToast(`Welcome back, ${user.name}`, "success");
       }
     }
   };
@@ -3066,6 +3092,7 @@ export default function App() {
   const handleSignOut = () => {
     setActiveSessionUsers(prev => prev.filter(c => c.id !== currentUser.id));
     setCurrentUser(null);
+    showToast("Signed out successfully");
   };
 
   const handleAvatarUpload = (e) => {
@@ -3076,7 +3103,6 @@ export default function App() {
     reader.onload = (evt) => {
       const img = new Image();
       img.onload = () => {
-        // Resize and crop the image to a tiny 128x128 square to safely fit in LocalStorage
         const canvas = document.createElement('canvas');
         const ctx = canvas.getContext('2d');
         const size = 128;
@@ -3094,31 +3120,65 @@ export default function App() {
         setCurrentUser(updatedUser);
         setUsersDb(prev => prev.map(u => u.id === currentUser.id ? updatedUser : u));
         setActiveSessionUsers(prev => prev.map(u => u.id === currentUser.id ? updatedUser : u));
+        showToast("Profile avatar updated", "success");
       };
       img.src = evt.target.result;
     };
     reader.readAsDataURL(file);
-    e.target.value = null; // Reset input
+    e.target.value = null; 
   };
 
-  const openAuthModal = () => {
-    setAuthMode(usersDb.length === 0 ? 'register' : 'signin');
-    setAuthMessage('');
-    setShowAuthModal(true);
+  // Helper for formatted time display (MM:SS.ms)
+  const renderFormattedTime = () => {
+    const timeInSeconds = currentTime * (60/bpm);
+    const mins = Math.floor(timeInSeconds / 60).toString().padStart(2, '0');
+    const secs = Math.floor(timeInSeconds % 60).toString().padStart(2, '0');
+    const ms = Math.floor((timeInSeconds % 1) * 100).toString().padStart(2, '0');
+    return `${mins}:${secs}.${ms}`;
   };
 
-  const renderAuthModal = () => {
-    if (!showAuthModal) return null;
+  // ==========================================
+  // AUTHENTICATION SCREEN RENDER BLOCK
+  // ==========================================
+  if (!currentUser) {
+    const isFirstUser = usersDb.length === 0;
+    const currentAuthMode = isFirstUser ? 'register' : authMode;
+
     return (
-      <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
-        <div className="bg-neutral-900 border border-neutral-800 rounded-xl w-full max-w-sm overflow-hidden shadow-2xl animate-in fade-in zoom-in-95 duration-200">
-          <div className="px-6 py-4 border-b border-neutral-800 flex items-center justify-between bg-neutral-950">
-            <h2 className="text-lg font-semibold text-white">{authMode === 'signin' ? 'Sign In to WebDAW' : 'Create an Account'}</h2>
-            <button onClick={() => setShowAuthModal(false)} className="text-neutral-500 hover:text-white transition-colors"><X size={18} /></button>
+      <div className="flex flex-col h-screen bg-neutral-950 items-center justify-center text-neutral-300 font-sans selection:bg-blue-500/30 overflow-hidden relative">
+        <div className="absolute inset-0 pointer-events-none opacity-[0.02]" style={{ backgroundImage: 'radial-gradient(circle at 2px 2px, white 1px, transparent 0)', backgroundSize: '40px 40px' }} />
+        
+        <div className="bg-neutral-900 border border-neutral-800 rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl z-10 animate-in fade-in zoom-in-95 duration-200">
+          <div className="px-6 py-8 border-b border-neutral-800 flex flex-col items-center justify-center bg-neutral-950/80 backdrop-blur-md gap-3">
+             <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white font-bold text-2xl shadow-lg shadow-blue-500/20">W</div>
+             <h2 className="text-xl font-bold text-white tracking-wide">WebDAW <span className="text-sm font-normal text-blue-400">Pro</span></h2>
+             <p className="text-xs text-neutral-500">
+               {isFirstUser ? 'Create the first admin account' : 'Collaborate on your music'}
+             </p>
           </div>
+
+          {!isFirstUser && (
+            <div className="flex w-full bg-neutral-950 border-b border-neutral-800">
+              <button 
+                type="button"
+                className={`flex-1 py-3 text-sm font-semibold transition-all ${currentAuthMode === 'signin' ? 'text-white border-b-2 border-blue-500 bg-neutral-900' : 'text-neutral-500 hover:text-neutral-300 hover:bg-neutral-900/50'}`}
+                onClick={() => { setAuthMode('signin'); setAuthMessage(''); }}
+              >
+                Sign In
+              </button>
+              <button 
+                type="button"
+                className={`flex-1 py-3 text-sm font-semibold transition-all ${currentAuthMode === 'register' ? 'text-white border-b-2 border-blue-500 bg-neutral-900' : 'text-neutral-500 hover:text-neutral-300 hover:bg-neutral-900/50'}`}
+                onClick={() => { setAuthMode('register'); setAuthMessage(''); }}
+              >
+                Register
+              </button>
+            </div>
+          )}
+
           <form onSubmit={handleAuthSubmit} className="p-6 flex flex-col gap-4">
             {authMessage && (
-              <div className={`text-xs text-center p-2.5 rounded font-medium ${authMessage.includes('Waiting') || authMessage.includes('pending') ? 'bg-yellow-500/10 text-yellow-500 border border-yellow-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'}`}>
+              <div className={`text-xs text-center p-2.5 rounded-lg font-medium ${authMessage.includes('Waiting') || authMessage.includes('pending') ? 'bg-yellow-500/10 text-yellow-500 border border-yellow-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'}`}>
                 {authMessage}
               </div>
             )}
@@ -3130,7 +3190,7 @@ export default function App() {
                 onChange={(e) => setAuthName(e.target.value)} 
                 required 
                 autoFocus
-                className="bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500 transition-colors" 
+                className="bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500 transition-colors shadow-inner" 
                 placeholder="Enter your name" 
               />
             </div>
@@ -3141,23 +3201,36 @@ export default function App() {
                 value={authPassword} 
                 onChange={(e) => setAuthPassword(e.target.value)} 
                 required 
-                className="bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500 transition-colors" 
+                className="bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500 transition-colors shadow-inner" 
                 placeholder="••••••••" 
               />
             </div>
-            <button type="submit" className="w-full bg-blue-600 hover:bg-blue-500 text-white font-medium py-2.5 rounded-lg mt-2 transition-colors shadow-lg shadow-blue-500/20">
-              {authMode === 'signin' ? 'Sign In' : 'Register'}
+            <button type="submit" className="w-full bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400 text-white font-medium py-2.5 rounded-lg mt-2 transition-all shadow-lg shadow-blue-500/20 active:scale-[0.98]">
+              {currentAuthMode === 'signin' ? 'Sign In' : 'Register'}
             </button>
-            <div className="text-center mt-2">
-              <button type="button" onClick={() => { setAuthMode(authMode === 'signin' ? 'register' : 'signin'); setAuthMessage(''); }} className="text-xs text-neutral-500 hover:text-blue-400 transition-colors">
-                {authMode === 'signin' ? "Don't have an account? Register" : "Already have an account? Sign In"}
-              </button>
-            </div>
           </form>
+        </div>
+
+        {/* Custom Global Toast Notifications Container */}
+        <div className="fixed bottom-4 right-4 z-[110] flex flex-col gap-2 pointer-events-none">
+           {toasts.map(toast => (
+             <div key={toast.id} className="animate-in slide-in-from-right-4 fade-in duration-300">
+                <div className={`flex items-center gap-3 px-4 py-3 rounded-xl shadow-2xl backdrop-blur-md border ${
+                    toast.type === 'success' ? 'bg-green-500/10 border-green-500/20 text-green-400' :
+                    toast.type === 'error' ? 'bg-red-500/10 border-red-500/20 text-red-400' :
+                    'bg-blue-500/10 border-blue-500/20 text-blue-400'
+                }`}>
+                   {toast.type === 'success' ? <CheckCircle2 size={16} /> :
+                    toast.type === 'error' ? <AlertTriangle size={16} /> :
+                    <Info size={16} />}
+                   <span className="text-sm font-medium">{toast.message}</span>
+                </div>
+             </div>
+           ))}
         </div>
       </div>
     );
-  };
+  }
 
   // ==========================================
   // HOME SCREEN RENDER BLOCK
@@ -3166,32 +3239,26 @@ export default function App() {
     return (
       <div className="flex flex-col h-screen bg-neutral-950 text-neutral-300 font-sans selection:bg-blue-500/30 overflow-hidden">
         {/* App Bar */}
-        <header className="h-14 bg-neutral-900 border-b border-neutral-800 flex items-center justify-between px-6 shrink-0 shadow-sm">
+        <header className="h-14 bg-neutral-900/80 backdrop-blur-md border-b border-neutral-800 flex items-center justify-between px-6 shrink-0 shadow-sm z-50">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white font-bold shadow-lg shadow-blue-500/20">W</div>
-            <span className="text-white font-bold text-lg tracking-wide">WebDAW <span className="text-xs font-normal text-neutral-500 ml-2">v0.8.0 MIDI Tools</span></span>
+            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white font-bold shadow-lg shadow-blue-500/20">W</div>
+            <span className="text-white font-bold text-lg tracking-wide">WebDAW <span className="text-xs font-normal text-neutral-500 ml-2">v0.9.0 Pro</span></span>
           </div>
           <div className="flex items-center gap-4">
-             {currentUser ? (
-              <div className="flex items-center gap-3 pl-2">
-                 <div className="flex items-center gap-2">
-                   <label className="relative cursor-pointer group" title="Upload Profile Picture">
-                     <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center text-xs text-white font-bold shadow-sm overflow-hidden border border-neutral-700 group-hover:border-blue-400 transition-colors">
-                       {currentUser.avatar ? <img src={currentUser.avatar} alt="Avatar" className="w-full h-full object-cover" /> : currentUser.name.charAt(0).toUpperCase()}
-                     </div>
-                     <input type="file" accept="image/*" hidden onChange={handleAvatarUpload} />
-                   </label>
-                   <span className="text-sm font-medium text-white">{currentUser.name}</span>
-                 </div>
-                 <button onClick={handleSignOut} className="p-2 text-neutral-500 hover:text-red-400 transition-colors rounded-lg hover:bg-neutral-800" title="Sign Out">
-                   <LogOut size={16} />
-                 </button>
-              </div>
-            ) : (
-              <button onClick={openAuthModal} className="flex items-center gap-2 px-4 py-2 text-neutral-300 hover:text-white transition-colors rounded-full hover:bg-neutral-800 border border-neutral-800 font-medium text-sm">
-                <UserCircle size={18} /> Sign In
-              </button>
-            )}
+             <div className="flex items-center gap-3 pl-2">
+                <div className="flex items-center gap-2">
+                  <label className="relative cursor-pointer group" title="Upload Profile Picture">
+                    <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center text-xs text-white font-bold shadow-sm overflow-hidden border border-neutral-700 group-hover:border-blue-400 transition-colors">
+                      {currentUser.avatar ? <img src={currentUser.avatar} alt="Avatar" className="w-full h-full object-cover" /> : currentUser.name.charAt(0).toUpperCase()}
+                    </div>
+                    <input type="file" accept="image/*" hidden onChange={handleAvatarUpload} />
+                  </label>
+                  <span className="text-sm font-medium text-white">{currentUser.name}</span>
+                </div>
+                <button onClick={handleSignOut} className="p-2 text-neutral-500 hover:text-red-400 transition-colors rounded-lg hover:bg-neutral-800" title="Sign Out">
+                  <LogOut size={16} />
+                </button>
+             </div>
           </div>
         </header>
         
@@ -3237,7 +3304,7 @@ export default function App() {
                      <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-blue-500 to-purple-500 opacity-0 group-hover:opacity-100 transition-opacity" />
                      
                      <div className="flex items-start justify-between mb-4">
-                       <div className="w-10 h-10 rounded bg-neutral-800 flex items-center justify-center">
+                       <div className="w-10 h-10 rounded-lg bg-neutral-800 flex items-center justify-center">
                           <FileJson size={20} className="text-blue-400" />
                        </div>
                        <span className="text-[10px] font-mono text-neutral-500 bg-neutral-950 px-2 py-1 rounded">
@@ -3259,9 +3326,6 @@ export default function App() {
               </div>
            </div>
         </div>
-        
-        {/* Unified Auth Modal */}
-        {renderAuthModal()}
       </div>
     );
   }
@@ -3270,10 +3334,10 @@ export default function App() {
   // DAW STUDIO RENDER BLOCK
   // ==========================================
   return (
-    <div className="flex flex-col h-screen bg-neutral-900 text-neutral-300 font-sans selection:bg-blue-500/30">
+    <div className="flex flex-col h-screen bg-neutral-900 text-neutral-300 font-sans selection:bg-blue-500/30 relative">
       
       {/* Top Navigation, Transport & App Bar */}
-      <header className="h-14 bg-neutral-950 border-b border-neutral-800 flex items-center justify-between px-4 shrink-0 z-40">
+      <header className="h-14 bg-neutral-950/90 backdrop-blur-md border-b border-neutral-800 flex items-center justify-between px-4 shrink-0 z-40">
         {/* LEFT: Project Info */}
         <div className="flex items-center gap-4 flex-1">
           <button onClick={closeDawToHome} className="flex items-center justify-center p-2 text-neutral-400 hover:text-white hover:bg-neutral-800 rounded-lg transition-colors group">
@@ -3292,40 +3356,40 @@ export default function App() {
         </div>
 
         {/* CENTER: Transport Controls */}
-        <div className="flex items-center gap-1.5 bg-neutral-900 px-3 py-1.5 rounded-lg border border-neutral-800 shadow-sm shrink-0">
-          <button onClick={stopPlayback} className="p-1.5 text-neutral-400 hover:text-white hover:bg-neutral-800 rounded transition-colors"><SkipBack size={16} /></button>
-          <button onClick={togglePlay} className={`p-2 rounded-full transition-colors flex items-center justify-center ${isPlaying ? 'bg-blue-600 text-white shadow-[0_0_12px_rgba(37,99,235,0.4)]' : 'bg-neutral-800 hover:bg-neutral-700 text-white'}`}>
+        <div className="flex items-center gap-1.5 bg-neutral-900/80 px-3 py-1.5 rounded-xl border border-neutral-800 shadow-sm shrink-0 backdrop-blur-sm">
+          <button onClick={stopPlayback} className="p-1.5 text-neutral-400 hover:text-white hover:bg-neutral-800 rounded-lg transition-colors"><SkipBack size={16} /></button>
+          <button onClick={togglePlay} className={`p-2 rounded-full transition-all flex items-center justify-center ${isPlaying ? 'bg-blue-600 text-white shadow-[0_0_12px_rgba(37,99,235,0.4)]' : 'bg-neutral-800 hover:bg-neutral-700 text-white'}`}>
             {isPlaying ? <Pause size={16} fill="currentColor" /> : <Play size={16} fill="currentColor" className="ml-0.5" />}
           </button>
-          <button onClick={stopPlayback} className="p-1.5 text-neutral-400 hover:text-white hover:bg-neutral-800 rounded transition-colors"><Square size={16} /></button>
-          <button onClick={toggleRecord} className={`p-1.5 rounded transition-colors ml-1 ${isRecording ? 'text-red-500 bg-red-500/20 shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'text-red-400 hover:text-red-300 hover:bg-neutral-800'}`} title="Record (Requires Armed Track)">
+          <button onClick={stopPlayback} className="p-1.5 text-neutral-400 hover:text-white hover:bg-neutral-800 rounded-lg transition-colors"><Square size={16} /></button>
+          <button onClick={toggleRecord} className={`p-1.5 rounded-lg transition-all ml-1 ${isRecording ? 'text-red-500 bg-red-500/20 shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'text-red-400 hover:text-red-300 hover:bg-neutral-800'}`} title="Record (Requires Armed Track)">
             <Circle size={16} fill="currentColor" />
           </button>
           
           <div className="w-px h-5 bg-neutral-800 mx-1" />
           
-          <button onClick={() => setLoopRegion(prev => ({...prev, enabled: !prev.enabled}))} className={`p-1.5 rounded transition-colors ${loopRegion.enabled ? 'text-blue-400 bg-blue-500/20' : 'text-neutral-400 hover:text-white hover:bg-neutral-800'}`} title="Toggle Loop Region">
+          <button onClick={() => setLoopRegion(prev => ({...prev, enabled: !prev.enabled}))} className={`p-1.5 rounded-lg transition-colors ${loopRegion.enabled ? 'text-blue-400 bg-blue-500/20' : 'text-neutral-400 hover:text-white hover:bg-neutral-800'}`} title="Toggle Loop Region">
             <Repeat size={16} />
           </button>
-          <button onClick={() => setAutoScroll(!autoScroll)} className={`p-1.5 rounded transition-colors ${autoScroll ? 'text-green-400 bg-green-500/20' : 'text-neutral-400 hover:text-white hover:bg-neutral-800'}`} title="Auto-Scroll Timeline">
+          <button onClick={() => setAutoScroll(!autoScroll)} className={`p-1.5 rounded-lg transition-colors ${autoScroll ? 'text-green-400 bg-green-500/20' : 'text-neutral-400 hover:text-white hover:bg-neutral-800'}`} title="Auto-Scroll Timeline">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M13 5l7 7-7 7M4 12h16"/></svg>
           </button>
         </div>
 
         {/* RIGHT: Info & Settings */}
         <div className="flex items-center justify-end gap-3 flex-1">
-          <div className="hidden lg:flex items-center gap-4 bg-neutral-900 px-3 py-1.5 rounded-lg border border-neutral-800 font-mono text-[10px]">
-            <div className="flex items-center gap-1.5 text-neutral-400"><span className="uppercase text-[8px] text-neutral-600">Time</span> <span className="text-white">{(currentTime * (60/bpm)).toFixed(2).padStart(5, '0')}</span></div>
-            <div className="flex items-center gap-1.5 text-neutral-400"><span className="uppercase text-[8px] text-neutral-600">Pos</span> <span className="text-white">{Math.floor(currentTime / 4) + 1}.{Math.floor(currentTime % 4) + 1}.1</span></div>
-            <div className="flex items-center gap-1 text-neutral-400"><span className="uppercase text-[8px] text-neutral-600">BPM</span> <input type="number" value={bpm} onChange={(e) => setBpm(Number(e.target.value))} className="bg-transparent w-8 text-white focus:outline-none" min="40" max="300" /></div>
-            <button onClick={() => setMetronomeEnabled(!metronomeEnabled)} className={`flex items-center justify-center p-0.5 rounded-full transition-colors ${metronomeEnabled ? 'text-blue-400 bg-blue-500/10 shadow-[0_0_8px_rgba(59,130,246,0.3)]' : 'text-neutral-500 hover:text-neutral-300'}`} title="Metronome Click">
+          <div className="hidden lg:flex items-center gap-4 bg-neutral-900/80 px-4 py-1.5 rounded-xl border border-neutral-800 font-mono text-[11px] shadow-inner">
+            <div className="flex items-center gap-1.5 text-neutral-400"><span className="uppercase text-[9px] font-bold text-neutral-600">Time</span> <span className="text-white w-14">{renderFormattedTime()}</span></div>
+            <div className="flex items-center gap-1.5 text-neutral-400"><span className="uppercase text-[9px] font-bold text-neutral-600">Pos</span> <span className="text-white">{Math.floor(currentTime / 4) + 1}.{Math.floor(currentTime % 4) + 1}.1</span></div>
+            <div className="flex items-center gap-1 text-neutral-400"><span className="uppercase text-[9px] font-bold text-neutral-600">BPM</span> <input type="number" value={bpm} onChange={(e) => setBpm(Number(e.target.value))} className="bg-transparent w-8 text-white focus:outline-none" min="40" max="300" /></div>
+            <button onClick={() => setMetronomeEnabled(!metronomeEnabled)} className={`flex items-center justify-center p-1 rounded-full transition-all ${metronomeEnabled ? 'text-blue-400 bg-blue-500/10 shadow-[0_0_8px_rgba(59,130,246,0.3)]' : 'text-neutral-500 hover:text-neutral-300 hover:bg-neutral-800'}`} title="Metronome Click">
                <Activity size={12} />
             </button>
           </div>
           
           <div className="w-px h-6 bg-neutral-800" />
 
-          <button onClick={() => { requestIO(); setShowIOSettings(true); }} className="p-1.5 text-neutral-400 hover:text-white transition-colors rounded hover:bg-neutral-800" title="Project Settings & I/O">
+          <button onClick={() => { requestIO(); setShowIOSettings(true); }} className="p-1.5 text-neutral-400 hover:text-white transition-colors rounded-lg hover:bg-neutral-800" title="Project Settings & I/O">
               <Settings2 size={18} />
           </button>
           
@@ -3340,23 +3404,17 @@ export default function App() {
             </div>
           </div>
           
-          {currentUser ? (
-            <div className="flex items-center gap-2">
-               <label className="relative cursor-pointer group" title="Upload Profile Picture">
-                 <div className="w-7 h-7 rounded-full bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center text-xs text-white font-bold shadow-sm overflow-hidden border border-neutral-700 group-hover:border-blue-400 transition-colors">
-                   {currentUser.avatar ? <img src={currentUser.avatar} alt="Avatar" className="w-full h-full object-cover" /> : currentUser.name.charAt(0).toUpperCase()}
-                 </div>
-                 <input type="file" accept="image/*" hidden onChange={handleAvatarUpload} />
-               </label>
-               <button onClick={handleSignOut} className="p-1 text-neutral-500 hover:text-red-400 transition-colors rounded-full hover:bg-neutral-800 flex items-center justify-center" title="Sign Out">
-                  <LogOut size={16} />
-               </button>
-            </div>
-          ) : (
-            <button onClick={openAuthModal} className="p-1 text-neutral-400 hover:text-white transition-colors rounded-full hover:bg-neutral-800">
-              <UserCircle size={20} />
-            </button>
-          )}
+          <div className="flex items-center gap-2">
+             <label className="relative cursor-pointer group" title="Upload Profile Picture">
+               <div className="w-7 h-7 rounded-full bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center text-xs text-white font-bold shadow-sm overflow-hidden border border-neutral-700 group-hover:border-blue-400 transition-colors">
+                 {currentUser.avatar ? <img src={currentUser.avatar} alt="Avatar" className="w-full h-full object-cover" /> : currentUser.name.charAt(0).toUpperCase()}
+               </div>
+               <input type="file" accept="image/*" hidden onChange={handleAvatarUpload} />
+             </label>
+             <button onClick={handleSignOut} className="p-1 text-neutral-500 hover:text-red-400 transition-colors rounded-full hover:bg-neutral-800 flex items-center justify-center" title="Sign Out">
+                <LogOut size={16} />
+             </button>
+          </div>
         </div>
       </header>
 
@@ -3368,7 +3426,7 @@ export default function App() {
         onDrop={handleTimelineDrop}
       >
         {/* Left Vertical Navigation Menu */}
-        <div className="w-12 bg-neutral-950 border-r border-neutral-800 flex flex-col items-center py-4 z-30 shrink-0">
+        <div className="w-12 bg-neutral-950 border-r border-neutral-800 flex flex-col items-center py-4 z-30 shrink-0 shadow-[4px_0_15px_rgba(0,0,0,0.2)]">
           <button onClick={() => { setActiveView('arrangement'); setBottomDock(null); }} className={`p-2.5 rounded-xl transition-all ${activeView === 'arrangement' && !bottomDock ? 'text-blue-400 bg-blue-500/10 shadow-[0_0_10px_rgba(59,130,246,0.2)]' : 'text-neutral-500 hover:text-neutral-300 hover:bg-neutral-800'}`} title="Arrangement View">
             <Piano size={20} />
           </button>
@@ -3463,7 +3521,7 @@ export default function App() {
             <div className="flex-1 bg-neutral-900 overflow-x-auto flex items-stretch p-4 gap-2 custom-scrollbar">
               {tracks.map(track => {
                 return (
-                <div key={track.id} className={`w-32 bg-neutral-950 border rounded-lg flex flex-col items-center py-4 shrink-0 shadow-lg relative transition-colors ${track.armed ? 'border-red-500/50 shadow-[0_0_15px_rgba(239,68,68,0.2)]' : 'border-neutral-800'}`}>
+                <div key={track.id} className={`w-32 bg-neutral-950 border rounded-xl flex flex-col items-center py-4 shrink-0 shadow-lg relative transition-colors ${track.armed ? 'border-red-500/50 shadow-[0_0_15px_rgba(239,68,68,0.2)]' : 'border-neutral-800'}`}>
                   <div className="w-full text-center px-2 mb-4 border-b border-neutral-800 pb-2">
                      <div className={`w-3 h-3 rounded-full mx-auto mb-1 shadow-sm ${track.color}`} />
                      <div className="text-xs font-semibold text-neutral-300 truncate">{track.name}</div>
@@ -3512,7 +3570,7 @@ export default function App() {
               )})}
 
               {/* Master Fader */}
-              <div className="w-32 bg-neutral-900 border-l border-neutral-800 flex flex-col items-center py-4 shrink-0 ml-auto shadow-[-8px_0_15px_rgba(0,0,0,0.2)]">
+              <div className="w-32 bg-neutral-900 border-l border-neutral-800 flex flex-col items-center py-4 shrink-0 ml-auto shadow-[-8px_0_15px_rgba(0,0,0,0.2)] rounded-r-xl">
                   <div className="w-full text-center px-2 mb-4 border-b border-neutral-800 pb-2">
                      <div className="w-3 h-3 rounded-full mx-auto mb-1 bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.5)]" />
                      <div className="text-xs font-bold text-white truncate">MASTER</div>
@@ -3653,7 +3711,7 @@ export default function App() {
                        
                        {/* Loop Region Brace */}
                        <div 
-                         className={`absolute top-0 bottom-0 border-x-[3px] border-t-[3px] z-20 transition-colors ${loopRegion.enabled ? 'border-blue-500 bg-blue-500/10' : 'border-neutral-500/80 bg-neutral-500/10 hover:bg-neutral-500/20'}`}
+                         className={`absolute top-0 bottom-0 border-x-[3px] border-t-[3px] z-20 transition-colors rounded-t-sm ${loopRegion.enabled ? 'border-blue-500 bg-blue-500/10' : 'border-neutral-500/80 bg-neutral-500/10 hover:bg-neutral-500/20'}`}
                          style={{
                            left: `${loopRegion.start * BEAT_WIDTH}px`,
                            width: `${(loopRegion.end - loopRegion.start) * BEAT_WIDTH}px`,
@@ -3672,13 +3730,13 @@ export default function App() {
                       <div className="absolute inset-0 pointer-events-none z-0" style={{ backgroundSize: `${BEAT_WIDTH}px 100%`, backgroundImage: 'linear-gradient(to right, rgba(255,255,255,0.03) 1px, transparent 1px)' }} />
                       <div className="absolute inset-0 pointer-events-none z-0" style={{ backgroundSize: `${BEAT_WIDTH * 4}px 100%`, backgroundImage: 'linear-gradient(to right, rgba(255,255,255,0.08) 1px, transparent 1px)' }} />
 
-                      <div className="absolute top-0 bottom-0 w-px bg-blue-500 z-30 pointer-events-none flex justify-center shadow-[0_0_10px_rgba(59,130,246,0.5)]" style={{ left: `${currentTime * BEAT_WIDTH}px`, transition: isPlaying ? 'none' : 'left 0.1s' }}>
-                        <div className="w-0 h-0 border-l-[6px] border-l-transparent border-r-[6px] border-r-transparent border-t-[8px] border-t-blue-500 absolute -top-0" />
+                      <div className="absolute top-0 bottom-0 w-[2px] bg-blue-500 z-30 pointer-events-none flex justify-center shadow-[0_0_10px_rgba(59,130,246,0.8)]" style={{ left: `${currentTime * BEAT_WIDTH}px`, transition: isPlaying ? 'none' : 'left 0.1s' }}>
+                        <div className="w-0 h-0 border-l-[6px] border-l-transparent border-r-[6px] border-r-transparent border-t-[8px] border-t-blue-500 absolute -top-0 drop-shadow-[0_2px_4px_rgba(0,0,0,0.5)]" />
                       </div>
 
                       {dragOverlay?.active && (
                         <div 
-                          className="absolute z-[60] rounded-md border-2 border-dashed pointer-events-none flex items-center justify-center font-bold text-xs bg-white/10 border-white/50 text-white shadow-lg backdrop-blur-[2px]"
+                          className="absolute z-[60] rounded-xl border-2 border-dashed pointer-events-none flex items-center justify-center font-bold text-xs bg-white/10 border-white/50 text-white shadow-lg backdrop-blur-sm"
                           style={{
                             left: `${dragOverlay.beat * BEAT_WIDTH}px`,
                             top: dragOverlay.trackId === 'new' ? `${tracks.length * 96 + 8}px` : `${tracks.findIndex(t => t.id === dragOverlay.trackId) * 96 + 8}px`,
@@ -3700,7 +3758,7 @@ export default function App() {
                               onMouseDown={(e) => handleClipMouseDown(e, track.id, clip)}
                               onDoubleClick={(e) => { e.stopPropagation(); setBottomDock({type: track.type === 'audio' ? 'audio-editor' : 'piano-roll', trackId: track.id, clipId: clip.id}); }}
                               onContextMenu={(e) => handleContextMenu(e, 'clip', { trackId: track.id, clipId: clip.id })}
-                              className={`absolute top-2 bottom-2 rounded-md border border-white/20 shadow-sm overflow-hidden group cursor-grab active:cursor-grabbing hover:brightness-110 transition-all ${clip.isRecording ? 'bg-red-500 opacity-80' : track.color} ${track.muted ? 'opacity-40 grayscale' : 'opacity-90'}`}
+                              className={`absolute top-2 bottom-2 rounded-lg border border-white/20 shadow-[inset_0_2px_4px_rgba(255,255,255,0.1),_0_2px_6px_rgba(0,0,0,0.3)] overflow-hidden group cursor-grab active:cursor-grabbing hover:brightness-110 transition-all ${clip.isRecording ? 'bg-red-500 opacity-80' : `bg-gradient-to-r ${track.color.replace('bg-', 'from-')}/90 ${track.color.replace('bg-', 'to-')}/70`} ${track.muted ? 'opacity-40 grayscale' : 'opacity-100'}`}
                               style={{ left: `${clip.start * BEAT_WIDTH}px`, width: `${clipDuration * BEAT_WIDTH}px`, transition: draggingClip?.clipId === clip.id ? 'none' : 'left 0.1s' }}
                             >
                               <button onClick={(e) => deleteClip(track.id, clip.id)} className="absolute top-1 right-1 p-0.5 bg-black/40 text-white/70 hover:text-white rounded opacity-0 group-hover:opacity-100 hover:bg-red-500 transition-all z-20" title="Delete Clip"><X size={10} /></button>
@@ -3710,7 +3768,7 @@ export default function App() {
                                   clip.isRecording ? (
                                       <Activity className="text-white/50 animate-pulse" size={24}/>
                                   ) : clip.sampleId && globalAudioBufferCache.has(clip.sampleId) ? (
-                                      <svg preserveAspectRatio="none" viewBox="0 0 100 100" className="w-full h-full text-blue-300 opacity-80">
+                                      <svg preserveAspectRatio="none" viewBox="0 0 100 100" className="w-full h-full text-white/80 drop-shadow-md">
                                           {globalAudioBufferCache.get(clip.sampleId).peaks.map((p, i) => (
                                               <line key={i} x1={i} y1={50 - (p[1]*40)} x2={i} y2={50 - (p[0]*40)} stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
                                           ))}
@@ -3777,7 +3835,7 @@ export default function App() {
               if (!track) return null;
               return (
                 <div className="h-[35vh] bg-neutral-900 border-t border-neutral-800 flex flex-col shadow-[0_-10px_30px_rgba(0,0,0,0.3)] z-40 shrink-0">
-                  <div className="h-10 bg-neutral-950 border-b border-neutral-800 flex items-center justify-between px-4 shrink-0">
+                  <div className="h-10 bg-neutral-950/80 backdrop-blur-md border-b border-neutral-800 flex items-center justify-between px-4 shrink-0">
                     <div className="flex items-center gap-4">
                       <div className="flex items-center gap-2">
                         <div className={`w-3 h-3 rounded-sm ${track.color}`} />
@@ -3788,7 +3846,7 @@ export default function App() {
                   </div>
                   <div className="flex-1 flex overflow-x-auto p-4 gap-4 bg-neutral-950 custom-scrollbar items-center relative">
                      {/* Audio Source / Instrument */}
-                     <div className="w-56 bg-neutral-900 border border-neutral-800 rounded-lg flex flex-col overflow-hidden shrink-0 shadow-sm h-full max-h-48">
+                     <div className="w-56 bg-neutral-900 border border-neutral-800 rounded-xl flex flex-col overflow-hidden shrink-0 shadow-sm h-full max-h-48">
                        <div className="h-8 bg-neutral-800/50 border-b border-neutral-800 flex items-center justify-between px-3">
                          <span className="font-semibold text-xs text-white">Source Generator</span>
                        </div>
@@ -3804,7 +3862,7 @@ export default function App() {
                              <select 
                                value={track.instrument || 'inst-subtractive'}
                                onChange={(e) => handleInstrumentChange(track.id, e.target.value)}
-                               className="bg-neutral-800 text-xs text-white px-2 py-1.5 rounded border border-neutral-700 outline-none hover:border-neutral-500 cursor-pointer max-w-full"
+                               className="bg-neutral-800 text-xs text-white px-2 py-1.5 rounded-lg border border-neutral-700 outline-none hover:border-neutral-500 cursor-pointer max-w-full"
                              >
                                <optgroup label="Internal Synths & Samplers">
                                  {INTERNAL_PLUGINS.filter(p => p.category === 'instrument').map(inst => (
@@ -3830,7 +3888,7 @@ export default function App() {
                      {track.effects?.map((fx, idx) => {
                        const isNative = INTERNAL_PLUGINS.some(p => p.type === fx.type);
                        return (
-                       <div key={fx.id} className="w-56 bg-neutral-900 border border-neutral-800 rounded-lg flex flex-col overflow-hidden shrink-0 shadow-sm h-full max-h-48 relative group">
+                       <div key={fx.id} className="w-56 bg-neutral-900 border border-neutral-800 rounded-xl flex flex-col overflow-hidden shrink-0 shadow-sm h-full max-h-48 relative group">
                          {/* Chain flow indicator */}
                          <div className="absolute -left-4 top-1/2 -translate-y-1/2 w-4 h-0.5 bg-neutral-700" />
                          
@@ -3876,7 +3934,7 @@ export default function App() {
                      
                      {/* Add Effect Interactive Dropdown */}
                      <div className="relative shrink-0 h-full max-h-48 ml-2 flex flex-col">
-                        <div onClick={() => setShowAddFxMenu(showAddFxMenu === track.id ? null : track.id)} className="w-32 flex-1 border border-dashed border-neutral-700 rounded-lg flex flex-col items-center justify-center text-neutral-500 hover:text-white hover:border-neutral-500 hover:bg-neutral-800/30 transition-all cursor-pointer">
+                        <div onClick={() => setShowAddFxMenu(showAddFxMenu === track.id ? null : track.id)} className="w-32 flex-1 border border-dashed border-neutral-700 rounded-xl flex flex-col items-center justify-center text-neutral-500 hover:text-white hover:border-neutral-500 hover:bg-neutral-800/30 transition-all cursor-pointer">
                            <Plus size={20} className="mb-2" />
                            <span className="text-xs font-medium">Add Effect</span>
                         </div>
@@ -3884,7 +3942,7 @@ export default function App() {
                            <>
                              {/* Transparent overlay to capture click outside */}
                              <div className="fixed inset-0 z-40" onClick={() => setShowAddFxMenu(null)} />
-                             <div className="absolute bottom-full mb-2 left-0 w-56 bg-neutral-800 border border-neutral-700 rounded-lg shadow-xl overflow-hidden z-50 animate-in slide-in-from-bottom-2 duration-150">
+                             <div className="absolute bottom-full mb-2 left-0 w-56 bg-neutral-800 border border-neutral-700 rounded-xl shadow-xl overflow-hidden z-50 animate-in slide-in-from-bottom-2 duration-150">
                                
                                <div className="px-3 py-2 bg-neutral-900 border-b border-neutral-700 text-xs font-semibold text-neutral-400 flex items-center gap-2">
                                   <Folder size={12} /> Native Effects
@@ -3932,7 +3990,7 @@ export default function App() {
               if (!track) return null;
               return (
                   <div className="h-[40vh] bg-neutral-900 border-t border-neutral-800 flex flex-col shadow-[0_-10px_30px_rgba(0,0,0,0.3)] z-40 shrink-0">
-                    <div className="h-10 bg-neutral-950 border-b border-neutral-800 flex items-center justify-between px-4 shrink-0">
+                    <div className="h-10 bg-neutral-950/80 backdrop-blur-md border-b border-neutral-800 flex items-center justify-between px-4 shrink-0">
                       <div className="flex items-center gap-4">
                         <div className="flex items-center gap-2">
                           <div className={`w-3 h-3 rounded-sm ${track.color}`} />
@@ -3962,12 +4020,11 @@ export default function App() {
               for(let p = PITCH_MAX; p >= PITCH_MIN; p--) pitches.push(p);
 
               const maxNoteEnd = clip.notes?.reduce((max, n) => Math.max(max, n.start + n.duration), 0) || 0;
-              // Make piano roll exactly match the clip duration (or expand to fit trailing notes)
               const pianoRollDuration = Math.max(clip.duration, maxNoteEnd);
 
               return (
                 <div className="h-[40vh] bg-neutral-900 border-t border-neutral-800 flex flex-col shadow-[0_-10px_30px_rgba(0,0,0,0.3)] z-40 shrink-0">
-                  <div className="h-10 bg-neutral-950 border-b border-neutral-800 flex items-center justify-between px-4 shrink-0">
+                  <div className="h-10 bg-neutral-950/80 backdrop-blur-md border-b border-neutral-800 flex items-center justify-between px-4 shrink-0">
                     <div className="flex items-center gap-4">
                       <div className="flex items-center gap-2">
                         <div className={`w-3 h-3 rounded-sm ${track.color}`} />
@@ -3981,9 +4038,9 @@ export default function App() {
                         <button onClick={() => setEditorTool('erase')} className={`p-1.5 rounded-md transition-colors ${editorTool === 'erase' ? 'bg-red-500/20 text-red-400' : 'text-neutral-400 hover:text-white hover:bg-neutral-800'}`} title="Erase"><Eraser size={14} /></button>
                       </div>
                       <div className="w-px h-4 bg-neutral-800" />
-                      <div className="flex items-center gap-1.5 px-2 py-1 text-xs text-neutral-400 rounded bg-neutral-900 border border-neutral-800">
+                      <div className="flex items-center gap-1.5 px-2 py-1 text-xs text-neutral-400 rounded-lg bg-neutral-900 border border-neutral-800">
                          <Grid size={12} />
-                         <select value={snapGrid} onChange={e => setSnapGrid(Number(e.target.value))} className="bg-transparent outline-none cursor-pointer text-white">
+                         <select value={snapGrid} onChange={e => { setSnapGrid(Number(e.target.value)); showToast(`Snap changed to ${e.target.options[e.target.selectedIndex].text}`); }} className="bg-transparent outline-none cursor-pointer text-white">
                             <option value={1}>1/4 Note Snap</option>
                             <option value={0.5}>1/8 Note Snap</option>
                             <option value={0.25}>1/16 Note Snap</option>
@@ -4025,7 +4082,7 @@ export default function App() {
                           <div className="relative min-w-max bg-neutral-900 border-r border-neutral-700 shadow-[4px_0_15px_rgba(0,0,0,0.5)]" style={{ height: `${pitches.length * PITCH_HEIGHT}px`, width: `${pianoRollDuration * BEAT_WIDTH}px`}} onMouseDown={(e) => handleGridMouseDown(e, track.id, clip.id)}>
                             
                             {isPlaying && currentTime >= clip.start && currentTime <= clip.start + clip.duration && (
-                               <div className="absolute top-0 bottom-0 w-px bg-white z-40 pointer-events-none shadow-[0_0_8px_rgba(255,255,255,0.8)]" style={{ left: `${(currentTime - clip.start) * BEAT_WIDTH}px` }} />
+                               <div className="absolute top-0 bottom-0 w-[2px] bg-white z-40 pointer-events-none shadow-[0_0_8px_rgba(255,255,255,0.8)]" style={{ left: `${(currentTime - clip.start) * BEAT_WIDTH}px` }} />
                             )}
 
                             {pitches.map((p, i) => {
@@ -4043,7 +4100,7 @@ export default function App() {
                                )
                             })}
                             
-                            {/* Note Rendering - FIXED to use exact pixel layout instead of percentages */}
+                            {/* Note Rendering - Enhanced with gradients and shadows */}
                             {clip.notes?.map(note => {
                                const isSelected = selectedNotes && selectedNotes.includes(note.id);
                                const velocity = note.velocity ?? 100;
@@ -4052,7 +4109,7 @@ export default function App() {
                                return (
                                <div key={note.id} onMouseDown={(e) => handleNoteMouseDown(e, track.id, clip.id, note)}
                                  onContextMenu={(e) => handleContextMenu(e, 'note', { trackId: track.id, clipId: clip.id, noteId: note.id })}
-                                 className={`absolute rounded-[2px] shadow-sm border ${isSelected ? 'border-white' : 'border-black/50'} bg-white hover:brightness-125 transition-brightness ${draggingNote?.noteId === note.id ? 'z-50' : 'z-20'}`}
+                                 className={`absolute rounded-[3px] shadow-[0_1px_3px_rgba(0,0,0,0.5)] border ${isSelected ? 'border-blue-400 shadow-[0_0_8px_rgba(96,165,250,0.6)]' : 'border-black/50'} bg-gradient-to-b from-white to-neutral-300 hover:brightness-125 transition-all ${draggingNote?.noteId === note.id ? 'z-50' : 'z-20'}`}
                                  style={{ 
                                    left: `${note.start * BEAT_WIDTH}px`, 
                                    top: `${(PITCH_MAX - note.pitch) * PITCH_HEIGHT}px`, 
@@ -4062,7 +4119,7 @@ export default function App() {
                                    transition: draggingNote?.noteId === note.id ? 'none' : 'left 0.1s, top 0.1s' 
                                  }}
                                >
-                                 <div data-edge="right" className="absolute right-0 top-0 bottom-0 w-1.5 cursor-e-resize hover:bg-white/50 z-30 rounded-r-[2px]" />
+                                 <div data-edge="right" className="absolute right-0 top-0 bottom-0 w-1.5 cursor-e-resize hover:bg-black/20 z-30 rounded-r-[3px]" />
                                </div>
                             )})}
                           </div>
@@ -4119,8 +4176,8 @@ export default function App() {
         }
         
         return (
-          <div className="fixed inset-0 bg-black/40 backdrop-blur-[2px] z-50 flex items-center justify-center p-4">
-            <div className="bg-neutral-800 border border-neutral-600 rounded-xl w-[700px] shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95 duration-200">
+          <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-neutral-800 border border-neutral-600 rounded-2xl w-[700px] shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95 duration-200">
               
               <div className="h-10 bg-neutral-900 border-b border-neutral-700 flex items-center justify-between px-4 shrink-0">
                 <div className="flex items-center gap-3">
@@ -4161,14 +4218,14 @@ export default function App() {
                            else if (key === 'low' || key === 'mid' || key === 'high') { min = -24; max = 24; step = 0.5; }
                            
                            return (
-                             <div key={key} className="flex flex-col items-center bg-neutral-900 border border-neutral-800 p-4 rounded-lg">
+                             <div key={key} className="flex flex-col items-center bg-neutral-900 border border-neutral-800 p-4 rounded-xl shadow-inner">
                                <span className="text-[11px] text-white uppercase mb-4 font-mono tracking-wider">{key}</span>
                                <input 
                                  type="range" min={min} max={max} step={step} value={pData.params[key] || 0} 
                                  onChange={(e) => handleEffectParamChange(track.id, openPluginUI.fxId, key, e.target.value)}
-                                 className="w-full h-2 bg-neutral-800 rounded-full appearance-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:bg-blue-500 [&::-webkit-slider-thumb]:rounded-full hover:[&::-webkit-slider-thumb]:bg-white cursor-pointer"
+                                 className="w-full h-2 bg-neutral-800 rounded-full appearance-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:bg-blue-500 [&::-webkit-slider-thumb]:rounded-full hover:[&::-webkit-slider-thumb]:bg-white cursor-pointer transition-all"
                                />
-                               <span className="text-[10px] text-blue-400 font-mono mt-3 font-bold bg-black px-2 py-1 rounded w-full text-center">{pData.params[key]}</span>
+                               <span className="text-[10px] text-blue-400 font-mono mt-3 font-bold bg-black/50 px-2 py-1 rounded w-full text-center">{pData.params[key]}</span>
                              </div>
                            )
                        })}
@@ -4176,20 +4233,20 @@ export default function App() {
                   </div>
                 ) : track.instrument === 'inst-subtractive' ? (
                   <div className="flex gap-6 h-full p-6 bg-gradient-to-b from-neutral-800 to-neutral-900">
-                    <div className="flex-1 bg-neutral-950/50 rounded-lg border border-neutral-700/50 p-4 flex flex-col items-center">
+                    <div className="flex-1 bg-neutral-950/50 rounded-xl border border-neutral-700/50 p-4 flex flex-col items-center shadow-inner">
                        <h4 className="text-[10px] text-neutral-400 uppercase tracking-widest font-bold mb-4">VCO Oscillator</h4>
                        <select 
                          value={track.instrumentParams?.oscType || 'sawtooth'} 
                          onChange={(e) => handleInstrumentParamChange(track.id, 'oscType', e.target.value)}
-                         className="bg-neutral-800 border border-neutral-600 text-white text-sm rounded px-3 py-2 outline-none cursor-pointer w-full mb-4"
+                         className="bg-neutral-800 border border-neutral-600 text-white text-sm rounded-lg px-3 py-2 outline-none cursor-pointer w-full mb-4"
                        >
                          <option value="sawtooth">Sawtooth</option>
                          <option value="square">Square Wave</option>
                          <option value="sine">Sine Wave</option>
                          <option value="triangle">Triangle</option>
                        </select>
-                       <div className="mt-auto w-full h-16 bg-neutral-900 rounded border border-neutral-800 flex items-center justify-center overflow-hidden">
-                         <svg className="w-full h-8 text-purple-500" viewBox="0 0 100 20" preserveAspectRatio="none">
+                       <div className="mt-auto w-full h-16 bg-neutral-900 rounded-lg border border-neutral-800 flex items-center justify-center overflow-hidden">
+                         <svg className="w-full h-8 text-purple-500 drop-shadow-[0_0_8px_rgba(168,85,247,0.5)]" viewBox="0 0 100 20" preserveAspectRatio="none">
                            {track.instrumentParams?.oscType === 'sawtooth' && <polyline fill="none" stroke="currentColor" strokeWidth="2" points="0,20 50,0 50,20 100,0" />}
                            {(!track.instrumentParams?.oscType || track.instrumentParams?.oscType === 'square') && <polyline fill="none" stroke="currentColor" strokeWidth="2" points="0,0 50,0 50,20 100,20" />}
                            {track.instrumentParams?.oscType === 'sine' && <path fill="none" stroke="currentColor" strokeWidth="2" d="M0,10 Q25,-10 50,10 T100,10" />}
@@ -4198,104 +4255,104 @@ export default function App() {
                        </div>
                     </div>
                     
-                    <div className="flex-1 bg-neutral-950/50 rounded-lg border border-neutral-700/50 p-4 flex flex-col items-center justify-between">
+                    <div className="flex-1 bg-neutral-950/50 rounded-xl border border-neutral-700/50 p-4 flex flex-col items-center justify-between shadow-inner">
                        <h4 className="text-[10px] text-neutral-400 uppercase tracking-widest font-bold mb-4">VCF Filter</h4>
                        <div className="w-full flex flex-col gap-6">
-                         <div className="flex flex-col items-center bg-neutral-900 border border-neutral-800 p-2 rounded">
+                         <div className="flex flex-col items-center bg-neutral-900 border border-neutral-800 p-3 rounded-lg">
                            <span className="text-[9px] text-neutral-400 mb-2">CUTOFF ({track.instrumentParams?.cutoff || 2000}Hz)</span>
-                           <input type="range" min="100" max="8000" value={track.instrumentParams?.cutoff || 2000} onChange={(e) => handleInstrumentParamChange(track.id, 'cutoff', Number(e.target.value))} className="w-full h-1.5 bg-black rounded-full appearance-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:bg-purple-400 [&::-webkit-slider-thumb]:rounded-full cursor-pointer" />
+                           <input type="range" min="100" max="8000" value={track.instrumentParams?.cutoff || 2000} onChange={(e) => handleInstrumentParamChange(track.id, 'cutoff', Number(e.target.value))} className="w-full h-1.5 bg-black rounded-full appearance-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:bg-purple-400 [&::-webkit-slider-thumb]:rounded-full cursor-pointer transition-all" />
                          </div>
-                         <div className="flex flex-col items-center bg-neutral-900 border border-neutral-800 p-2 rounded">
+                         <div className="flex flex-col items-center bg-neutral-900 border border-neutral-800 p-3 rounded-lg">
                            <span className="text-[9px] text-neutral-400 mb-2">RESONANCE</span>
-                           <input type="range" min="0.1" max="10" step="0.1" value={track.instrumentParams?.res || 1.5} onChange={(e) => handleInstrumentParamChange(track.id, 'res', Number(e.target.value))} className="w-full h-1.5 bg-black rounded-full appearance-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:bg-purple-400 [&::-webkit-slider-thumb]:rounded-full cursor-pointer" />
+                           <input type="range" min="0.1" max="10" step="0.1" value={track.instrumentParams?.res || 1.5} onChange={(e) => handleInstrumentParamChange(track.id, 'res', Number(e.target.value))} className="w-full h-1.5 bg-black rounded-full appearance-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:bg-purple-400 [&::-webkit-slider-thumb]:rounded-full cursor-pointer transition-all" />
                          </div>
                        </div>
                     </div>
 
-                    <div className="flex-1 bg-neutral-950/50 rounded-lg border border-neutral-700/50 p-4 flex flex-col items-center justify-between">
+                    <div className="flex-1 bg-neutral-950/50 rounded-xl border border-neutral-700/50 p-4 flex flex-col items-center justify-between shadow-inner">
                        <h4 className="text-[10px] text-neutral-400 uppercase tracking-widest font-bold mb-4">Envelope</h4>
                        <div className="w-full flex flex-col gap-6">
-                         <div className="flex flex-col items-center bg-neutral-900 border border-neutral-800 p-2 rounded">
+                         <div className="flex flex-col items-center bg-neutral-900 border border-neutral-800 p-3 rounded-lg">
                            <span className="text-[9px] text-neutral-400 mb-2">ATTACK</span>
-                           <input type="range" min="0.001" max="2" step="0.01" value={track.instrumentParams?.attack || 0.01} onChange={(e) => handleInstrumentParamChange(track.id, 'attack', Number(e.target.value))} className="w-full h-1.5 bg-black rounded-full appearance-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:bg-purple-400 [&::-webkit-slider-thumb]:rounded-full cursor-pointer" />
+                           <input type="range" min="0.001" max="2" step="0.01" value={track.instrumentParams?.attack || 0.01} onChange={(e) => handleInstrumentParamChange(track.id, 'attack', Number(e.target.value))} className="w-full h-1.5 bg-black rounded-full appearance-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:bg-purple-400 [&::-webkit-slider-thumb]:rounded-full cursor-pointer transition-all" />
                          </div>
-                         <div className="flex flex-col items-center bg-neutral-900 border border-neutral-800 p-2 rounded">
+                         <div className="flex flex-col items-center bg-neutral-900 border border-neutral-800 p-3 rounded-lg">
                            <span className="text-[9px] text-neutral-400 mb-2">RELEASE</span>
-                           <input type="range" min="0.01" max="5" step="0.01" value={track.instrumentParams?.release || 0.2} onChange={(e) => handleInstrumentParamChange(track.id, 'release', Number(e.target.value))} className="w-full h-1.5 bg-black rounded-full appearance-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:bg-purple-400 [&::-webkit-slider-thumb]:rounded-full cursor-pointer" />
+                           <input type="range" min="0.01" max="5" step="0.01" value={track.instrumentParams?.release || 0.2} onChange={(e) => handleInstrumentParamChange(track.id, 'release', Number(e.target.value))} className="w-full h-1.5 bg-black rounded-full appearance-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:bg-purple-400 [&::-webkit-slider-thumb]:rounded-full cursor-pointer transition-all" />
                          </div>
                        </div>
                     </div>
                   </div>
                 ) : track.instrument === 'inst-fm' ? (
                   <div className="flex gap-6 h-full p-6 bg-gradient-to-b from-neutral-800 to-neutral-900">
-                    <div className="flex-1 bg-neutral-950/50 rounded-lg border border-neutral-700/50 p-4 flex flex-col items-center justify-between">
+                    <div className="flex-1 bg-neutral-950/50 rounded-xl border border-neutral-700/50 p-4 flex flex-col items-center justify-between shadow-inner">
                        <h4 className="text-[10px] text-neutral-400 uppercase tracking-widest font-bold mb-4">Operator Engine</h4>
                        <div className="w-full flex flex-col gap-6">
-                         <div className="flex flex-col items-center bg-neutral-900 border border-neutral-800 p-4 rounded text-center">
+                         <div className="flex flex-col items-center bg-neutral-900 border border-neutral-800 p-4 rounded-lg text-center">
                            <span className="text-[11px] text-white mb-2">FM RATIO</span>
-                           <input type="range" min="0.5" max="10" step="0.01" value={track.instrumentParams?.ratio || 2} onChange={(e) => handleInstrumentParamChange(track.id, 'ratio', Number(e.target.value))} className="w-full h-2 bg-black rounded-full appearance-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:bg-teal-400 [&::-webkit-slider-thumb]:rounded-full cursor-pointer" />
+                           <input type="range" min="0.5" max="10" step="0.01" value={track.instrumentParams?.ratio || 2} onChange={(e) => handleInstrumentParamChange(track.id, 'ratio', Number(e.target.value))} className="w-full h-2 bg-black rounded-full appearance-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:bg-teal-400 [&::-webkit-slider-thumb]:rounded-full cursor-pointer transition-all" />
                            <span className="text-[10px] font-mono mt-2 text-teal-400">{track.instrumentParams?.ratio || 2} : 1</span>
                          </div>
-                         <div className="flex flex-col items-center bg-neutral-900 border border-neutral-800 p-4 rounded text-center">
+                         <div className="flex flex-col items-center bg-neutral-900 border border-neutral-800 p-4 rounded-lg text-center">
                            <span className="text-[11px] text-white mb-2">MOD INDEX (DEPTH)</span>
-                           <input type="range" min="0" max="20" step="0.1" value={track.instrumentParams?.modIndex || 5} onChange={(e) => handleInstrumentParamChange(track.id, 'modIndex', Number(e.target.value))} className="w-full h-2 bg-black rounded-full appearance-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:bg-teal-400 [&::-webkit-slider-thumb]:rounded-full cursor-pointer" />
+                           <input type="range" min="0" max="20" step="0.1" value={track.instrumentParams?.modIndex || 5} onChange={(e) => handleInstrumentParamChange(track.id, 'modIndex', Number(e.target.value))} className="w-full h-2 bg-black rounded-full appearance-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:bg-teal-400 [&::-webkit-slider-thumb]:rounded-full cursor-pointer transition-all" />
                            <span className="text-[10px] font-mono mt-2 text-teal-400">{track.instrumentParams?.modIndex || 5}</span>
                          </div>
                        </div>
                     </div>
-                    <div className="flex-1 bg-neutral-950/50 rounded-lg border border-neutral-700/50 p-4 flex flex-col items-center justify-between">
+                    <div className="flex-1 bg-neutral-950/50 rounded-xl border border-neutral-700/50 p-4 flex flex-col items-center justify-between shadow-inner">
                        <h4 className="text-[10px] text-neutral-400 uppercase tracking-widest font-bold mb-4">Amplifier Envelope</h4>
                        <div className="w-full flex flex-col gap-6">
-                         <div className="flex flex-col items-center bg-neutral-900 border border-neutral-800 p-2 rounded">
+                         <div className="flex flex-col items-center bg-neutral-900 border border-neutral-800 p-3 rounded-lg">
                            <span className="text-[9px] text-neutral-400 mb-2">ATTACK</span>
-                           <input type="range" min="0.001" max="2" step="0.01" value={track.instrumentParams?.attack || 0.01} onChange={(e) => handleInstrumentParamChange(track.id, 'attack', Number(e.target.value))} className="w-full h-1.5 bg-black rounded-full appearance-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:bg-teal-400 [&::-webkit-slider-thumb]:rounded-full cursor-pointer" />
+                           <input type="range" min="0.001" max="2" step="0.01" value={track.instrumentParams?.attack || 0.01} onChange={(e) => handleInstrumentParamChange(track.id, 'attack', Number(e.target.value))} className="w-full h-1.5 bg-black rounded-full appearance-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:bg-teal-400 [&::-webkit-slider-thumb]:rounded-full cursor-pointer transition-all" />
                          </div>
-                         <div className="flex flex-col items-center bg-neutral-900 border border-neutral-800 p-2 rounded">
+                         <div className="flex flex-col items-center bg-neutral-900 border border-neutral-800 p-3 rounded-lg">
                            <span className="text-[9px] text-neutral-400 mb-2">RELEASE</span>
-                           <input type="range" min="0.01" max="5" step="0.01" value={track.instrumentParams?.release || 0.2} onChange={(e) => handleInstrumentParamChange(track.id, 'release', Number(e.target.value))} className="w-full h-1.5 bg-black rounded-full appearance-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:bg-teal-400 [&::-webkit-slider-thumb]:rounded-full cursor-pointer" />
+                           <input type="range" min="0.01" max="5" step="0.01" value={track.instrumentParams?.release || 0.2} onChange={(e) => handleInstrumentParamChange(track.id, 'release', Number(e.target.value))} className="w-full h-1.5 bg-black rounded-full appearance-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:bg-teal-400 [&::-webkit-slider-thumb]:rounded-full cursor-pointer transition-all" />
                          </div>
                        </div>
                     </div>
                   </div>
                 ) : track.instrument === 'inst-supersaw' ? (
                   <div className="flex gap-6 h-full p-6 bg-gradient-to-b from-neutral-800 to-neutral-900">
-                    <div className="flex-1 bg-neutral-950/50 rounded-lg border border-neutral-700/50 p-4 flex flex-col items-center justify-between">
+                    <div className="flex-1 bg-neutral-950/50 rounded-xl border border-neutral-700/50 p-4 flex flex-col items-center justify-between shadow-inner">
                        <h4 className="text-[10px] text-neutral-400 uppercase tracking-widest font-bold mb-4">Supersaw Engine</h4>
                        <div className="w-full flex flex-col gap-6">
-                         <div className="flex flex-col items-center bg-neutral-900 border border-neutral-800 p-4 rounded text-center">
+                         <div className="flex flex-col items-center bg-neutral-900 border border-neutral-800 p-4 rounded-lg text-center">
                            <span className="text-[11px] text-white mb-2">DETUNE SPREAD (cents)</span>
-                           <input type="range" min="0" max="100" step="1" value={track.instrumentParams?.detune || 25} onChange={(e) => handleInstrumentParamChange(track.id, 'detune', Number(e.target.value))} className="w-full h-2 bg-black rounded-full appearance-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:bg-blue-400 [&::-webkit-slider-thumb]:rounded-full cursor-pointer" />
+                           <input type="range" min="0" max="100" step="1" value={track.instrumentParams?.detune || 25} onChange={(e) => handleInstrumentParamChange(track.id, 'detune', Number(e.target.value))} className="w-full h-2 bg-black rounded-full appearance-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:bg-blue-400 [&::-webkit-slider-thumb]:rounded-full cursor-pointer transition-all" />
                            <span className="text-[10px] font-mono mt-2 text-blue-400">{track.instrumentParams?.detune || 25}</span>
                          </div>
                        </div>
                     </div>
-                    <div className="flex-1 bg-neutral-950/50 rounded-lg border border-neutral-700/50 p-4 flex flex-col items-center justify-between">
+                    <div className="flex-1 bg-neutral-950/50 rounded-xl border border-neutral-700/50 p-4 flex flex-col items-center justify-between shadow-inner">
                        <h4 className="text-[10px] text-neutral-400 uppercase tracking-widest font-bold mb-4">Amplifier Envelope</h4>
                        <div className="w-full flex flex-col gap-6">
-                         <div className="flex flex-col items-center bg-neutral-900 border border-neutral-800 p-2 rounded">
+                         <div className="flex flex-col items-center bg-neutral-900 border border-neutral-800 p-3 rounded-lg">
                            <span className="text-[9px] text-neutral-400 mb-2">ATTACK (s)</span>
-                           <input type="range" min="0.001" max="2" step="0.01" value={track.instrumentParams?.attack || 0.05} onChange={(e) => handleInstrumentParamChange(track.id, 'attack', Number(e.target.value))} className="w-full h-1.5 bg-black rounded-full appearance-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:bg-blue-400 [&::-webkit-slider-thumb]:rounded-full cursor-pointer" />
+                           <input type="range" min="0.001" max="2" step="0.01" value={track.instrumentParams?.attack || 0.05} onChange={(e) => handleInstrumentParamChange(track.id, 'attack', Number(e.target.value))} className="w-full h-1.5 bg-black rounded-full appearance-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:bg-blue-400 [&::-webkit-slider-thumb]:rounded-full cursor-pointer transition-all" />
                          </div>
-                         <div className="flex flex-col items-center bg-neutral-900 border border-neutral-800 p-2 rounded">
+                         <div className="flex flex-col items-center bg-neutral-900 border border-neutral-800 p-3 rounded-lg">
                            <span className="text-[9px] text-neutral-400 mb-2">RELEASE (s)</span>
-                           <input type="range" min="0.01" max="5" step="0.01" value={track.instrumentParams?.release || 0.5} onChange={(e) => handleInstrumentParamChange(track.id, 'release', Number(e.target.value))} className="w-full h-1.5 bg-black rounded-full appearance-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:bg-blue-400 [&::-webkit-slider-thumb]:rounded-full cursor-pointer" />
+                           <input type="range" min="0.01" max="5" step="0.01" value={track.instrumentParams?.release || 0.5} onChange={(e) => handleInstrumentParamChange(track.id, 'release', Number(e.target.value))} className="w-full h-1.5 bg-black rounded-full appearance-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:bg-blue-400 [&::-webkit-slider-thumb]:rounded-full cursor-pointer transition-all" />
                          </div>
                        </div>
                     </div>
                   </div>
                 ) : track.instrument === 'inst-pluck' ? (
                   <div className="flex gap-6 h-full p-6 bg-gradient-to-b from-neutral-800 to-neutral-900">
-                    <div className="flex-1 bg-neutral-950/50 rounded-lg border border-neutral-700/50 p-4 flex flex-col items-center justify-between">
+                    <div className="flex-1 bg-neutral-950/50 rounded-xl border border-neutral-700/50 p-4 flex flex-col items-center justify-between shadow-inner">
                        <h4 className="text-[10px] text-neutral-400 uppercase tracking-widest font-bold mb-4">Physical Modeling (Karplus-Strong)</h4>
                        <div className="w-full flex flex-col gap-6">
-                         <div className="flex flex-col items-center bg-neutral-900 border border-neutral-800 p-4 rounded text-center">
+                         <div className="flex flex-col items-center bg-neutral-900 border border-neutral-800 p-4 rounded-lg text-center">
                            <span className="text-[11px] text-white mb-2">DAMPING (Hz)</span>
-                           <input type="range" min="500" max="10000" step="10" value={track.instrumentParams?.damping || 4000} onChange={(e) => handleInstrumentParamChange(track.id, 'damping', Number(e.target.value))} className="w-full h-2 bg-black rounded-full appearance-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:bg-orange-400 [&::-webkit-slider-thumb]:rounded-full cursor-pointer" />
+                           <input type="range" min="500" max="10000" step="10" value={track.instrumentParams?.damping || 4000} onChange={(e) => handleInstrumentParamChange(track.id, 'damping', Number(e.target.value))} className="w-full h-2 bg-black rounded-full appearance-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:bg-orange-400 [&::-webkit-slider-thumb]:rounded-full cursor-pointer transition-all" />
                            <span className="text-[10px] font-mono mt-2 text-orange-400">{track.instrumentParams?.damping || 4000}</span>
                          </div>
-                         <div className="flex flex-col items-center bg-neutral-900 border border-neutral-800 p-4 rounded text-center">
+                         <div className="flex flex-col items-center bg-neutral-900 border border-neutral-800 p-4 rounded-lg text-center">
                            <span className="text-[11px] text-white mb-2">DECAY (Feedback Ring)</span>
-                           <input type="range" min="0.8" max="0.99" step="0.01" value={track.instrumentParams?.decay || 0.95} onChange={(e) => handleInstrumentParamChange(track.id, 'decay', Number(e.target.value))} className="w-full h-2 bg-black rounded-full appearance-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:bg-orange-400 [&::-webkit-slider-thumb]:rounded-full cursor-pointer" />
+                           <input type="range" min="0.8" max="0.99" step="0.01" value={track.instrumentParams?.decay || 0.95} onChange={(e) => handleInstrumentParamChange(track.id, 'decay', Number(e.target.value))} className="w-full h-2 bg-black rounded-full appearance-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:bg-orange-400 [&::-webkit-slider-thumb]:rounded-full cursor-pointer transition-all" />
                            <span className="text-[10px] font-mono mt-2 text-orange-400">{track.instrumentParams?.decay || 0.95}</span>
                          </div>
                        </div>
@@ -4303,72 +4360,72 @@ export default function App() {
                   </div>
                 ) : track.instrument === 'inst-acid' ? (
                   <div className="flex gap-6 h-full p-6 bg-gradient-to-b from-neutral-800 to-neutral-900">
-                    <div className="w-48 bg-neutral-950/50 rounded-lg border border-neutral-700/50 p-4 flex flex-col items-center">
+                    <div className="w-48 bg-neutral-950/50 rounded-xl border border-neutral-700/50 p-4 flex flex-col items-center shadow-inner">
                        <h4 className="text-[10px] text-neutral-400 uppercase tracking-widest font-bold mb-4">Oscillator</h4>
                        <select 
                          value={track.instrumentParams?.oscType || 'square'} 
                          onChange={(e) => handleInstrumentParamChange(track.id, 'oscType', e.target.value)}
-                         className="bg-neutral-800 border border-green-900 text-green-400 font-bold text-sm rounded px-3 py-2 outline-none cursor-pointer w-full mb-4"
+                         className="bg-neutral-800 border border-green-900 text-green-400 font-bold text-sm rounded-lg px-3 py-2 outline-none cursor-pointer w-full mb-4"
                        >
                          <option value="sawtooth">Sawtooth</option>
                          <option value="square">Square</option>
                        </select>
                     </div>
-                    <div className="flex-1 bg-neutral-950/50 rounded-lg border border-neutral-700/50 p-4 flex flex-col items-center justify-between">
+                    <div className="flex-1 bg-neutral-950/50 rounded-xl border border-neutral-700/50 p-4 flex flex-col items-center justify-between shadow-inner">
                        <h4 className="text-[10px] text-neutral-400 uppercase tracking-widest font-bold mb-4 text-green-400">303 Squelch Filter</h4>
                        <div className="w-full flex gap-4 h-32">
-                         <div className="flex-1 flex flex-col items-center bg-neutral-900 border border-neutral-800 p-2 rounded">
+                         <div className="flex-1 flex flex-col items-center bg-neutral-900 border border-neutral-800 p-2 rounded-lg">
                            <span className="text-[9px] text-neutral-400 mb-2">CUTOFF</span>
-                           <input type="range" min="50" max="1000" orient="vertical" value={track.instrumentParams?.cutoff || 150} onChange={(e) => handleInstrumentParamChange(track.id, 'cutoff', Number(e.target.value))} className="w-full h-full bg-black rounded-full appearance-none cursor-pointer" style={{ WebkitAppearance: 'slider-vertical' }} />
+                           <input type="range" min="50" max="1000" orient="vertical" value={track.instrumentParams?.cutoff || 150} onChange={(e) => handleInstrumentParamChange(track.id, 'cutoff', Number(e.target.value))} className="w-full h-full bg-black rounded-full appearance-none cursor-pointer transition-all" style={{ WebkitAppearance: 'slider-vertical' }} />
                          </div>
-                         <div className="flex-1 flex flex-col items-center bg-neutral-900 border border-neutral-800 p-2 rounded">
+                         <div className="flex-1 flex flex-col items-center bg-neutral-900 border border-neutral-800 p-2 rounded-lg">
                            <span className="text-[9px] text-neutral-400 mb-2">RES</span>
-                           <input type="range" min="1" max="20" step="0.1" orient="vertical" value={track.instrumentParams?.res || 5} onChange={(e) => handleInstrumentParamChange(track.id, 'res', Number(e.target.value))} className="w-full h-full bg-black rounded-full appearance-none cursor-pointer" style={{ WebkitAppearance: 'slider-vertical' }} />
+                           <input type="range" min="1" max="20" step="0.1" orient="vertical" value={track.instrumentParams?.res || 5} onChange={(e) => handleInstrumentParamChange(track.id, 'res', Number(e.target.value))} className="w-full h-full bg-black rounded-full appearance-none cursor-pointer transition-all" style={{ WebkitAppearance: 'slider-vertical' }} />
                          </div>
-                         <div className="flex-1 flex flex-col items-center bg-neutral-900 border border-neutral-800 p-2 rounded">
+                         <div className="flex-1 flex flex-col items-center bg-neutral-900 border border-neutral-800 p-2 rounded-lg">
                            <span className="text-[9px] text-neutral-400 mb-2">ENV MOD</span>
-                           <input type="range" min="0" max="5000" step="10" orient="vertical" value={track.instrumentParams?.envMod || 2500} onChange={(e) => handleInstrumentParamChange(track.id, 'envMod', Number(e.target.value))} className="w-full h-full bg-black rounded-full appearance-none cursor-pointer" style={{ WebkitAppearance: 'slider-vertical' }} />
+                           <input type="range" min="0" max="5000" step="10" orient="vertical" value={track.instrumentParams?.envMod || 2500} onChange={(e) => handleInstrumentParamChange(track.id, 'envMod', Number(e.target.value))} className="w-full h-full bg-black rounded-full appearance-none cursor-pointer transition-all" style={{ WebkitAppearance: 'slider-vertical' }} />
                          </div>
-                         <div className="flex-1 flex flex-col items-center bg-neutral-900 border border-neutral-800 p-2 rounded">
+                         <div className="flex-1 flex flex-col items-center bg-neutral-900 border border-neutral-800 p-2 rounded-lg">
                            <span className="text-[9px] text-neutral-400 mb-2">DECAY</span>
-                           <input type="range" min="0.05" max="1.5" step="0.01" orient="vertical" value={track.instrumentParams?.decay || 0.3} onChange={(e) => handleInstrumentParamChange(track.id, 'decay', Number(e.target.value))} className="w-full h-full bg-black rounded-full appearance-none cursor-pointer" style={{ WebkitAppearance: 'slider-vertical' }} />
+                           <input type="range" min="0.05" max="1.5" step="0.01" orient="vertical" value={track.instrumentParams?.decay || 0.3} onChange={(e) => handleInstrumentParamChange(track.id, 'decay', Number(e.target.value))} className="w-full h-full bg-black rounded-full appearance-none cursor-pointer transition-all" style={{ WebkitAppearance: 'slider-vertical' }} />
                          </div>
                        </div>
                     </div>
                   </div>
                 ) : track.instrument === 'inst-organ' ? (
                   <div className="flex gap-6 h-full p-6 bg-gradient-to-b from-neutral-800 to-neutral-900">
-                    <div className="flex-1 bg-neutral-950/50 rounded-lg border border-neutral-700/50 p-4 flex flex-col items-center justify-between">
+                    <div className="flex-1 bg-neutral-950/50 rounded-xl border border-neutral-700/50 p-4 flex flex-col items-center justify-between shadow-inner">
                        <h4 className="text-[10px] text-neutral-400 uppercase tracking-widest font-bold mb-4">Tonewheel Drawbars</h4>
                        <div className="w-full flex justify-center gap-6 h-32">
-                         <div className="flex flex-col items-center bg-neutral-900 border border-neutral-800 p-2 rounded w-16">
+                         <div className="flex flex-col items-center bg-neutral-900 border border-neutral-800 p-2 rounded-lg w-16">
                            <span className="text-[9px] text-neutral-400 mb-2 font-bold">16' (SUB)</span>
-                           <input type="range" min="0" max="1" step="0.01" orient="vertical" value={track.instrumentParams?.sub || 0.8} onChange={(e) => handleInstrumentParamChange(track.id, 'sub', Number(e.target.value))} className="w-full h-full bg-black rounded-sm appearance-none cursor-pointer [&::-webkit-slider-thumb]:bg-red-500 [&::-webkit-slider-thumb]:rounded-none" style={{ WebkitAppearance: 'slider-vertical' }} />
+                           <input type="range" min="0" max="1" step="0.01" orient="vertical" value={track.instrumentParams?.sub || 0.8} onChange={(e) => handleInstrumentParamChange(track.id, 'sub', Number(e.target.value))} className="w-full h-full bg-black rounded-sm appearance-none cursor-pointer [&::-webkit-slider-thumb]:bg-red-500 [&::-webkit-slider-thumb]:rounded-none transition-all" style={{ WebkitAppearance: 'slider-vertical' }} />
                          </div>
-                         <div className="flex flex-col items-center bg-neutral-900 border border-neutral-800 p-2 rounded w-16">
+                         <div className="flex flex-col items-center bg-neutral-900 border border-neutral-800 p-2 rounded-lg w-16">
                            <span className="text-[9px] text-neutral-400 mb-2 font-bold">8' (FUND)</span>
-                           <input type="range" min="0" max="1" step="0.01" orient="vertical" value={track.instrumentParams?.fund || 1.0} onChange={(e) => handleInstrumentParamChange(track.id, 'fund', Number(e.target.value))} className="w-full h-full bg-black rounded-sm appearance-none cursor-pointer [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:rounded-none" style={{ WebkitAppearance: 'slider-vertical' }} />
+                           <input type="range" min="0" max="1" step="0.01" orient="vertical" value={track.instrumentParams?.fund || 1.0} onChange={(e) => handleInstrumentParamChange(track.id, 'fund', Number(e.target.value))} className="w-full h-full bg-black rounded-sm appearance-none cursor-pointer [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:rounded-none transition-all" style={{ WebkitAppearance: 'slider-vertical' }} />
                          </div>
-                         <div className="flex flex-col items-center bg-neutral-900 border border-neutral-800 p-2 rounded w-16">
+                         <div className="flex flex-col items-center bg-neutral-900 border border-neutral-800 p-2 rounded-lg w-16">
                            <span className="text-[9px] text-neutral-400 mb-2 font-bold">5 1/3' (5th)</span>
-                           <input type="range" min="0" max="1" step="0.01" orient="vertical" value={track.instrumentParams?.fifth || 0.6} onChange={(e) => handleInstrumentParamChange(track.id, 'fifth', Number(e.target.value))} className="w-full h-full bg-black rounded-sm appearance-none cursor-pointer [&::-webkit-slider-thumb]:bg-black [&::-webkit-slider-thumb]:border [&::-webkit-slider-thumb]:border-white [&::-webkit-slider-thumb]:rounded-none" style={{ WebkitAppearance: 'slider-vertical' }} />
+                           <input type="range" min="0" max="1" step="0.01" orient="vertical" value={track.instrumentParams?.fifth || 0.6} onChange={(e) => handleInstrumentParamChange(track.id, 'fifth', Number(e.target.value))} className="w-full h-full bg-black rounded-sm appearance-none cursor-pointer [&::-webkit-slider-thumb]:bg-black [&::-webkit-slider-thumb]:border [&::-webkit-slider-thumb]:border-white [&::-webkit-slider-thumb]:rounded-none transition-all" style={{ WebkitAppearance: 'slider-vertical' }} />
                          </div>
-                         <div className="flex flex-col items-center bg-neutral-900 border border-neutral-800 p-2 rounded w-16">
+                         <div className="flex flex-col items-center bg-neutral-900 border border-neutral-800 p-2 rounded-lg w-16">
                            <span className="text-[9px] text-neutral-400 mb-2 font-bold">4' (OCT)</span>
-                           <input type="range" min="0" max="1" step="0.01" orient="vertical" value={track.instrumentParams?.oct || 0.4} onChange={(e) => handleInstrumentParamChange(track.id, 'oct', Number(e.target.value))} className="w-full h-full bg-black rounded-sm appearance-none cursor-pointer [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:rounded-none" style={{ WebkitAppearance: 'slider-vertical' }} />
+                           <input type="range" min="0" max="1" step="0.01" orient="vertical" value={track.instrumentParams?.oct || 0.4} onChange={(e) => handleInstrumentParamChange(track.id, 'oct', Number(e.target.value))} className="w-full h-full bg-black rounded-sm appearance-none cursor-pointer [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:rounded-none transition-all" style={{ WebkitAppearance: 'slider-vertical' }} />
                          </div>
                        </div>
                     </div>
                   </div>
                 ) : track.instrument === 'inst-sampler' ? (
                   <div className="flex gap-6 h-full p-6 bg-gradient-to-b from-neutral-800 to-neutral-900">
-                     <div className="flex-1 bg-neutral-950/50 rounded-lg border border-neutral-700/50 p-4 flex flex-col justify-between">
+                     <div className="flex-1 bg-neutral-950/50 rounded-xl border border-neutral-700/50 p-4 flex flex-col justify-between shadow-inner">
                        <h4 className="text-[10px] text-neutral-400 uppercase tracking-widest font-bold mb-4 text-center">Digital Sampler</h4>
                        
-                       <div className="flex-1 flex flex-col items-center justify-center border-2 border-dashed border-neutral-700 rounded-lg bg-neutral-900 mx-4 mb-4 relative group overflow-hidden">
+                       <div className="flex-1 flex flex-col items-center justify-center border-2 border-dashed border-neutral-700 rounded-xl bg-neutral-900 mx-4 mb-4 relative group overflow-hidden">
                            {track.instrumentParams?.sampleId && globalAudioBufferCache.has(track.instrumentParams.sampleId) ? (
                               <div className="absolute inset-0 flex items-center justify-center p-2 opacity-80 group-hover:opacity-100 transition-opacity">
-                                  <svg preserveAspectRatio="none" viewBox="0 0 100 100" className="w-full h-full text-blue-500">
+                                  <svg preserveAspectRatio="none" viewBox="0 0 100 100" className="w-full h-full text-blue-500 drop-shadow-[0_0_5px_rgba(59,130,246,0.5)]">
                                       {globalAudioBufferCache.get(track.instrumentParams.sampleId).peaks.map((p, i) => (
                                           <line key={i} x1={i} y1={50 - (p[1]*40)} x2={i} y2={50 - (p[0]*40)} stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
                                       ))}
@@ -4378,7 +4435,7 @@ export default function App() {
                               <Activity size={48} className="text-neutral-700 absolute opacity-30 group-hover:opacity-50 transition-opacity" />
                            )}
                            
-                           <label className="z-10 cursor-pointer bg-neutral-800 hover:bg-neutral-700 text-white text-[10px] px-3 py-1.5 rounded font-bold uppercase tracking-wider border border-neutral-600 shadow-lg transition-colors">
+                           <label className="z-10 cursor-pointer bg-neutral-800 hover:bg-neutral-700 text-white text-[10px] px-3 py-1.5 rounded-lg font-bold uppercase tracking-wider border border-neutral-600 shadow-lg transition-colors">
                               {track.instrumentParams?.sampleId ? 'Replace Sample' : 'Upload Audio File'}
                               <input type="file" accept="audio/*" hidden onChange={(e) => handleSampleUpload(e, track.id, 'sampleId')} />
                            </label>
@@ -4386,27 +4443,27 @@ export default function App() {
 
                        {track.instrumentParams?.sampleId && globalAudioBufferCache.has(track.instrumentParams.sampleId) && (
                          <div className="px-4 mb-4 flex gap-4">
-                            <div className="flex-1 flex flex-col items-center bg-neutral-900 border border-neutral-800 p-2 rounded text-center">
+                            <div className="flex-1 flex flex-col items-center bg-neutral-900 border border-neutral-800 p-3 rounded-lg text-center">
                               <span className="text-[9px] text-white mb-2">TRIM START (s)</span>
-                              <input type="range" min="0" max={globalAudioBufferCache.get(track.instrumentParams.sampleId).duration} step="0.01" value={track.instrumentParams?.sampleStart || 0} onChange={(e) => handleInstrumentParamChange(track.id, 'sampleStart', Number(e.target.value))} className="w-full h-1.5 bg-black rounded-full appearance-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-blue-400 [&::-webkit-slider-thumb]:rounded-full cursor-pointer" />
+                              <input type="range" min="0" max={globalAudioBufferCache.get(track.instrumentParams.sampleId).duration} step="0.01" value={track.instrumentParams?.sampleStart || 0} onChange={(e) => handleInstrumentParamChange(track.id, 'sampleStart', Number(e.target.value))} className="w-full h-1.5 bg-black rounded-full appearance-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-blue-400 [&::-webkit-slider-thumb]:rounded-full cursor-pointer transition-all" />
                             </div>
-                            <div className="flex-1 flex flex-col items-center bg-neutral-900 border border-neutral-800 p-2 rounded text-center">
+                            <div className="flex-1 flex flex-col items-center bg-neutral-900 border border-neutral-800 p-3 rounded-lg text-center">
                               <span className="text-[9px] text-white mb-2">TRIM END (s)</span>
-                              <input type="range" min="0" max={globalAudioBufferCache.get(track.instrumentParams.sampleId).duration} step="0.01" value={track.instrumentParams?.sampleEnd || globalAudioBufferCache.get(track.instrumentParams.sampleId).duration} onChange={(e) => handleInstrumentParamChange(track.id, 'sampleEnd', Number(e.target.value))} className="w-full h-1.5 bg-black rounded-full appearance-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-blue-400 [&::-webkit-slider-thumb]:rounded-full cursor-pointer" />
+                              <input type="range" min="0" max={globalAudioBufferCache.get(track.instrumentParams.sampleId).duration} step="0.01" value={track.instrumentParams?.sampleEnd || globalAudioBufferCache.get(track.instrumentParams.sampleId).duration} onChange={(e) => handleInstrumentParamChange(track.id, 'sampleEnd', Number(e.target.value))} className="w-full h-1.5 bg-black rounded-full appearance-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-blue-400 [&::-webkit-slider-thumb]:rounded-full cursor-pointer transition-all" />
                             </div>
                          </div>
                        )}
 
-                       <div className="flex flex-col items-center bg-neutral-900 border border-neutral-800 p-4 rounded text-center mx-4">
+                       <div className="flex flex-col items-center bg-neutral-900 border border-neutral-800 p-4 rounded-lg text-center mx-4">
                            <span className="text-[11px] text-white mb-2">GLOBAL PITCH SHIFT</span>
-                           <input type="range" min="0.1" max="4" step="0.01" value={track.instrumentParams?.pitchShift || 1} onChange={(e) => handleInstrumentParamChange(track.id, 'pitchShift', Number(e.target.value))} className="w-full h-2 bg-black rounded-full appearance-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:bg-purple-500 [&::-webkit-slider-thumb]:rounded-full cursor-pointer" />
+                           <input type="range" min="0.1" max="4" step="0.01" value={track.instrumentParams?.pitchShift || 1} onChange={(e) => handleInstrumentParamChange(track.id, 'pitchShift', Number(e.target.value))} className="w-full h-2 bg-black rounded-full appearance-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:bg-purple-500 [&::-webkit-slider-thumb]:rounded-full cursor-pointer transition-all" />
                            <span className="text-[10px] font-mono mt-2 text-purple-400">x{track.instrumentParams?.pitchShift || 1}</span>
                        </div>
                      </div>
                   </div>
                 ) : (
                   <div className="flex gap-6 h-full p-6 bg-gradient-to-b from-neutral-800 to-neutral-900">
-                     <div className="flex-1 bg-neutral-950/50 rounded-lg border border-neutral-700/50 p-4 flex flex-col min-w-0">
+                     <div className="flex-1 bg-neutral-950/50 rounded-xl border border-neutral-700/50 p-4 flex flex-col min-w-0 shadow-inner">
                        <h4 className="text-[10px] text-neutral-400 uppercase tracking-widest font-bold mb-4 text-center shrink-0">Drum Machine / Custom Sampler</h4>
                        <div className="flex gap-4 overflow-x-auto pb-4 w-full custom-scrollbar items-end h-full">
                          
@@ -4415,19 +4472,19 @@ export default function App() {
                              return (
                              <div key={pitch} className="flex flex-col items-center gap-3 w-28 shrink-0 relative group">
                                <button onClick={() => handleRemoveDrumPad(track.id, pitch)} className="absolute -top-2 -right-2 p-1 bg-red-500 hover:bg-red-400 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity z-10 shadow-lg"><X size={10} /></button>
-                               <div className="text-[11px] font-bold text-white bg-neutral-800 px-2 py-1 rounded w-full text-center truncate">{pad.name}</div>
+                               <div className="text-[11px] font-bold text-white bg-neutral-800 px-2 py-1 rounded w-full text-center truncate shadow-sm">{pad.name}</div>
                                {!pad.sampleId ? (
-                                   <div className="flex flex-col w-full h-24 items-center justify-end pb-2">
+                                   <div className="flex flex-col w-full h-24 items-center justify-end pb-2 bg-neutral-900/50 rounded-lg">
                                      <span className="text-[9px] text-neutral-500 font-mono mb-1">TUNE/DECAY</span>
-                                     <input type="range" min="50" max="1000" orient="vertical" value={pad.tune || (pad.decay ? pad.decay * 1000 : 150)} onChange={(e) => handleDrumParamChange(track.id, pitch, pad.tune !== undefined ? 'tune' : 'decay', pad.tune !== undefined ? Number(e.target.value) : Number(e.target.value)/1000)} className="h-16 w-full appearance-none bg-transparent cursor-pointer relative z-10" style={{ WebkitAppearance: 'slider-vertical' }} />
+                                     <input type="range" min="50" max="1000" orient="vertical" value={pad.tune || (pad.decay ? pad.decay * 1000 : 150)} onChange={(e) => handleDrumParamChange(track.id, pitch, pad.tune !== undefined ? 'tune' : 'decay', pad.tune !== undefined ? Number(e.target.value) : Number(e.target.value)/1000)} className="h-16 w-full appearance-none bg-transparent cursor-pointer relative z-10 transition-all" style={{ WebkitAppearance: 'slider-vertical' }} />
                                      <span className="text-[10px] text-orange-400 font-mono mt-1 font-bold">{pitch}</span>
                                    </div>
                                ) : (
-                                   <div className="h-24 w-full flex flex-col justify-center items-center opacity-60 relative group">
+                                   <div className="h-24 w-full flex flex-col justify-center items-center opacity-60 relative group bg-neutral-900/50 rounded-lg">
                                        <Activity size={24} className="text-blue-400" />
                                        <span className="text-[8px] mt-2 font-mono text-center">CUSTOM</span>
                                        <span className="text-[10px] font-mono mt-1 font-bold text-orange-400">{pitch}</span>
-                                       <button onClick={() => handleDrumParamChange(track.id, pitch, 'sampleId', null)} className="absolute top-0 right-0 p-1 bg-red-500/80 rounded opacity-0 group-hover:opacity-100"><X size={10} className="text-white"/></button>
+                                       <button onClick={() => handleDrumParamChange(track.id, pitch, 'sampleId', null)} className="absolute top-1 right-1 p-1 bg-red-500/80 hover:bg-red-500 rounded opacity-0 group-hover:opacity-100 transition-colors"><X size={10} className="text-white"/></button>
                                    </div>
                                )}
                                <div className="flex gap-1 w-full justify-center">
@@ -4442,11 +4499,11 @@ export default function App() {
                          })}
 
                          {/* Add Custom Pad Form */}
-                         <div className="flex flex-col items-center gap-2 w-32 shrink-0 bg-neutral-900/50 p-3 rounded-lg border border-dashed border-neutral-700 justify-center h-48 ml-4">
+                         <div className="flex flex-col items-center gap-2 w-32 shrink-0 bg-neutral-900/50 p-3 rounded-xl border border-dashed border-neutral-700 justify-center h-48 ml-4">
                              <span className="text-[10px] font-bold text-neutral-400 text-center uppercase tracking-wider mb-2">Add Drum Pad</span>
                              <div className="w-full flex flex-col gap-1">
                                <label className="text-[8px] text-neutral-500">MIDI NOTE</label>
-                               <select value={newPadPitch} onChange={e => setNewPadPitch(Number(e.target.value))} className="w-full bg-neutral-950 text-xs text-white p-1.5 rounded border border-neutral-800 outline-none">
+                               <select value={newPadPitch} onChange={e => setNewPadPitch(Number(e.target.value))} className="w-full bg-neutral-950 text-xs text-white p-1.5 rounded border border-neutral-800 outline-none hover:border-neutral-600 transition-colors">
                                   {Array.from({length: PITCH_MAX - PITCH_MIN + 1}).map((_, i) => {
                                      const p = PITCH_MIN + i;
                                      return <option key={p} value={p}>{p} - {['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'][p%12]}{Math.floor(p/12)-2}</option>
@@ -4455,7 +4512,7 @@ export default function App() {
                              </div>
                              <div className="w-full flex flex-col gap-1 mt-1">
                                <label className="text-[8px] text-neutral-500">PAD NAME</label>
-                               <input type="text" value={newPadName} onChange={e => setNewPadName(e.target.value)} className="w-full bg-neutral-950 text-xs text-white p-1.5 rounded border border-neutral-800 outline-none placeholder:text-neutral-700" placeholder="e.g. Laser Zap" />
+                               <input type="text" value={newPadName} onChange={e => setNewPadName(e.target.value)} className="w-full bg-neutral-950 text-xs text-white p-1.5 rounded border border-neutral-800 outline-none placeholder:text-neutral-700 focus:border-blue-500 transition-colors" placeholder="e.g. Laser Zap" />
                              </div>
                              <button onClick={() => { handleAddDrumPad(track.id); setNewPadName(''); }} className="w-full bg-neutral-800 hover:bg-neutral-700 text-[10px] text-white py-2 font-bold uppercase tracking-wider rounded mt-auto transition-colors border border-neutral-700">Add Pad</button>
                          </div>
@@ -4471,40 +4528,43 @@ export default function App() {
 
       {/* --- Context Menu --- */}
       {contextMenu && (
-        <div 
-          className="fixed z-50 bg-neutral-800 border border-neutral-700 rounded-lg shadow-2xl py-1 min-w-[160px] text-sm font-medium text-neutral-200 animate-in fade-in zoom-in-95 duration-100"
-          style={{ left: Math.min(contextMenu.x, window.innerWidth - 160), top: Math.min(contextMenu.y, window.innerHeight - 200) }}
-        >
-          {contextMenu.type === 'clip' && (
-             <>
-               <button onClick={(e) => { e.stopPropagation(); duplicateClip(contextMenu.payload.trackId, contextMenu.payload.clipId); setContextMenu(null); }} className="w-full text-left px-4 py-2 hover:bg-blue-600 hover:text-white transition-colors flex items-center gap-2"><Repeat size={14} /> Duplicate Clip</button>
-               <button onClick={(e) => { e.stopPropagation(); handleDeleteClip(e, contextMenu.payload.trackId, contextMenu.payload.clipId); setContextMenu(null); }} className="w-full text-left px-4 py-2 hover:bg-red-600 hover:text-white transition-colors flex items-center gap-2"><Trash2 size={14} /> Delete Clip</button>
-             </>
-          )}
-          {contextMenu.type === 'note' && (
-             <>
-               <button onClick={(e) => { e.stopPropagation(); deleteNote(contextMenu.payload.trackId, contextMenu.payload.clipId, contextMenu.payload.noteId); setContextMenu(null); }} className="w-full text-left px-4 py-2 hover:bg-red-600 hover:text-white transition-colors flex items-center gap-2"><Trash2 size={14} /> Delete Note</button>
-             </>
-          )}
-          {contextMenu.type === 'effect' && (
-             <>
-               <button onClick={(e) => { e.stopPropagation(); handleRemoveEffect(contextMenu.payload.trackId, contextMenu.payload.fxId); setContextMenu(null); }} className="w-full text-left px-4 py-2 hover:bg-red-600 hover:text-white transition-colors flex items-center gap-2"><Trash2 size={14} /> Remove Effect</button>
-             </>
-          )}
-          {contextMenu.type === 'track' && (
-             <>
-               <button onClick={(e) => { e.stopPropagation(); duplicateClip(contextMenu.payload.trackId, Date.now()); setContextMenu(null); }} className="w-full text-left px-4 py-2 hover:bg-blue-600 hover:text-white transition-colors flex items-center gap-2"><Repeat size={14} /> Duplicate Track</button>
-               <button onClick={(e) => { e.stopPropagation(); handleDeleteTrack(contextMenu.payload.trackId); setContextMenu(null); }} className="w-full text-left px-4 py-2 hover:bg-red-600 hover:text-white transition-colors flex items-center gap-2 text-red-400"><Trash2 size={14} /> Delete Track</button>
-             </>
-          )}
-        </div>
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setContextMenu(null)} onContextMenu={(e) => { e.preventDefault(); setContextMenu(null); }} />
+          <div 
+            className="fixed z-50 bg-neutral-800/95 backdrop-blur-md border border-neutral-700 rounded-xl shadow-2xl py-1 min-w-[160px] text-sm font-medium text-neutral-200 animate-in fade-in zoom-in-95 duration-100"
+            style={{ left: Math.min(contextMenu.x, window.innerWidth - 160), top: Math.min(contextMenu.y, window.innerHeight - 200) }}
+          >
+            {contextMenu.type === 'clip' && (
+               <>
+                 <button onClick={(e) => { e.stopPropagation(); duplicateClip(contextMenu.payload.trackId, contextMenu.payload.clipId); setContextMenu(null); }} className="w-full text-left px-4 py-2 hover:bg-blue-600 hover:text-white transition-colors flex items-center gap-2"><Repeat size={14} /> Duplicate Clip</button>
+                 <button onClick={(e) => { e.stopPropagation(); handleDeleteClip(e, contextMenu.payload.trackId, contextMenu.payload.clipId); setContextMenu(null); }} className="w-full text-left px-4 py-2 hover:bg-red-600 hover:text-white transition-colors flex items-center gap-2"><Trash2 size={14} /> Delete Clip</button>
+               </>
+            )}
+            {contextMenu.type === 'note' && (
+               <>
+                 <button onClick={(e) => { e.stopPropagation(); deleteNote(contextMenu.payload.trackId, contextMenu.payload.clipId, contextMenu.payload.noteId); setContextMenu(null); }} className="w-full text-left px-4 py-2 hover:bg-red-600 hover:text-white transition-colors flex items-center gap-2"><Trash2 size={14} /> Delete Note</button>
+               </>
+            )}
+            {contextMenu.type === 'effect' && (
+               <>
+                 <button onClick={(e) => { e.stopPropagation(); handleRemoveEffect(contextMenu.payload.trackId, contextMenu.payload.fxId); setContextMenu(null); }} className="w-full text-left px-4 py-2 hover:bg-red-600 hover:text-white transition-colors flex items-center gap-2"><Trash2 size={14} /> Remove Effect</button>
+               </>
+            )}
+            {contextMenu.type === 'track' && (
+               <>
+                 <button onClick={(e) => { e.stopPropagation(); duplicateClip(contextMenu.payload.trackId, Date.now()); setContextMenu(null); }} className="w-full text-left px-4 py-2 hover:bg-blue-600 hover:text-white transition-colors flex items-center gap-2"><Repeat size={14} /> Duplicate Track</button>
+                 <button onClick={(e) => { e.stopPropagation(); handleDeleteTrack(contextMenu.payload.trackId); setContextMenu(null); }} className="w-full text-left px-4 py-2 hover:bg-red-600 hover:text-white transition-colors flex items-center gap-2 text-red-400"><Trash2 size={14} /> Delete Track</button>
+               </>
+            )}
+          </div>
+        </>
       )}
 
       {/* --- Global Settings Modal --- */}
       {showIOSettings && (
-         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
-           <div className="bg-neutral-900 border border-neutral-800 rounded-xl w-full max-w-md overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200">
-             <div className="px-6 py-4 border-b border-neutral-800 flex items-center justify-between bg-neutral-950">
+         <div className="fixed inset-0 bg-black/60 backdrop-blur-md z-[60] flex items-center justify-center p-4">
+           <div className="bg-neutral-900 border border-neutral-800 rounded-2xl w-full max-w-md overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200">
+             <div className="px-6 py-4 border-b border-neutral-800 flex items-center justify-between bg-neutral-950/80 backdrop-blur-md">
                <h2 className="text-lg font-semibold text-white flex items-center gap-2"><Settings2 size={18} className="text-neutral-400" /> Project & Settings</h2>
                <button onClick={() => setShowIOSettings(false)} className="text-neutral-500 hover:text-white transition-colors"><X size={18} /></button>
              </div>
@@ -4513,10 +4573,10 @@ export default function App() {
                 <div className="flex flex-col gap-3">
                    <label className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider border-b border-neutral-800 pb-1.5">Project Actions</label>
                    <div className="flex gap-3">
-                      <button onClick={() => { saveProjectToLocal(); setShowIOSettings(false); }} className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 hover:text-white text-xs font-bold rounded-lg transition-colors border border-neutral-700 shadow-sm">
+                      <button onClick={() => { saveProjectToLocal(); setShowIOSettings(false); }} className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 hover:text-white text-xs font-bold rounded-xl transition-all border border-neutral-700 shadow-sm active:scale-95">
                          <Save size={16} /> Local Save
                       </button>
-                      <button onClick={() => { exportProjectToFile(); setShowIOSettings(false); }} className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-lg transition-colors shadow-[0_0_10px_rgba(37,99,235,0.3)]">
+                      <button onClick={() => { exportProjectToFile(); setShowIOSettings(false); }} className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400 text-white text-xs font-bold rounded-xl transition-all shadow-[0_0_10px_rgba(37,99,235,0.3)] active:scale-95">
                          <Download size={16} /> Export .webdaw
                       </button>
                    </div>
@@ -4530,7 +4590,7 @@ export default function App() {
                       <select 
                         value={selectedAudioInput} 
                         onChange={e => setSelectedAudioInput(e.target.value)}
-                        className="bg-neutral-950 border border-neutral-800 text-sm text-white rounded-lg px-3 py-2.5 outline-none hover:border-neutral-600 transition-colors"
+                        className="bg-neutral-950 border border-neutral-800 text-sm text-white rounded-lg px-3 py-2.5 outline-none hover:border-neutral-600 transition-colors shadow-inner"
                       >
                         <option value="">Default System Microphone</option>
                         {audioInputs.map(input => (
@@ -4543,7 +4603,7 @@ export default function App() {
                       <select 
                         value={selectedMidiInput} 
                         onChange={e => setSelectedMidiInput(e.target.value)}
-                        className="bg-neutral-950 border border-neutral-800 text-sm text-white rounded-lg px-3 py-2.5 outline-none hover:border-neutral-600 transition-colors"
+                        className="bg-neutral-950 border border-neutral-800 text-sm text-white rounded-lg px-3 py-2.5 outline-none hover:border-neutral-600 transition-colors shadow-inner"
                       >
                         <option value="">All MIDI Inputs</option>
                         {midiInputs.map(input => (
@@ -4559,15 +4619,30 @@ export default function App() {
 
       {/* Global Processing Loader */}
       {isProcessingFile && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[100] flex flex-col items-center justify-center text-white animate-in fade-in duration-200">
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-[100] flex flex-col items-center justify-center text-white animate-in fade-in duration-200">
           <Activity size={48} className="animate-spin text-blue-500 mb-6 drop-shadow-[0_0_15px_rgba(59,130,246,0.8)]" />
           <h2 className="text-xl font-bold tracking-wider uppercase">Processing Project Archive</h2>
           <p className="text-neutral-400 mt-2 text-sm font-mono text-center max-w-sm">Packaging/Extracting assets and audio fragments. This may take a moment for large projects.</p>
         </div>
       )}
-
-      {/* Unified Auth Modal */}
-      {renderAuthModal()}
+      
+      {/* Custom Global Toast Notifications Container */}
+      <div className="fixed bottom-4 right-4 z-[110] flex flex-col gap-2 pointer-events-none">
+         {toasts.map(toast => (
+           <div key={toast.id} className="animate-in slide-in-from-right-4 fade-in duration-300">
+              <div className={`flex items-center gap-3 px-4 py-3 rounded-xl shadow-2xl backdrop-blur-md border ${
+                  toast.type === 'success' ? 'bg-green-500/10 border-green-500/20 text-green-400' :
+                  toast.type === 'error' ? 'bg-red-500/10 border-red-500/20 text-red-400' :
+                  'bg-blue-500/10 border-blue-500/20 text-blue-400'
+              }`}>
+                 {toast.type === 'success' ? <CheckCircle2 size={16} /> :
+                  toast.type === 'error' ? <AlertTriangle size={16} /> :
+                  <Info size={16} />}
+                 <span className="text-sm font-medium">{toast.message}</span>
+              </div>
+           </div>
+         ))}
+      </div>
     </div>
   );
 }
