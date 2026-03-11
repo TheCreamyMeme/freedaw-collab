@@ -1266,6 +1266,7 @@ export default function App() {
             isRemoteUpdateRef.current = true;
             setTracks(syncData.tracks);
             setBpm(syncData.bpm);
+            if (syncData.projectName) setProjectName(syncData.projectName);
         }
     });
 
@@ -1284,12 +1285,12 @@ export default function App() {
     syncTimeoutRef.current = setTimeout(() => {
         try {
             const cleanTracks = JSON.parse(JSON.stringify(tracks));
-            p2p.current.sendDawSync({ projectId, tracks: cleanTracks, bpm });
+            p2p.current.sendDawSync({ projectId, projectName, tracks: cleanTracks, bpm });
         } catch(e) {
             console.error("P2P Daw Sync Error (usually non-serializable object in state):", e);
         }
     }, 200); // 200ms debounce
-  }, [tracks, bpm, projectId]);
+  }, [tracks, bpm, projectId, projectName]);
 
   // Custom Scrollbar styling
   useEffect(() => {
@@ -1799,6 +1800,32 @@ export default function App() {
     if (audioCtxRef.current && audioCtxRef.current.state === 'running') {
       audioCtxRef.current.suspend();
     }
+
+    if (projectId) {
+      const existingLocal = localProjects.find(p => p.id === projectId);
+      const existingNetwork = networkProjects[projectId];
+      
+      const isShared = existingLocal?.shared || !!existingNetwork;
+      const owner = existingLocal?.ownerName || existingNetwork?.ownerName || currentUser?.name;
+
+      const projectData = {
+        id: projectId,
+        name: projectName,
+        bpm,
+        tracks,
+        lastModified: Date.now(),
+        version: "0.9.0",
+        shared: !!isShared,
+        ownerName: owner
+      };
+      
+      saveProjectLocally(projectData);
+      
+      if (p2p.current.sendProject && isShared) {
+         try { p2p.current.sendProject(JSON.parse(JSON.stringify(projectData))); } catch(e){}
+      }
+    }
+
     setAppView('home');
   };
 
