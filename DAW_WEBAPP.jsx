@@ -1329,10 +1329,21 @@ export default function App() {
                 const res = await fetch(`data:audio/wav;base64,${base64}`);
                 const arrayBuffer = await res.arrayBuffer();
                 
-                if (!audioCtxRef.current) {
-                    audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
+                // Use an isolated context for decoding if the main engine isn't running yet
+                let tempCtx = null;
+                let decodeCtx = audioCtxRef.current;
+                
+                if (!decodeCtx) {
+                    tempCtx = new (window.AudioContext || window.webkitAudioContext)();
+                    decodeCtx = tempCtx;
                 }
-                const audioBuffer = await audioCtxRef.current.decodeAudioData(arrayBuffer);
+                
+                const audioBuffer = await decodeCtx.decodeAudioData(arrayBuffer);
+                
+                // Clean up the isolated context immediately
+                if (tempCtx) {
+                    try { tempCtx.close(); } catch(e){}
+                }
                 
                 const peaks = [];
                 const data = audioBuffer.getChannelData(0);
