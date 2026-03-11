@@ -2954,9 +2954,58 @@ export default function App() {
         let newStart = Math.max(0, draggingClip.initialStart + deltaBeats);
         newStart = Math.round(newStart * 4) / 4; 
 
-        setTracks(prev => prev.map(t => t.id === draggingClip.trackId ? {
-          ...t, clips: t.clips.map(c => c.id === draggingClip.clipId ? { ...c, start: newStart } : c)
-        } : t));
+        let currentTargetTrackId = draggingClip.trackId;
+        if (timelineRef.current) {
+           const rect = timelineRef.current.getBoundingClientRect();
+           const y = e.clientY - rect.top + timelineRef.current.scrollTop;
+           if (y >= 0) {
+              const trackIndex = Math.floor(y / 96);
+              if (trackIndex >= 0 && trackIndex < tracksRef.current.length) {
+                 const targetTrack = tracksRef.current[trackIndex];
+                 const sourceTrack = tracksRef.current.find(t => t.id === draggingClip.trackId);
+                 if (targetTrack && sourceTrack && targetTrack.type === sourceTrack.type) {
+                    currentTargetTrackId = targetTrack.id;
+                 }
+              }
+           }
+        }
+
+        setTracks(prev => {
+            const sourceTrackIdx = prev.findIndex(t => t.id === draggingClip.trackId);
+            const targetTrackIdx = prev.findIndex(t => t.id === currentTargetTrackId);
+            if (sourceTrackIdx === -1 || targetTrackIdx === -1) return prev;
+
+            const clip = prev[sourceTrackIdx].clips.find(c => c.id === draggingClip.clipId);
+            if (!clip) return prev;
+
+            const updatedClip = { ...clip, start: newStart };
+            let newTracks = [...prev];
+
+            if (sourceTrackIdx !== targetTrackIdx) {
+                newTracks[sourceTrackIdx] = {
+                    ...newTracks[sourceTrackIdx],
+                    clips: newTracks[sourceTrackIdx].clips.filter(c => c.id !== draggingClip.clipId)
+                };
+                newTracks[targetTrackIdx] = {
+                    ...newTracks[targetTrackIdx],
+                    clips: [...newTracks[targetTrackIdx].clips, updatedClip]
+                };
+            } else {
+                newTracks[sourceTrackIdx] = {
+                    ...newTracks[sourceTrackIdx],
+                    clips: newTracks[sourceTrackIdx].clips.map(c => c.id === draggingClip.clipId ? updatedClip : c)
+                };
+            }
+            return newTracks;
+        });
+
+        if (currentTargetTrackId !== draggingClip.trackId) {
+            setDraggingClip(prev => ({ ...prev, trackId: currentTargetTrackId }));
+            setBottomDock(prev => {
+               if (prev?.clipId === draggingClip.clipId) return { ...prev, trackId: currentTargetTrackId };
+               return prev;
+            });
+        }
       } else if (draggingLoop) {
         const deltaX = e.clientX - draggingLoop.startX;
         const deltaBeats = Math.round((deltaX / BEAT_WIDTH) * 4) / 4; 
