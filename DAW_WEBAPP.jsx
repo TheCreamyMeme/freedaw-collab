@@ -1282,7 +1282,7 @@ function DAWStudio() {
   // --- Load Hosted Server Projects ---
   const loadServerProjects = useCallback(async () => {
     try {
-        const res = await fetch('/api/projects');
+        const res = await fetch(`${API_BASE_URL}/api/projects`);
         if (res.ok) {
             const data = await res.json();
             setServerProjects(Array.isArray(data) ? data : []);
@@ -1300,7 +1300,7 @@ function DAWStudio() {
 
   const saveProjectToServer = async (projectData) => {
       try {
-          await fetch('/api/projects', {
+          await fetch(`${API_BASE_URL}/api/projects`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify(projectData)
@@ -2082,10 +2082,10 @@ function DAWStudio() {
              Object.values(t.instrumentParams.drumMap).forEach(pad => pad.sampleId && usedSampleIds.add(pad.sampleId));
           }
         });
-
+        // 2. Download and decode missing samples from Host Server
         for (const sampleId of usedSampleIds) {
             if (!globalAudioBufferCache.has(sampleId)) {
-                const res = await fetch(`/api/samples/${sampleId}.wav`);
+                const res = await fetch(`${API_BASE_URL}/api/samples/${sampleId}.wav`);
                 if (res.ok) {
                     const arrayBuffer = await res.arrayBuffer();
                     
