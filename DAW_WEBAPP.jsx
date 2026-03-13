@@ -12,6 +12,7 @@ import {
 import { joinRoom } from 'https://esm.sh/trystero@0.20.1/torrent';
 
 const appId = typeof __app_id !== 'undefined' ? __app_id : 'webdaw-default';
+const API_BASE_URL = 'https://api.sprig.cc';
 
 const TOTAL_BEATS = 256; 
 
@@ -2104,7 +2105,7 @@ export default function App() {
     saveProjectLocally(projectData);
     
     // Sync to Host Server
-    fetch('/api/projects', {
+    fetch(`${API_BASE_URL}/api/projects`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(projectData)
