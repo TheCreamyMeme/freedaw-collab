@@ -1085,6 +1085,7 @@ export default function App() {
   const [tracks, setTracks] = useState(INITIAL_TRACKS);
   const [vstLibrary, setVstLibrary] = useState(INITIAL_VST_LIBRARY);
   const [metronomeEnabled, setMetronomeEnabled] = useState(false);
+  const [syncTransport, setSyncTransport] = useState(false);
   const [activeView, setActiveView] = useState('arrangement'); 
   const [draggingClip, setDraggingClip] = useState(null);
   const [bottomDock, setBottomDock] = useState(null); 
@@ -1116,11 +1117,6 @@ export default function App() {
   const [selectedNotes, setSelectedNotes] = useState([]);
   const [contextMenu, setContextMenu] = useState(null);
 
-  const timelineRef = useRef(null);
-  const headerRef = useRef(null);
-  const pianoKeysRef = useRef(null);
-  const pianoRulerRef = useRef(null);
-
   // Drum Pad State
   const [newPadPitch, setNewPadPitch] = useState(60);
   const [newPadName, setNewPadName] = useState('Custom Perc');
@@ -1132,10 +1128,12 @@ export default function App() {
   const [selectedAudioInput, setSelectedAudioInput] = useState('');
   const [selectedMidiInput, setSelectedMidiInput] = useState('');
 
-  // P2P State
+  // P2P & Hosted State
   const [peers, setPeers] = useState({}); 
   const [localProjects, setLocalProjects] = useState([]);
   const [networkProjects, setNetworkProjects] = useState({});
+  const [serverProjects, setServerProjects] = useState([]); // Projects stored on Host Server API
+  
   const isRemoteUpdateRef = useRef(false);
   const currentProjectIdRef = useRef(null);
   const syncTimeoutRef = useRef(null);
@@ -1178,6 +1176,9 @@ export default function App() {
      stateRefs.current.autoScroll = autoScroll;
   }, [isPlaying, isRecording, bpm, autoScroll]);
 
+  const syncTransportRef = useRef(syncTransport);
+  useEffect(() => { syncTransportRef.current = syncTransport; }, [syncTransport]);
+
   // Toast Notification Helper
   const showToast = useCallback((message, type = 'info') => {
     const id = Date.now();
@@ -1199,7 +1200,8 @@ export default function App() {
       sendProject: null,
       sendDawSync: null,
       requestSample: null,
-      sendSample: null
+      sendSample: null,
+      sendTransportSync: null
   });
 
   // --- Load Local Projects ---
@@ -1207,15 +1209,49 @@ export default function App() {
       try {
           const stored = localStorage.getItem('webdaw_projects');
           if (stored) {
-              setLocalProjects(JSON.parse(stored));
+              const parsed = JSON.parse(stored);
+              setLocalProjects(Array.isArray(parsed) ? parsed : []);
           }
       } catch (err) {}
   }, []);
 
   const saveProjectLocally = (projectData) => {
-      const updated = [projectData, ...localProjects.filter(p => p.id !== projectData.id)];
+      const safeLocal = Array.isArray(localProjects) ? localProjects : [];
+      const updated = [projectData, ...safeLocal.filter(p => p.id !== projectData.id)];
       setLocalProjects(updated);
       try { localStorage.setItem('webdaw_projects', JSON.stringify(updated)); } catch(e) {}
+  };
+
+  // --- Load Hosted Server Projects ---
+  const loadServerProjects = useCallback(async () => {
+    try {
+        const res = await fetch('/api/projects');
+        if (res.ok) {
+            const data = await res.json();
+            setServerProjects(Array.isArray(data) ? data : []);
+        }
+    } catch (err) {
+        // Silently ignore if no backend API is active
+        console.warn('Could not connect to host server API at /api/projects');
+    }
+  }, []);
+
+  useEffect(() => {
+      if (appView === 'home') {
+          loadServerProjects();
+      }
+  }, [appView, loadServerProjects]);
+
+  const saveProjectToServer = async (projectData) => {
+      try {
+          await fetch('/api/projects', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(projectData)
+          });
+      } catch (err) {
+          console.warn('Failed to sync project to server API:', err);
+      }
   };
 
   // --- Initialize P2P Trystero Network ---
@@ -1230,8 +1266,9 @@ export default function App() {
     const [sendDawSync, getDawSync] = room.makeAction('dawSync');
     const [requestSample, getRequestSample] = room.makeAction('reqSample');
     const [sendSample, getSample] = room.makeAction('sample');
+    const [sendTransportSync, getTransportSync] = room.makeAction('transportSync');
 
-    p2p.current = { room, sendProfile, sendProject, sendDawSync, requestSample, sendSample };
+    p2p.current = { room, sendProfile, sendProject, sendDawSync, requestSample, sendSample, sendTransportSync };
 
     // Broadcast myself initially (after a small delay to ensure listeners are ready)
     setTimeout(() => {
@@ -1242,7 +1279,8 @@ export default function App() {
         // Share presence
         try { sendProfile(JSON.parse(JSON.stringify(currentUserRef.current)), peerId); } catch(e){}
         // Share publicly shared projects
-        localProjectsRef.current.forEach(p => {
+        const safeProjects = Array.isArray(localProjectsRef.current) ? localProjectsRef.current : [];
+        safeProjects.forEach(p => {
            if(p.shared) {
               try { sendProject(JSON.parse(JSON.stringify(p)), peerId); } catch(e){}
            }
@@ -1259,50 +1297,89 @@ export default function App() {
     });
 
     getProfile((profile, peerId) => {
-        setPeers(prev => ({ ...prev, [peerId]: { ...profile, peerId } }));
+        if (profile && profile.id) {
+            setPeers(prev => ({ ...prev, [peerId]: { ...profile, peerId } }));
+        }
     });
 
     getProject((projectData, peerId) => {
-        setNetworkProjects(prev => ({ ...prev, [projectData.id]: { ...projectData, peerId } }));
+        if (projectData && projectData.id) {
+            setNetworkProjects(prev => ({ ...prev, [projectData.id]: { ...projectData, peerId } }));
+        }
     });
 
     getDawSync((syncData, peerId) => {
-        if (syncData.projectId === currentProjectIdRef.current) {
+        if (syncData && syncData.projectId === currentProjectIdRef.current) {
             const missingSamples = new Set();
             
-            syncData.tracks.forEach(t => {
-                if (t.type === 'audio') {
-                    t.clips.forEach(c => {
-                        if (c.sampleId && !globalAudioBufferCache.has(c.sampleId) && !requestedSamplesRef.current.has(c.sampleId)) {
-                            requestedSamplesRef.current.add(c.sampleId);
-                            missingSamples.add(c.sampleId);
-                        }
-                    });
-                }
-                if (t.instrumentParams) {
-                    if (t.instrumentParams.sampleId && !globalAudioBufferCache.has(t.instrumentParams.sampleId) && !requestedSamplesRef.current.has(t.instrumentParams.sampleId)) {
-                        requestedSamplesRef.current.add(t.instrumentParams.sampleId);
-                        missingSamples.add(t.instrumentParams.sampleId);
-                    }
-                    if (t.instrumentParams.drumMap) {
-                        Object.values(t.instrumentParams.drumMap).forEach(pad => {
-                            if (pad.sampleId && !globalAudioBufferCache.has(pad.sampleId) && !requestedSamplesRef.current.has(pad.sampleId)) {
-                                requestedSamplesRef.current.add(pad.sampleId);
-                                missingSamples.add(pad.sampleId);
+            if (Array.isArray(syncData.tracks)) {
+                syncData.tracks.forEach(t => {
+                    if (t.type === 'audio') {
+                        t.clips?.forEach(c => {
+                            if (c.sampleId && !globalAudioBufferCache.has(c.sampleId) && !requestedSamplesRef.current.has(c.sampleId)) {
+                                requestedSamplesRef.current.add(c.sampleId);
+                                missingSamples.add(c.sampleId);
                             }
                         });
                     }
-                }
-            });
+                    if (t.instrumentParams) {
+                        if (t.instrumentParams.sampleId && !globalAudioBufferCache.has(t.instrumentParams.sampleId) && !requestedSamplesRef.current.has(t.instrumentParams.sampleId)) {
+                            requestedSamplesRef.current.add(t.instrumentParams.sampleId);
+                            missingSamples.add(t.instrumentParams.sampleId);
+                        }
+                        if (t.instrumentParams.drumMap) {
+                            Object.values(t.instrumentParams.drumMap).forEach(pad => {
+                                if (pad.sampleId && !globalAudioBufferCache.has(pad.sampleId) && !requestedSamplesRef.current.has(pad.sampleId)) {
+                                    requestedSamplesRef.current.add(pad.sampleId);
+                                    missingSamples.add(pad.sampleId);
+                                }
+                            });
+                        }
+                    }
+                });
+            }
 
             missingSamples.forEach(sid => {
                 if (p2p.current.requestSample) p2p.current.requestSample(sid, peerId);
             });
 
             isRemoteUpdateRef.current = true;
-            setTracks(syncData.tracks);
+            
+            setTracks(prev => {
+                if (!Array.isArray(syncData.tracks)) return prev;
+                return syncData.tracks.map(remoteTrack => {
+                    const localTrack = prev.find(t => t.id === remoteTrack.id);
+                    if (localTrack && !syncTransportRef.current) {
+                        return { ...remoteTrack, muted: localTrack.muted, solo: localTrack.solo };
+                    }
+                    return remoteTrack;
+                });
+            });
+            
             setBpm(syncData.bpm);
             if (syncData.projectName) setProjectName(syncData.projectName);
+        }
+    });
+
+    getTransportSync((syncData, peerId) => {
+        if (syncData && syncData.projectId === currentProjectIdRef.current && syncTransportRef.current) {
+            if (syncData.type === 'playhead') {
+                setCurrentTime(syncData.currentTime);
+                stateRefs.current.currentTime = syncData.currentTime;
+            } else if (syncData.type === 'play') {
+                setIsPlaying(syncData.isPlaying);
+                if (syncData.currentTime !== undefined) {
+                    setCurrentTime(syncData.currentTime);
+                    stateRefs.current.currentTime = syncData.currentTime;
+                }
+                if (syncData.isPlaying) {
+                    initAudioEngine().catch(e => console.warn("Auto-play prevented without user gesture:", e));
+                } else {
+                    stopAudio();
+                }
+            } else if (syncData.type === 'loop') {
+                setLoopRegion(syncData.loopRegion);
+            }
         }
     });
 
@@ -1369,6 +1446,14 @@ export default function App() {
 
     return () => room.leave();
   }, [currentUser?.id]);
+
+  const emitTransport = useCallback((type, data) => {
+      if (syncTransportRef.current && p2p.current.sendTransportSync && currentProjectIdRef.current) {
+          try {
+              p2p.current.sendTransportSync({ projectId: currentProjectIdRef.current, type, ...data });
+          } catch (e) { console.error("Transport Sync Error:", e); }
+      }
+  }, []);
 
   // --- Real-time Sync Broadcast ---
   useEffect(() => {
@@ -1825,25 +1910,28 @@ export default function App() {
     if (!stateRefs.current.isPlaying) {
       await initAudioEngine();
       setIsPlaying(true);
+      emitTransport('play', { isPlaying: true, currentTime: stateRefs.current.currentTime });
       if (stateRefs.current.isRecording) {
          startRecording();
       }
     } else {
       setIsPlaying(false);
+      emitTransport('play', { isPlaying: false, currentTime: stateRefs.current.currentTime });
       stopAudio();
       if (stateRefs.current.isRecording) {
          setIsRecording(false);
          endRecording();
       }
     }
-  }, []);
+  }, [emitTransport]);
 
-  const stopPlayback = () => {
+  const stopPlayback = useCallback(() => {
     setIsPlaying(false);
     setCurrentTime(0);
     stateRefs.current.currentTime = 0;
+    emitTransport('play', { isPlaying: false, currentTime: 0 });
     stopAudio();
-    if (isRecording) {
+    if (stateRefs.current.isRecording) {
         setIsRecording(false);
         endRecording();
     }
@@ -1851,7 +1939,7 @@ export default function App() {
       const ctx = canvas.getContext('2d');
       if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
     });
-  };
+  }, [emitTransport]);
 
   const toggleRecord = () => {
     if (!isRecording) {
@@ -1899,7 +1987,8 @@ export default function App() {
     }
 
     if (projectId) {
-      const existingLocal = localProjects.find(p => p.id === projectId);
+      const safeLocal = Array.isArray(localProjects) ? localProjects : [];
+      const existingLocal = safeLocal.find(p => p.id === projectId);
       const existingNetwork = networkProjects[projectId];
       
       const isShared = existingLocal?.shared || !!existingNetwork;
@@ -1917,6 +2006,7 @@ export default function App() {
       };
       
       saveProjectLocally(projectData);
+      saveProjectToServer(projectData); // Auto-sync to server endpoint
       
       if (p2p.current.sendProject && isShared) {
          try { p2p.current.sendProject(JSON.parse(JSON.stringify(projectData))); } catch(e){}
@@ -1926,12 +2016,57 @@ export default function App() {
     setAppView('home');
   };
 
-  const loadProjectToDaw = (projectData) => {
+  const loadProjectToDaw = async (projectData) => {
+    setIsProcessingFile(true); // Show loader while downloading audio
     stopPlayback();
     synthsRef.current = {};
     
+    const safeTracks = Array.isArray(projectData.tracks) ? projectData.tracks : INITIAL_TRACKS;
+    
+    try {
+        // 1. Identify missing samples required by the project
+        const usedSampleIds = new Set();
+        safeTracks.forEach(t => {
+          if (t.type === 'audio') t.clips.forEach(c => c.sampleId && usedSampleIds.add(c.sampleId));
+          if (t.instrumentParams?.sampleId) usedSampleIds.add(t.instrumentParams.sampleId);
+          if (t.instrumentParams?.drumMap) {
+             Object.values(t.instrumentParams.drumMap).forEach(pad => pad.sampleId && usedSampleIds.add(pad.sampleId));
+          }
+        });
+
+        // 2. Download and decode missing samples from Host Server
+        for (const sampleId of usedSampleIds) {
+            if (!globalAudioBufferCache.has(sampleId)) {
+                const res = await fetch(`/api/samples/${sampleId}.wav`);
+                if (res.ok) {
+                    const arrayBuffer = await res.arrayBuffer();
+                    
+                    let tempCtx = audioCtxRef.current || new (window.AudioContext || window.webkitAudioContext)();
+                    const audioBuffer = await tempCtx.decodeAudioData(arrayBuffer);
+                    
+                    const peaks = [];
+                    const data = audioBuffer.getChannelData(0);
+                    const step = Math.max(1, Math.floor(data.length / 100));
+                    for(let i=0; i<100; i++) {
+                       let min = 1.0; let max = -1.0;
+                       for(let j=0; j<step; j++) {
+                          const val = data[(i*step)+j];
+                          if(val < min) min = val;
+                          if(val > max) max = val;
+                       }
+                       peaks.push([min, max]);
+                    }
+                    globalAudioBufferCache.set(sampleId, { buffer: audioBuffer, peaks, duration: audioBuffer.duration });
+                }
+            }
+        }
+    } catch(e) {
+        console.warn("Failed fetching samples from server:", e);
+    }
+    
+    setIsProcessingFile(false);
     setBpm(projectData.bpm || 120);
-    setTracks(projectData.tracks || INITIAL_TRACKS);
+    setTracks(safeTracks);
     setProjectName(projectData.name || 'Imported Project');
     setProjectId(projectData.id || `proj_${Date.now()}`);
     currentProjectIdRef.current = projectData.id;
@@ -1967,7 +2102,17 @@ export default function App() {
     };
     
     saveProjectLocally(projectData);
+    
+    // Sync to Host Server
+    fetch('/api/projects', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(projectData)
+    }).then(res => {
+        if(res.ok) showToast(`Project saved to Host Server!`, "success");
+    }).catch(err => console.warn("Server save failed", err));
 
+    // Share to P2P network
     if (p2p.current.sendProject) {
         try {
             const cleanProj = JSON.parse(JSON.stringify(projectData));
@@ -1999,6 +2144,9 @@ export default function App() {
 
       zip.file("project.json", JSON.stringify(projectData, null, 2));
 
+      // Note: If you want audio samples to persist on the host server via /api/projects, 
+      // you would also need to upload these base64 blobs to the backend using multipart/form-data.
+      // Currently, /api/projects syncs the JSON structure, which perfectly covers MIDI/VST configurations.
       const usedSampleIds = new Set();
       tracks.forEach(t => {
         if (t.type === 'audio') {
@@ -3194,6 +3342,13 @@ export default function App() {
     };
 
     const handleMouseUp = () => {
+      if (draggingLoop) {
+          emitTransport('loop', { loopRegion: loopRegionRef.current });
+      }
+      if (draggingPlayhead) {
+          emitTransport('playhead', { currentTime: stateRefs.current.currentTime });
+      }
+
       setDraggingClip(null);
       setDraggingNote(null);
       setDraggingEdge(null);
@@ -3245,6 +3400,7 @@ export default function App() {
     
     setCurrentTime(newTime);
     stateRefs.current.currentTime = newTime;
+    emitTransport('playhead', { currentTime: newTime });
     
     if (audioCtxRef.current) {
       Object.values(synthsRef.current).forEach(synth => {
@@ -3312,14 +3468,14 @@ export default function App() {
       setCurrentUser(user);
       localStorage.setItem('webdaw_p2p_user', JSON.stringify(user));
       setAuthName('');
-      showToast("Joined P2P Network successfully.", "success");
+      showToast("Joined Network successfully.", "success");
     }
   };
 
   const handleSignOut = () => {
     setCurrentUser(null);
     localStorage.removeItem('webdaw_p2p_user');
-    showToast("Disconnected from P2P Network.");
+    showToast("Disconnected from Network.");
   };
 
   const handleAvatarUpload = (e) => {
@@ -3367,14 +3523,32 @@ export default function App() {
     return `${mins}:${secs}.${ms}`;
   };
 
+  // Combine projects from all sources
   const activeSessionUsers = [currentUser, ...Object.values(peers)].filter(Boolean);
-  const combinedProjectsList = [...localProjects];
-  Object.values(networkProjects).forEach(np => {
-     if (!combinedProjectsList.find(lp => lp.id === np.id)) {
-        combinedProjectsList.push(np);
+  
+  const combinedProjectsList = [...(Array.isArray(localProjects) ? localProjects : [])];
+  
+  // Merge Server Projects
+  serverProjects.forEach(sp => {
+     const existing = combinedProjectsList.find(p => p.id === sp.id);
+     if (existing) {
+         existing.isServer = true;
+     } else {
+         combinedProjectsList.push({ ...sp, source: 'server', isServer: true });
      }
   });
-  combinedProjectsList.sort((a,b) => b.lastModified - a.lastModified);
+
+  // Merge P2P Network Projects
+  Object.values(networkProjects).forEach(np => {
+     const existing = combinedProjectsList.find(p => p.id === np.id);
+     if (existing) {
+         existing.peerId = np.peerId; 
+     } else {
+         combinedProjectsList.push({ ...np, source: 'network' });
+     }
+  });
+  
+  combinedProjectsList.sort((a,b) => (b.lastModified || 0) - (a.lastModified || 0));
 
   // ==========================================
   // LOADING / AUTHENTICATION SCREEN RENDER BLOCK
@@ -3450,11 +3624,11 @@ export default function App() {
                 <div className="flex items-center gap-2">
                   <label className="relative cursor-pointer group" title="Upload Profile Picture">
                     <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center text-xs text-white font-bold shadow-sm overflow-hidden border border-neutral-700 group-hover:border-blue-400 transition-colors">
-                      {currentUser.avatar ? <img src={currentUser.avatar} alt="Avatar" className="w-full h-full object-cover" /> : currentUser.name.charAt(0).toUpperCase()}
+                      {currentUser?.avatar ? <img src={currentUser.avatar} alt="Avatar" className="w-full h-full object-cover" /> : (currentUser?.name?.charAt(0)?.toUpperCase() || '?')}
                     </div>
                     <input type="file" accept="image/*" hidden onChange={handleAvatarUpload} />
                   </label>
-                  <span className="text-sm font-medium text-white">{currentUser.name}</span>
+                  <span className="text-sm font-medium text-white">{currentUser?.name || 'User'}</span>
                 </div>
                 <button onClick={handleSignOut} className="p-2 text-neutral-500 hover:text-red-400 transition-colors rounded-lg hover:bg-neutral-800" title="Sign Out">
                   <LogOut size={16} />
@@ -3506,37 +3680,54 @@ export default function App() {
                 {/* Combined Projects List */}
                 {combinedProjectsList.map((proj) => {
                   const isRemote = proj.peerId !== undefined;
+                  const isServer = proj.isServer || proj.source === 'server';
                   return (
                   <div 
                      key={proj.id} 
                      onClick={() => loadProjectToDaw(proj)}
                      className="group relative bg-neutral-900 border border-neutral-800 hover:border-neutral-600 rounded-2xl p-6 flex flex-col cursor-pointer transition-all duration-300 min-h-[220px] shadow-lg overflow-hidden"
                   >
-                     <div className={`absolute top-0 left-0 w-full h-1 bg-gradient-to-r ${isRemote ? 'from-purple-500 to-pink-500' : 'from-blue-500 to-emerald-500'} opacity-0 group-hover:opacity-100 transition-opacity`} />
+                     <div className={`absolute top-0 left-0 w-full h-1 bg-gradient-to-r ${isRemote ? 'from-purple-500 to-pink-500' : isServer ? 'from-emerald-500 to-teal-500' : 'from-blue-500 to-emerald-500'} opacity-0 group-hover:opacity-100 transition-opacity`} />
                      
                      <div className="flex items-start justify-between mb-4">
                        <div className="w-10 h-10 rounded-lg bg-neutral-800 flex items-center justify-center relative">
-                          <FileJson size={20} className={isRemote ? 'text-purple-400' : 'text-blue-400'} />
-                          <div className={`absolute -top-1 -right-1 w-3 h-3 ${isRemote ? 'bg-purple-500' : 'bg-blue-500'} rounded-full border-2 border-neutral-900 flex items-center justify-center`}>
-                              {isRemote ? <Network size={6} className="text-white"/> : <Save size={6} className="text-white"/>}
+                          <FileJson size={20} className={isRemote ? 'text-purple-400' : isServer ? 'text-emerald-400' : 'text-blue-400'} />
+                          
+                          {/* File source indicators */}
+                          <div className={`absolute -top-1 -right-1 flex gap-1`}>
+                             {isRemote && (
+                               <div className={`w-4 h-4 bg-purple-500 rounded-full border-2 border-neutral-900 flex items-center justify-center`} title="P2P Network Project">
+                                   <Network size={8} className="text-white"/>
+                               </div>
+                             )}
+                             {isServer && (
+                               <div className={`w-4 h-4 bg-emerald-500 rounded-full border-2 border-neutral-900 flex items-center justify-center`} title="Saved on Host Server API">
+                                   <Cloud size={8} className="text-white"/>
+                               </div>
+                             )}
+                             {(!proj.source || proj.source === 'local') && !isServer && (
+                               <div className={`w-4 h-4 bg-blue-500 rounded-full border-2 border-neutral-900 flex items-center justify-center`} title="Saved Locally in Browser">
+                                   <Save size={8} className="text-white"/>
+                               </div>
+                             )}
                           </div>
                        </div>
                        <div className="flex flex-col items-end gap-1">
                          <span className="text-[10px] font-mono text-neutral-500 bg-neutral-950 px-2 py-1 rounded">
-                           {new Date(proj.lastModified).toLocaleDateString()}
+                           {new Date(proj.lastModified || Date.now()).toLocaleDateString()}
                          </span>
-                         {isRemote && <span className="text-[9px] font-bold text-purple-400 bg-purple-500/10 px-1.5 py-0.5 rounded">FROM {proj.ownerName}</span>}
+                         {isRemote && <span className="text-[9px] font-bold text-purple-400 bg-purple-500/10 px-1.5 py-0.5 rounded">FROM {proj.ownerName || 'Peer'}</span>}
                        </div>
                      </div>
                      
-                     <h3 className="text-lg font-bold text-white truncate w-full mb-1 group-hover:text-blue-400 transition-colors">{proj.name}</h3>
-                     <p className="text-xs text-neutral-400 font-mono mb-auto">{proj.bpm} BPM &bull; {proj.tracks?.length || 0} Tracks</p>
+                     <h3 className="text-lg font-bold text-white truncate w-full mb-1 group-hover:text-blue-400 transition-colors">{proj.name || 'Untitled'}</h3>
+                     <p className="text-xs text-neutral-400 font-mono mb-auto">{proj.bpm || 120} BPM &bull; {Array.isArray(proj.tracks) ? proj.tracks.length : 0} Tracks</p>
                      
                      <div className="flex gap-2 mt-4">
-                       {proj.tracks?.slice(0,5).map(t => (
-                         <div key={t.id} className={`w-3 h-3 rounded-full shadow-sm ${t.color}`} title={t.name} />
+                       {(Array.isArray(proj.tracks) ? proj.tracks : []).slice(0,5).map(t => (
+                         <div key={t.id} className={`w-3 h-3 rounded-full shadow-sm ${t.color || 'bg-neutral-500'}`} title={t.name || 'Track'} />
                        ))}
-                       {proj.tracks?.length > 5 && <span className="text-[10px] text-neutral-500 font-bold ml-1">+{proj.tracks.length - 5}</span>}
+                       {Array.isArray(proj.tracks) && proj.tracks.length > 5 && <span className="text-[10px] text-neutral-500 font-bold ml-1">+{proj.tracks.length - 5}</span>}
                      </div>
                   </div>
                 )})}
@@ -3585,11 +3776,21 @@ export default function App() {
           
           <div className="w-px h-5 bg-neutral-800 mx-1" />
           
-          <button onClick={() => setLoopRegion(prev => ({...prev, enabled: !prev.enabled}))} className={`p-1.5 rounded-lg transition-colors ${loopRegion.enabled ? 'text-blue-400 bg-blue-500/20' : 'text-neutral-400 hover:text-white hover:bg-neutral-800'}`} title="Toggle Loop Region">
+          <button onClick={() => {
+              setLoopRegion(prev => {
+                  const next = {...prev, enabled: !prev.enabled};
+                  emitTransport('loop', { loopRegion: next });
+                  return next;
+              });
+          }} className={`p-1.5 rounded-lg transition-colors ${loopRegion.enabled ? 'text-blue-400 bg-blue-500/20' : 'text-neutral-400 hover:text-white hover:bg-neutral-800'}`} title="Toggle Loop Region">
             <Repeat size={16} />
           </button>
           <button onClick={() => setAutoScroll(!autoScroll)} className={`p-1.5 rounded-lg transition-colors ${autoScroll ? 'text-green-400 bg-green-500/20' : 'text-neutral-400 hover:text-white hover:bg-neutral-800'}`} title="Auto-Scroll Timeline">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M13 5l7 7-7 7M4 12h16"/></svg>
+          </button>
+          <div className="w-px h-5 bg-neutral-800 mx-1" />
+          <button onClick={() => setSyncTransport(!syncTransport)} className={`p-1.5 rounded-lg transition-colors ${syncTransport ? 'text-purple-400 bg-purple-500/20' : 'text-neutral-400 hover:text-white hover:bg-neutral-800'}`} title="P2P Transport Link (Play/Pause/Mute/Solo/Loop)">
+            <Zap size={16} />
           </button>
         </div>
 
@@ -3614,8 +3815,8 @@ export default function App() {
             <span className={`w-1.5 h-1.5 rounded-full ${Object.keys(peers).length > 0 ? 'bg-green-500 animate-pulse' : 'bg-neutral-600'} ml-1`} />
             <div className="flex -space-x-1.5 pr-0.5">
               {activeSessionUsers.map(collab => (
-                <div key={collab.id} className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] text-white font-bold ring-2 ring-neutral-900 ${collab.color} overflow-hidden`} title={`${collab.name} is online`}>
-                  {collab.avatar ? <img src={collab.avatar} alt={collab.name} className="w-full h-full object-cover" /> : collab.name.charAt(0).toUpperCase()}
+                <div key={collab?.id || Math.random()} className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] text-white font-bold ring-2 ring-neutral-900 ${collab?.color || 'bg-neutral-600'} overflow-hidden`} title={`${collab?.name || 'Peer'} is online`}>
+                  {collab?.avatar ? <img src={collab.avatar} alt={collab?.name} className="w-full h-full object-cover" /> : (collab?.name?.charAt(0)?.toUpperCase() || '?')}
                 </div>
               ))}
             </div>
@@ -3624,7 +3825,7 @@ export default function App() {
           <div className="flex items-center gap-2">
              <label className="relative cursor-pointer group" title="Upload Profile Picture">
                <div className="w-7 h-7 rounded-full bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center text-xs text-white font-bold shadow-sm overflow-hidden border border-neutral-700 group-hover:border-blue-400 transition-colors">
-                 {currentUser.avatar ? <img src={currentUser.avatar} alt="Avatar" className="w-full h-full object-cover" /> : currentUser.name.charAt(0).toUpperCase()}
+                 {currentUser?.avatar ? <img src={currentUser.avatar} alt="Avatar" className="w-full h-full object-cover" /> : (currentUser?.name?.charAt(0)?.toUpperCase() || '?')}
                </div>
                <input type="file" accept="image/*" hidden onChange={handleAvatarUpload} />
              </label>

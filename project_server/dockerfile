@@ -1,0 +1,25 @@
+# Use the lightweight Alpine Linux version of Node.js 20
+FROM node:20-alpine
+
+# Set the working directory inside the container
+WORKDIR /app
+
+# Initialize a package.json and install Express automatically
+# This avoids needing a separate package.json in your local directory
+RUN npm init -y && npm install express
+
+# Copy your server script into the container
+COPY server.js .
+
+# Create directories for persistent storage 
+RUN mkdir -p projects samples
+
+# Expose the port the server runs on
+EXPOSE 3000
+
+# Define volumes so that the saved projects and samples map out of the container 
+# and are not lost when the container is stopped or removed.
+VOLUME ["/app/projects", "/app/samples"]
+
+# Start the Node backend
+CMD ["node", "server.js"]
