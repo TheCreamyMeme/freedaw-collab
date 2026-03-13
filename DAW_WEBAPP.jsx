@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, Component } from 'react';
 import { 
   Play, Pause, Square, Circle, SkipBack, 
   Volume2, VolumeX, Mic, Music, Radio, 
@@ -1074,7 +1074,59 @@ const initTrackRouting = async (track, ctx, masterGain, library) => {
   return instrument;
 };
 
-export default function App() {
+// ==========================================
+// ERROR BOUNDARY (Prevents Black Screens)
+// ==========================================
+export default class App extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error, errorInfo) {
+    console.error("WebDAW Crashed:", error, errorInfo);
+  }
+
+  handleReset = () => {
+    localStorage.removeItem('webdaw_projects');
+    localStorage.removeItem('webdaw_p2p_user');
+    window.location.reload();
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="flex flex-col h-screen bg-neutral-950 items-center justify-center text-white p-8">
+          <AlertTriangle size={64} className="text-red-500 mb-6" />
+          <h1 className="text-3xl font-bold mb-2">Workspace Crashed</h1>
+          <p className="text-neutral-400 max-w-md text-center mb-8">
+            A corrupted project file or invalid state caused the application to crash.
+          </p>
+          <div className="bg-black/50 p-4 rounded-xl border border-red-500/20 text-red-400 font-mono text-xs w-full max-w-2xl overflow-auto mb-8 shadow-inner">
+            {this.state.error?.toString()}
+          </div>
+          <button 
+            onClick={this.handleReset}
+            className="bg-red-600 hover:bg-red-500 text-white px-6 py-3 rounded-xl font-bold tracking-wider transition-colors shadow-lg shadow-red-500/20"
+          >
+            HARD RESET WORKSPACE (Deletes Local Data)
+          </button>
+        </div>
+      );
+    }
+    
+    return <DAWStudio />;
+  }
+}
+
+// ==========================================
+// MAIN FUNCTIONAL APP
+// ==========================================
+function DAWStudio() {
   const [appView, setAppView] = useState('home'); 
   const [projectId, setProjectId] = useState(null);
   const [projectName, setProjectName] = useState('New Project');
@@ -1133,7 +1185,7 @@ export default function App() {
   const [peers, setPeers] = useState({}); 
   const [localProjects, setLocalProjects] = useState([]);
   const [networkProjects, setNetworkProjects] = useState({});
-  const [serverProjects, setServerProjects] = useState([]); // Projects stored on Host Server API
+  const [serverProjects, setServerProjects] = useState([]); 
   
   const isRemoteUpdateRef = useRef(false);
   const currentProjectIdRef = useRef(null);
@@ -1151,6 +1203,10 @@ export default function App() {
   const masterAnalyserRef = useRef(null);
   const synthsRef = useRef({});
   const lastTimeRef = useRef(0);
+  const headerRef = useRef(null);
+  const timelineRef = useRef(null);
+  const pianoRulerRef = useRef(null);
+  const pianoKeysRef = useRef(null);
   
   // Recording State Refs
   const mediaRecorderRef = useRef(null);
@@ -1232,7 +1288,6 @@ export default function App() {
             setServerProjects(Array.isArray(data) ? data : []);
         }
     } catch (err) {
-        // Silently ignore if no backend API is active
         console.warn('Could not connect to host server API at /api/projects');
     }
   }, []);
@@ -1259,7 +1314,6 @@ export default function App() {
   useEffect(() => {
     if (!currentUser?.id) return;
     
-    // Using torrent tracker strategy for serverless WebRTC
     const room = joinRoom({ appId: `webdaw-p2p-${appId}` }, 'global-studio');
     
     const [sendProfile, getProfile] = room.makeAction('profile');
@@ -1267,19 +1321,16 @@ export default function App() {
     const [sendDawSync, getDawSync] = room.makeAction('dawSync');
     const [requestSample, getRequestSample] = room.makeAction('reqSample');
     const [sendSample, getSample] = room.makeAction('sample');
-    const [sendTransportSync, getTransportSync] = room.makeAction('transportSync');
+    const [sendTransportSync, getTransportSync] = room.makeAction('tSync');
 
     p2p.current = { room, sendProfile, sendProject, sendDawSync, requestSample, sendSample, sendTransportSync };
 
-    // Broadcast myself initially (after a small delay to ensure listeners are ready)
     setTimeout(() => {
        try { sendProfile(JSON.parse(JSON.stringify(currentUserRef.current))); } catch(e){}
     }, 1000);
 
     room.onPeerJoin(peerId => {
-        // Share presence
         try { sendProfile(JSON.parse(JSON.stringify(currentUserRef.current)), peerId); } catch(e){}
-        // Share publicly shared projects
         const safeProjects = Array.isArray(localProjectsRef.current) ? localProjectsRef.current : [];
         safeProjects.forEach(p => {
            if(p.shared) {
@@ -1407,7 +1458,6 @@ export default function App() {
                 const res = await fetch(`data:audio/wav;base64,${base64}`);
                 const arrayBuffer = await res.arrayBuffer();
                 
-                // Use an isolated context for decoding if the main engine isn't running yet
                 let tempCtx = null;
                 let decodeCtx = audioCtxRef.current;
                 
@@ -1418,7 +1468,6 @@ export default function App() {
                 
                 const audioBuffer = await decodeCtx.decodeAudioData(arrayBuffer);
                 
-                // Clean up the isolated context immediately
                 if (tempCtx) {
                     try { tempCtx.close(); } catch(e){}
                 }
@@ -1472,7 +1521,7 @@ export default function App() {
         } catch(e) {
             console.error("P2P Daw Sync Error (usually non-serializable object in state):", e);
         }
-    }, 200); // 200ms debounce
+    }, 200); 
   }, [tracks, bpm, projectId, projectName]);
 
   // Custom Scrollbar styling
@@ -2007,7 +2056,7 @@ export default function App() {
       };
       
       saveProjectLocally(projectData);
-      saveProjectToServer(projectData); // Auto-sync to server endpoint
+      saveProjectToServer(projectData); 
       
       if (p2p.current.sendProject && isShared) {
          try { p2p.current.sendProject(JSON.parse(JSON.stringify(projectData))); } catch(e){}
@@ -2018,14 +2067,13 @@ export default function App() {
   };
 
   const loadProjectToDaw = async (projectData) => {
-    setIsProcessingFile(true); // Show loader while downloading audio
+    setIsProcessingFile(true); 
     stopPlayback();
     synthsRef.current = {};
     
     const safeTracks = Array.isArray(projectData.tracks) ? projectData.tracks : INITIAL_TRACKS;
     
     try {
-        // 1. Identify missing samples required by the project
         const usedSampleIds = new Set();
         safeTracks.forEach(t => {
           if (t.type === 'audio') t.clips.forEach(c => c.sampleId && usedSampleIds.add(c.sampleId));
@@ -2035,7 +2083,6 @@ export default function App() {
           }
         });
 
-        // 2. Download and decode missing samples from Host Server
         for (const sampleId of usedSampleIds) {
             if (!globalAudioBufferCache.has(sampleId)) {
                 const res = await fetch(`/api/samples/${sampleId}.wav`);
@@ -2104,7 +2151,6 @@ export default function App() {
     
     saveProjectLocally(projectData);
     
-    // Sync to Host Server
     fetch(`${API_BASE_URL}/api/projects`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -2113,7 +2159,6 @@ export default function App() {
         if(res.ok) showToast(`Project saved to Host Server!`, "success");
     }).catch(err => console.warn("Server save failed", err));
 
-    // Share to P2P network
     if (p2p.current.sendProject) {
         try {
             const cleanProj = JSON.parse(JSON.stringify(projectData));
@@ -2145,9 +2190,6 @@ export default function App() {
 
       zip.file("project.json", JSON.stringify(projectData, null, 2));
 
-      // Note: If you want audio samples to persist on the host server via /api/projects, 
-      // you would also need to upload these base64 blobs to the backend using multipart/form-data.
-      // Currently, /api/projects syncs the JSON structure, which perfectly covers MIDI/VST configurations.
       const usedSampleIds = new Set();
       tracks.forEach(t => {
         if (t.type === 'audio') {
@@ -2269,7 +2311,6 @@ export default function App() {
     setOpenPluginUI({ trackId, isEffect, fxId, loading: false });
   };
 
-  // Unified Game Loop
   useEffect(() => {
     if (!isPlaying) return;
 
@@ -2382,7 +2423,6 @@ export default function App() {
             if (synth.activeNoteIds) synth.activeNoteIds.clear();
           }
         } else {
-          // Audio track routing & playback
           if (activeClip && shouldPlayTrack && !activeClip.isRecording) {
              if (!synth.activeNoteIds) synth.activeNoteIds = new Set();
              if (!synth.activeNoteIds.has(activeClip.id)) {
@@ -3524,32 +3564,41 @@ export default function App() {
     return `${mins}:${secs}.${ms}`;
   };
 
-  // Combine projects from all sources
-  const activeSessionUsers = [currentUser, ...Object.values(peers)].filter(Boolean);
+  // Combine projects from all sources safely (Post-Auth only)
+  const activeSessionUsers = [currentUser, ...Object.values(peers || {})].filter(Boolean);
+  let combinedProjectsList = [];
   
-  const combinedProjectsList = [...(Array.isArray(localProjects) ? localProjects : [])];
-  
-  // Merge Server Projects
-  serverProjects.forEach(sp => {
-     const existing = combinedProjectsList.find(p => p.id === sp.id);
-     if (existing) {
-         existing.isServer = true;
-     } else {
-         combinedProjectsList.push({ ...sp, source: 'server', isServer: true });
-     }
-  });
+  try {
+      const projectMap = new Map();
+      
+      // 1. Add local projects
+      (Array.isArray(localProjects) ? localProjects : []).forEach(p => {
+          if (p && p.id) projectMap.set(p.id, { ...p, source: p.source || 'local' });
+      });
 
-  // Merge P2P Network Projects
-  Object.values(networkProjects).forEach(np => {
-     const existing = combinedProjectsList.find(p => p.id === np.id);
-     if (existing) {
+      // 2. Merge Server Projects safely
+      (Array.isArray(serverProjects) ? serverProjects : []).forEach(sp => {
+         if (!sp || !sp.id) return;
+         const existing = projectMap.get(sp.id) || { ...sp };
+         existing.isServer = true;
+         existing.source = existing.source || 'server';
+         projectMap.set(sp.id, existing);
+      });
+
+      // 3. Merge P2P Network Projects safely
+      Object.values(networkProjects || {}).forEach(np => {
+         if (!np || !np.id) return;
+         const existing = projectMap.get(np.id) || { ...np };
          existing.peerId = np.peerId; 
-     } else {
-         combinedProjectsList.push({ ...np, source: 'network' });
-     }
-  });
-  
-  combinedProjectsList.sort((a,b) => (b.lastModified || 0) - (a.lastModified || 0));
+         existing.source = existing.source || 'network';
+         projectMap.set(np.id, existing);
+      });
+      
+      combinedProjectsList = Array.from(projectMap.values());
+      combinedProjectsList.sort((a,b) => ((b && b.lastModified) || 0) - ((a && a.lastModified) || 0));
+  } catch (e) {
+      console.error("Failed to safely merge projects:", e);
+  }
 
   // ==========================================
   // LOADING / AUTHENTICATION SCREEN RENDER BLOCK
@@ -3599,12 +3648,12 @@ export default function App() {
                    {toast.type === 'success' ? <CheckCircle2 size={16} /> :
                     toast.type === 'error' ? <AlertTriangle size={16} /> :
                     <Info size={16} />}
-                   <span className="text-sm font-medium">{toast.message}</span>
-                </div>
-             </div>
-           ))}
-        </div>
+                 <span className="text-sm font-medium">{toast.message}</span>
+              </div>
+           </div>
+         ))}
       </div>
+    </div>
     );
   }
 
@@ -3612,6 +3661,7 @@ export default function App() {
   // HOME SCREEN RENDER BLOCK
   // ==========================================
   if (appView === 'home') {
+
     return (
       <div className="flex flex-col h-screen bg-neutral-950 text-neutral-300 font-sans selection:bg-blue-500/30 overflow-hidden">
         {/* App Bar */}
@@ -3726,7 +3776,7 @@ export default function App() {
                      
                      <div className="flex gap-2 mt-4">
                        {(Array.isArray(proj.tracks) ? proj.tracks : []).slice(0,5).map(t => (
-                         <div key={t.id} className={`w-3 h-3 rounded-full shadow-sm ${t.color || 'bg-neutral-500'}`} title={t.name || 'Track'} />
+                         <div key={t?.id || Math.random()} className={`w-3 h-3 rounded-full shadow-sm ${t?.color || 'bg-neutral-500'}`} title={t?.name || 'Track'} />
                        ))}
                        {Array.isArray(proj.tracks) && proj.tracks.length > 5 && <span className="text-[10px] text-neutral-500 font-bold ml-1">+{proj.tracks.length - 5}</span>}
                      </div>
