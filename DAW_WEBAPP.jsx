@@ -1004,6 +1004,8 @@ function DAWStudio() {
   const [appView, setAppView] = useState('auth'); 
   const [projectId, setProjectId] = useState(null);
   const [projectName, setProjectName] = useState('New Project');
+  const [projectOwnerId, setProjectOwnerId] = useState(null);
+  const [projectOwnerName, setProjectOwnerName] = useState('');
   const [isExporting, setIsExporting] = useState(false);
   const [isPublic, setIsPublic] = useState(false);
   const [registeredUsers, setRegisteredUsers] = useState([]);
@@ -1268,8 +1270,8 @@ function DAWStudio() {
           tracks, 
           bpm, 
           lastModified: Date.now(),
-          ownerId: currentUser?.id,
-          ownerName: currentUser?.username,
+          ownerId: projectOwnerId || currentUser?.id,
+          ownerName: projectOwnerName || currentUser?.username,
           sharedWith: currentShared,
           isPublic: currentPublic
       };
@@ -1284,7 +1286,7 @@ function DAWStudio() {
   };
 
   const loadProjectToDaw = (p) => {
-      setProjectId(p.id); setProjectName(p.name); setTracks(p.tracks || []); setBpm(p.bpm || 120); setSharedWith(p.sharedWith || []); setIsPublic(p.isPublic || false); setAppView('daw');
+      setProjectId(p.id); setProjectName(p.name); setProjectOwnerId(p.ownerId || null); setProjectOwnerName(p.ownerName || ''); setTracks(p.tracks || []); setBpm(p.bpm || 120); setSharedWith(p.sharedWith || []); setIsPublic(p.isPublic || false); setAppView('daw');
       setTimeout(() => {
           dispatchDawAction({ type: 'REQUEST_SYNC' });
       }, 500);
@@ -2643,8 +2645,9 @@ function DAWStudio() {
                     <button onClick={handleSignOut} className="bg-neutral-800 hover:bg-neutral-700 text-neutral-400 hover:text-white p-2 rounded-lg transition-colors" title="Sign Out">
                         <LogOut size={16} />
                     </button>
-                    <button onClick={() => { setAppView('daw'); setTracks(INITIAL_TRACKS); setProjectId(`proj_${Date.now()}`); setSharedWith([]); }} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-colors"><Plus size={16}/> New Project</button>
+                    <button onClick={() => { setAppView('daw'); setTracks(INITIAL_TRACKS); setProjectId(`proj_${Date.now()}`); setSharedWith([]); setProjectOwnerId(currentUser?.id); setProjectOwnerName(currentUser?.username); setIsPublic(false); }} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-colors"><Plus size={16}/> New Project</button>
                 </div>
+
             </header>
             
             <h2 className="text-lg font-bold text-white mb-4 flex items-center gap-2"><Folder size={18} className="text-blue-400"/> My Projects</h2>
@@ -2707,7 +2710,10 @@ function DAWStudio() {
       <header className="h-14 bg-neutral-950 border-b border-neutral-800 flex items-center justify-between px-4 shrink-0 z-40 relative">
         <div className="flex items-center gap-4 w-1/3">
             <button onClick={() => setAppView('home')} className="text-neutral-400 hover:text-white transition-colors" title="Back to Library"><Home size={18} /></button>
-            <input value={projectName} onChange={(e) => setProjectName(e.target.value)} className="bg-transparent text-white font-bold text-sm outline-none w-[180px] focus:border-b focus:border-blue-500 transition-colors" />
+            <div className="flex flex-col justify-center">
+                <input value={projectName} onChange={(e) => setProjectName(e.target.value)} className="bg-transparent text-white font-bold text-sm outline-none w-[180px] focus:border-b focus:border-blue-500 transition-colors" />
+                {(projectOwnerName || currentUser?.username) && <span className="text-[9px] text-neutral-500 font-medium tracking-wide">by {projectOwnerName || currentUser?.username}</span>}
+            </div>
             <button onClick={() => saveProject()} className="text-neutral-400 hover:text-blue-400 transition-colors" title="Save Project"><Save size={16}/></button>
             <button onClick={() => setShowShareModal(true)} className="text-neutral-400 hover:text-purple-400 ml-2 transition-colors" title="Share Project"><Users size={16}/></button>
             <button onClick={handleExportBounce} disabled={isExporting} className={`ml-2 transition-colors ${isExporting ? 'text-green-400 animate-pulse' : 'text-neutral-400 hover:text-green-400'}`} title="Export to WAV"><Download size={16}/></button>
@@ -2825,7 +2831,11 @@ function DAWStudio() {
              {tracks.map(t => (
                <div key={t.id} className="w-32 bg-neutral-950 border border-neutral-800 rounded-xl flex flex-col items-center py-4 shrink-0 relative group shadow-lg transition-colors">
                   <button onClick={(e) => handleContextMenu(e, 'track', { trackId: t.id })} className="absolute top-2 right-2 text-neutral-500 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"><MoreHorizontal size={14}/></button>
-                  <div className={`w-3 h-3 rounded-full mb-2 shadow-sm ${t.color}`} />
+                  <div 
+                      className={`w-3 h-3 rounded-full mb-2 shadow-sm ${t.color} cursor-pointer hover:scale-110 transition-transform`} 
+                      title="Click to cycle color"
+                      onClick={(e) => { e.stopPropagation(); const colors = ['bg-emerald-500', 'bg-blue-500', 'bg-purple-500', 'bg-pink-500', 'bg-red-500', 'bg-orange-500', 'bg-yellow-500', 'bg-cyan-500']; dispatchDawAction({ type: 'UPDATE_TRACK_COLOR', payload: { trackId: t.id, color: colors[(colors.indexOf(t.color) + 1) % colors.length] }}); }}
+                  />
                   <span className="text-xs font-bold text-white truncate w-full text-center px-2">{t.name}</span>
                   
                   <div className="w-full px-4 mt-2 flex flex-col items-center" onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'mixer_pan', trackId: t.id })}>
@@ -2862,7 +2872,7 @@ function DAWStudio() {
                          </div>
                          <VuMeter isMaster={true} masterAnalyserRef={masterAnalyserRef} isVertical={true} />
                      </div>
-                     <input type="range" orient="vertical" min="0" max="100" value={masterVolume} onChange={(e) => handleMasterVolumeChange(e.target.value)} onWheel={(e) => { e.stopPropagation(); handleMasterVolumeChange(Math.min(100, Math.max(0, masterVolume + (e.deltaY < 0 ? 5 : -5)))); }} className="absolute inset-0 opacity-0 cursor-pointer h-full w-full" style={{ WebkitAppearance: 'slider-vertical' }} />
+                     <input type="range" orient="vertical" min="0" max="100" value={masterVolume} onChange={(e) => handleMasterVolumeChange(e.target.value)} onDoubleClick={() => handleMasterVolumeChange(80)} onWheel={(e) => { e.stopPropagation(); handleMasterVolumeChange(Math.min(100, Math.max(0, masterVolume + (e.deltaY < 0 ? 5 : -5)))); }} className="absolute inset-0 opacity-0 cursor-pointer h-full w-full" title="Double-click to reset" style={{ WebkitAppearance: 'slider-vertical' }} />
                   </div>
                   <span className="text-[10px] font-mono text-red-400">{masterVolume}</span>
              </div>
@@ -2887,7 +2897,11 @@ function DAWStudio() {
                                 {isPeered && <div className={`absolute left-0 top-0 bottom-0 w-1 shadow-[0_0_8px_rgba(255,255,255,0.3)] ${isPeered.color || 'bg-blue-500'}`} title={`${isPeered.username} is active`} />}
                                 <div className="flex justify-between items-center">
                                     <div className="flex items-center gap-2 pl-1">
-                                        <div className={`w-3 h-3 rounded-full shadow-sm ${t.color} shrink-0`} />
+                                        <div 
+                                          className={`w-3 h-3 rounded-full shadow-sm ${t.color} shrink-0 cursor-pointer hover:scale-110 transition-transform`} 
+                                          title="Click to cycle color"
+                                          onClick={(e) => { e.stopPropagation(); const colors = ['bg-emerald-500', 'bg-blue-500', 'bg-purple-500', 'bg-pink-500', 'bg-red-500', 'bg-orange-500', 'bg-yellow-500', 'bg-cyan-500']; dispatchDawAction({ type: 'UPDATE_TRACK_COLOR', payload: { trackId: t.id, color: colors[(colors.indexOf(t.color) + 1) % colors.length] }}); }}
+                                        />
                                         {editingTrackId === t.id ? (
                                             <input autoFocus onBlur={() => setEditingTrackId(null)} onKeyDown={(e) => e.key === 'Enter' && setEditingTrackId(null)} value={t.name} onChange={(e) => dispatchDawAction({ type: 'RENAME_TRACK', payload: { id: t.id, name: e.target.value } })} className="bg-neutral-950 text-xs font-bold text-white outline-none border border-neutral-700 rounded px-1 w-24" />
                                         ) : (
