@@ -16,9 +16,9 @@ WORKDIR /app/webdaw
 # 2. Install base React dependencies
 RUN npm install
 
-# 3. Install specific libraries
+# 3. Install specific libraries (ADDED socket.io-client here)
 # (Pinning Tailwind to v3 to guarantee config compatibility and avoid npx crashes)
-RUN npm install lucide-react tailwindcss@3 postcss autoprefixer tailwindcss-animate
+RUN npm install lucide-react tailwindcss@3 postcss autoprefixer tailwindcss-animate socket.io-client
 
 # 4. Inject PostCSS Configuration dynamically
 RUN printf 'export default {\n\

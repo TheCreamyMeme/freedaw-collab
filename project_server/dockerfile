@@ -4,20 +4,20 @@ FROM node:20-alpine
 # Set the working directory inside the container
 WORKDIR /app
 
-# Initialize a package.json and install Express & CORS automatically
+# Initialize a package.json and install Express, CORS, JWT, Socket.io, AND multer automatically
 # This avoids needing a separate package.json in your local directory
-RUN npm init -y && npm install express cors
+RUN npm init -y && npm install express cors jsonwebtoken socket.io multer
 
 # Copy your server script into the container
 COPY server.js .
 
-# Create directories for persistent storage 
+# Create directories for persistent storage
 RUN mkdir -p projects samples
 
 # Expose the port the server runs on
 EXPOSE 3000
 
-# Define volumes so that the saved projects and samples map out of the container 
+# Define volumes so that the saved projects and samples map out of the container
 # and are not lost when the container is stopped or removed.
 VOLUME ["/app/projects", "/app/samples"]
 

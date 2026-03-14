@@ -1,101 +1,183 @@
 const express = require('express');
+const http = require('http');
 const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
+const jwt = require('jsonwebtoken');
+const { Server } = require('socket.io');
+const multer = require('multer');
 
 const app = express();
+const server = http.createServer(app);
 
-// Enable Cross-Origin Resource Sharing (CORS) for all routes
-// This allows your frontend (e.g., daw.sprig.cc) to talk to this API (api.sprig.cc)
+// Socket.io for Signaling, Presence, and WebRTC Negotiation
+const io = new Server(server, {
+    cors: { origin: '*', methods: ['GET', 'POST'] }
+});
+
+const JWT_SECRET = process.env.JWT_SECRET || 'webdaw_super_secret_key_2026';
+const PORT = process.env.PORT || 3000;
+
 app.use(cors());
+app.use(express.json({ limit: '100mb' }));
 
-// Increase JSON payload limit for large DAW project files (50mb is plenty)
-app.use(express.json({ limit: '50mb' }));
-
-// Directories for persistent storage inside the container/host
 const PROJECTS_DIR = path.join(__dirname, 'projects');
 const SAMPLES_DIR = path.join(__dirname, 'samples');
-
-// Ensure directories exist on startup
 if (!fs.existsSync(PROJECTS_DIR)) fs.mkdirSync(PROJECTS_DIR, { recursive: true });
 if (!fs.existsSync(SAMPLES_DIR)) fs.mkdirSync(SAMPLES_DIR, { recursive: true });
 
-// ==========================================
-// AUDIO SAMPLE ENDPOINTS
-// ==========================================
+// Multer Storage Configuration for Audio Samples
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => cb(null, SAMPLES_DIR),
+    filename: (req, file, cb) => cb(null, `${req.params.sampleId}.wav`)
+});
+const upload = multer({ storage });
 
-// 1. Serve audio files statically via GET
-// A request to /api/samples/my_sample.wav will serve the file from the SAMPLES_DIR
+// --- 1. AUTHENTICATION ---
+app.post('/api/auth/login', (req, res) => {
+    const { username } = req.body;
+    if (!username) return res.status(400).json({ error: 'Username required' });
+
+    // In production, verify passwords against a database here.
+    const user = { id: `u_${username}_${Date.now()}`, username };
+    const token = jwt.sign(user, JWT_SECRET, { expiresIn: '7d' });
+
+    res.json({ token, user });
+});
+
+// Auth Middleware
+const authenticateToken = (req, res, next) => {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    if (!token) return res.status(401).json({ error: 'Unauthorized' });
+
+    jwt.verify(token, JWT_SECRET, (err, user) => {
+        if (err) return res.status(403).json({ error: 'Forbidden' });
+        req.user = user;
+        next();
+    });
+};
+
+// --- 2. SAMPLES API (Protected Upload/Delete) ---
 app.use('/api/samples', express.static(SAMPLES_DIR));
 
-// 2. Upload audio samples (accepts raw binary WAV)
-app.post('/api/samples/:sampleId', express.raw({ type: 'audio/wav', limit: '100mb' }), (req, res) => {
+app.post('/api/samples/upload/:sampleId', authenticateToken, upload.single('audio'), (req, res) => {
+    res.json({ status: 'saved', url: `/api/samples/${req.params.sampleId}.wav` });
+});
+
+app.delete('/api/samples/:sampleId', authenticateToken, (req, res) => {
     try {
         const filePath = path.join(SAMPLES_DIR, `${req.params.sampleId}.wav`);
-        
-        // Only write if we don't already have it, to save disk wear
-        if (!fs.existsSync(filePath)) {
-            fs.writeFileSync(filePath, req.body);
-            console.log(`Saved new sample: ${req.params.sampleId}.wav`);
+        if (fs.existsSync(filePath)) {
+            fs.unlinkSync(filePath);
+            return res.json({ status: 'deleted' });
         }
-        res.json({ status: 'saved' });
-    } catch (e) {
-        console.error('Error saving sample:', e);
-        res.status(500).json({ error: 'Failed to write audio file' });
-    }
-});
-
-// ==========================================
-// PROJECT DATA ENDPOINTS
-// ==========================================
-
-// 1. Save project JSON
-app.post('/api/projects', (req, res) => {
-    try {
-        const project = req.body;
-        if (!project || !project.id) {
-            return res.status(400).json({ error: 'Invalid project data' });
-        }
-        
-        const filePath = path.join(PROJECTS_DIR, `${project.id}.json`);
-        
-        // Write the JSON formatted nicely with 2-space indentation
-        fs.writeFileSync(filePath, JSON.stringify(project, null, 2));
-        console.log(`Saved project: ${project.name} (${project.id})`);
-        
-        res.json({ status: 'saved', id: project.id });
+        res.status(404).json({ error: 'Sample not found' });
     } catch (error) {
-        console.error('Error saving project:', error);
-        res.status(500).json({ error: 'Failed to save project' });
+        res.status(500).json({ error: 'Failed to delete sample' });
     }
 });
 
-// 2. Load all project JSONs
-app.get('/api/projects', (req, res) => {
+// --- 3. PROJECTS API (Protected Upload/Delete) ---
+app.get('/api/projects', authenticateToken, (req, res) => {
     try {
-        // Read all files ending in .json
         const files = fs.readdirSync(PROJECTS_DIR).filter(f => f.endsWith('.json'));
-        
-        // Map them into an array of objects
-        const projects = files.map(f => {
-            const filePath = path.join(PROJECTS_DIR, f);
-            return JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-        });
-        
-        res.json(projects);
+        const authorizedProjects = [];
+
+        for (const file of files) {
+            const project = JSON.parse(fs.readFileSync(path.join(PROJECTS_DIR, file), 'utf-8'));
+
+            const isOwner = project.ownerId === req.user.id;
+            const isSharedWithMe = project.sharedWith && project.sharedWith.includes(req.user.username);
+            const isPublicLegacy = !project.ownerId;
+
+            if (isOwner || isSharedWithMe || isPublicLegacy) {
+                authorizedProjects.push(project);
+            }
+        }
+
+        res.json(authorizedProjects);
     } catch (error) {
-        console.error('Error reading projects:', error);
         res.status(500).json({ error: 'Failed to load projects' });
     }
 });
 
-// ==========================================
-// SERVER INITIALIZATION
-// ==========================================
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-    console.log(`WebDAW Host Server running on port ${PORT}`);
-    console.log(`- Projects Directory: ${PROJECTS_DIR}`);
-    console.log(`- Samples Directory:  ${SAMPLES_DIR}`);
-    console.log(`- CORS Enabled for all origins`);
+app.post('/api/projects', authenticateToken, (req, res) => {
+    try {
+        const project = req.body;
+        if (!project || !project.id) return res.status(400).json({ error: 'Invalid project data' });
+
+        fs.writeFileSync(path.join(PROJECTS_DIR, `${project.id}.json`), JSON.stringify(project, null, 2));
+        res.json({ status: 'saved', id: project.id });
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to save project' });
+    }
+});
+
+app.delete('/api/projects/:projectId', authenticateToken, (req, res) => {
+    try {
+        const filePath = path.join(PROJECTS_DIR, `${req.params.projectId}.json`);
+
+        if (fs.existsSync(filePath)) {
+            const project = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+
+            if (project.ownerId && project.ownerId !== req.user.id) {
+                return res.status(403).json({ error: 'Forbidden: Only the owner can delete this project' });
+            }
+
+            fs.unlinkSync(filePath);
+            return res.json({ status: 'deleted' });
+        }
+        res.status(404).json({ error: 'Project not found' });
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to delete project' });
+    }
+});
+
+// --- 4. REAL-TIME SIGNALING & COLLABORATION (Socket.io) ---
+io.on('connection', (socket) => {
+    console.log('Client connected:', socket.id);
+    let currentRoom = null;
+
+    socket.on('join-room', (roomId, userProfile) => {
+        if (currentRoom) socket.leave(currentRoom);
+        currentRoom = roomId;
+        socket.join(roomId);
+        socket.to(roomId).emit('user-connected', socket.id, userProfile);
+    });
+
+    // WebRTC Signaling
+    socket.on('webrtc-offer', (targetId, offer) => {
+        io.to(targetId).emit('webrtc-offer', socket.id, offer);
+    });
+    socket.on('webrtc-answer', (targetId, answer) => {
+        io.to(targetId).emit('webrtc-answer', socket.id, answer);
+    });
+    socket.on('webrtc-ice-candidate', (targetId, candidate) => {
+        io.to(targetId).emit('webrtc-ice-candidate', socket.id, candidate);
+    });
+
+    // DAW State & Actions
+    socket.on('daw-action', (actionData) => {
+        if (currentRoom) {
+            socket.broadcast.to(currentRoom).emit('daw-action', actionData);
+        }
+    });
+
+    // Presence (Avatars, Mouse cursors, active tracks)
+    socket.on('presence-update', (presenceData) => {
+        if (currentRoom) {
+            socket.to(currentRoom).emit('presence-update', socket.id, presenceData);
+        }
+    });
+
+    socket.on('disconnect', () => {
+        if (currentRoom) {
+            socket.to(currentRoom).emit('user-disconnected', socket.id);
+        }
+    });
+});
+
+server.listen(PORT, () => {
+    console.log(`Secured WebDAW Server running on port ${PORT}`);
 });
