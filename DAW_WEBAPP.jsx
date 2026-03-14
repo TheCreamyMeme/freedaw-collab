@@ -6,7 +6,7 @@ import {
   Folder, Sliders, Piano,
   MousePointer2, Pencil, Eraser, X, Grid, Trash2, Activity,
   Settings2, Plug, Power, LogOut, FileAudio, FileCode, Cpu,
-  Repeat, Home, Save, Download, Upload, FileJson, Info, AlertTriangle, CheckCircle2, Network, Video, VideoOff, MicOff, Lock, Copy, MoreHorizontal
+  Repeat, Home, Save, Download, Upload, FileJson, Info, AlertTriangle, CheckCircle2, Network, Video, VideoOff, MicOff, Lock, Copy, MoreHorizontal, Scissors
 } from 'lucide-react';
 import { io } from 'socket.io-client';
 
@@ -67,7 +67,6 @@ const idb = {
   }
 };
 
-const TOTAL_BEATS = 256; 
 const globalAudioBufferCache = new Map();
 
 // --- Time Formatter ---
@@ -77,6 +76,143 @@ const formatTime = (currentTime, bpm) => {
     const secs = Math.floor(timeInSeconds % 60).toString().padStart(2, '0');
     const ms = Math.floor((timeInSeconds % 1) * 100).toString().padStart(2, '0');
     return `${mins}:${secs}.${ms}`;
+};
+
+// --- WAV Audio Encoder ---
+const audioBufferToWav = (buffer) => {
+    const numChannels = buffer.numberOfChannels;
+    const sampleRate = buffer.sampleRate;
+    const format = 1; // PCM
+    const bitDepth = 16;
+    
+    let result;
+    if (numChannels === 2) {
+        const channelData0 = buffer.getChannelData(0);
+        const channelData1 = buffer.getChannelData(1);
+        const length = channelData0.length * 2;
+        result = new Int16Array(length);
+        for (let i = 0, j = 0; i < channelData0.length; i++) {
+            result[j++] = Math.max(-32768, Math.min(32767, channelData0[i] * 32768));
+            result[j++] = Math.max(-32768, Math.min(32767, channelData1[i] * 32768));
+        }
+    } else {
+        const channelData = buffer.getChannelData(0);
+        result = new Int16Array(channelData.length);
+        for (let i = 0; i < channelData.length; i++) {
+            result[i] = Math.max(-32768, Math.min(32767, channelData[i] * 32768));
+        }
+    }
+
+    const bufferLength = result.length * 2;
+    const arrayBuffer = new ArrayBuffer(44 + bufferLength);
+    const view = new DataView(arrayBuffer);
+
+    const writeString = (view, offset, string) => {
+        for (let i = 0; i < string.length; i++) view.setUint8(offset + i, string.charCodeAt(i));
+    };
+
+    writeString(view, 0, 'RIFF');
+    view.setUint32(4, 36 + bufferLength, true);
+    writeString(view, 8, 'WAVE');
+    writeString(view, 12, 'fmt ');
+    view.setUint32(16, 16, true);
+    view.setUint16(20, format, true);
+    view.setUint16(22, numChannels, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * numChannels * (bitDepth / 8), true);
+    view.setUint16(32, numChannels * (bitDepth / 8), true);
+    view.setUint16(34, bitDepth, true);
+    writeString(view, 36, 'data');
+    view.setUint32(40, bufferLength, true);
+
+    const dataView = new Int16Array(arrayBuffer, 44);
+    dataView.set(result);
+
+    return new Blob([arrayBuffer], { type: 'audio/wav' });
+};
+
+// --- Zero-Dependency Native MIDI Parser ---
+const parseMidiFile = async (file) => {
+    const arrayBuffer = await file.arrayBuffer();
+    const data = new Uint8Array(arrayBuffer);
+    let offset = 0;
+    
+    const readString = (len) => { let s=''; for(let i=0;i<len && offset<data.length;i++) s+=String.fromCharCode(data[offset++]); return s; };
+    const read32 = () => (data[offset++]<<24)|(data[offset++]<<16)|(data[offset++]<<8)|data[offset++];
+    const read16 = () => (data[offset++]<<8)|data[offset++];
+    const readVar = () => { let v=0, b; do { if(offset>=data.length) break; b=data[offset++]; v=(v<<7)|(b&0x7f); } while(b&0x80); return v; };
+
+    if(readString(4) !== 'MThd') throw new Error("Invalid MIDI Header");
+    read32(); const fmt = read16(), trks = read16(), ppq = read16() || 96;
+    let allNotes = [];
+
+    for(let t=0; t<trks; t++) {
+        if(offset >= data.length) break;
+        const type = readString(4);
+        const len = read32();
+        if(type !== 'MTrk') { offset += len; continue; }
+        
+        const end = offset + len;
+        let ticks = 0, lastStatus = 0, active = {};
+        
+        while(offset < end) {
+            ticks += readVar();
+            if (offset >= end) break;
+            
+            let status = data[offset];
+            if (status >= 0x80) { 
+                status = data[offset++]; 
+                // CRITICAL FIX: Only channel messages (0x80-0xEF) set running status. 
+                // Meta (0xFF) and Sysex (0xF0) reset/ignore it.
+                if (status < 0xf0) lastStatus = status; 
+            }
+            else if (lastStatus) { status = lastStatus; }
+            else { offset++; continue; } // Skip malformed bytes without crashing
+
+            if (status === 0xff) { // Meta Event
+                offset++; // Skip type
+                offset += readVar(); // Skip data
+            } else if (status === 0xf0 || status === 0xf7) { // Sysex
+                offset += readVar();
+            } else {
+                const cmd = status >> 4;
+                const channel = status & 0x0f;
+                
+                if (cmd === 8 || cmd === 9) {
+                    const note = data[offset++]; 
+                    const vel = data[offset++];
+                    const b = ticks / ppq;
+                    const key = `${channel}_${note}`;
+                    
+                    if (cmd === 9 && vel > 0) {
+                        if (active[key]) { // Note already on, close it
+                            allNotes.push({ id: `m_${Date.now()}_${Math.random()}`, pitch: note, start: active[key].s, duration: Math.max(0.125, b - active[key].s), velocity: active[key].v });
+                        }
+                        active[key] = { s: b, v: vel };
+                    } else if (active[key]) {
+                        allNotes.push({ id: `m_${Date.now()}_${Math.random()}`, pitch: note, start: active[key].s, duration: Math.max(0.125, b - active[key].s), velocity: active[key].v });
+                        delete active[key];
+                    }
+                } else if (cmd === 10 || cmd === 11 || cmd === 14) {
+                    offset += 2;
+                } else if (cmd === 12 || cmd === 13) {
+                    offset += 1;
+                } else {
+                    // Unknown or system message, skip byte to avoid infinite loops
+                    offset++; 
+                }
+            }
+        }
+        
+        // Close dangling notes
+        const endBeat = ticks / ppq;
+        for (const key in active) {
+            const note = parseInt(key.split('_')[1], 10);
+            allNotes.push({ id: `m_${Date.now()}_${Math.random()}`, pitch: note, start: active[key].s, duration: Math.max(0.125, endBeat - active[key].s), velocity: active[key].v });
+        }
+    }
+    
+    return allNotes;
 };
 
 // --- Dynamic Grid Styling Engine ---
@@ -252,6 +388,28 @@ const Knob = ({ param, value, min, max, step, isLog, onChange, onContextMenu }) 
         };
     }, [isDragging, min, max, step, param, isLog]);
 
+    const handleWheel = (e) => {
+        e.stopPropagation();
+        const isUp = e.deltaY < 0;
+        let nextValue;
+        if (isLog) {
+            const minLog = Math.log(Math.max(0.001, min));
+            const maxLog = Math.log(max);
+            const currentLog = Math.log(Math.max(0.001, Number(value)));
+            const stepLog = (maxLog - minLog) / 50; 
+            let nextLog = currentLog + (isUp ? stepLog : -stepLog);
+            nextLog = Math.max(minLog, Math.min(maxLog, nextLog));
+            nextValue = Math.exp(nextLog);
+        } else {
+            const range = max - min;
+            const stepAmount = step || (range / 50);
+            nextValue = Number(value) + (isUp ? stepAmount : -stepAmount);
+        }
+        nextValue = Math.max(min, Math.min(max, nextValue));
+        if (step && !isLog) nextValue = Math.round(nextValue / step) * step;
+        onChangeRef.current(param, nextValue);
+    };
+
     const percent = isLog 
         ? (Math.log(Math.max(0.001, Number(value))) - Math.log(Math.max(0.001, min))) / (Math.log(max) - Math.log(Math.max(0.001, min)))
         : (Number(value) - min) / (max - min);
@@ -264,6 +422,7 @@ const Knob = ({ param, value, min, max, step, isLog, onChange, onContextMenu }) 
             <div 
                 className="w-10 h-10 rounded-full bg-neutral-800 border-2 border-neutral-700 relative cursor-ns-resize shadow-[0_4px_8px_rgba(0,0,0,0.6)] group"
                 onPointerDown={handlePointerDown}
+                onWheel={handleWheel}
             >
                 <div className="absolute inset-0 rounded-full bg-gradient-to-b from-neutral-600/20 to-transparent pointer-events-none" />
                 <div className="absolute inset-0" style={{ transform: `rotate(${angle}deg)` }}>
@@ -677,31 +836,130 @@ const initTrackRouting = async (track, ctx, masterGain) => {
     });
   }
   currentOutput.connect(panner); panner.connect(faderGain); faderGain.connect(masterGain);
-  return { inputBus, faderGain, panner, fxNodes, activeNoteIds: new Set(), activeSource: null };
+  
+  const analyser = ctx.createAnalyser();
+  analyser.fftSize = 256;
+  faderGain.connect(analyser);
+
+  return { inputBus, faderGain, panner, fxNodes, activeNoteIds: new Set(), activeSource: null, analyser };
 };
 
+// --- VU Meter Component ---
+const VuMeter = ({ trackId, synthsRef, isMaster, masterAnalyserRef, isVertical = true }) => {
+    const curtainRef = useRef(null);
+    const clipRef = useRef(null);
+    const dotRef = useRef(null);
+    const peakRef = useRef(0);
+    const peakHoldRef = useRef(0);
+    const clipTimeoutRef = useRef(0);
+
+    useEffect(() => {
+        let reqId;
+        const update = () => {
+            let analyser = null;
+            if (isMaster) analyser = masterAnalyserRef?.current;
+            else analyser = synthsRef?.current[trackId]?.analyser;
+
+            if (analyser && curtainRef.current) {
+                const dataArray = new Float32Array(analyser.fftSize);
+                analyser.getFloatTimeDomainData(dataArray);
+                let currentPeak = 0;
+                for (let i = 0; i < dataArray.length; i++) {
+                    const abs = Math.abs(dataArray[i]);
+                    if (abs > currentPeak) currentPeak = abs;
+                }
+                
+                // Fast attack, smooth decay for the main meter
+                if (currentPeak > peakRef.current) peakRef.current = currentPeak; 
+                else peakRef.current *= 0.85; 
+
+                // Peak Hold Dot logic (Slow decay)
+                if (currentPeak > peakHoldRef.current) peakHoldRef.current = currentPeak;
+                else peakHoldRef.current *= 0.98;
+                
+                let levelPercent = Math.min(100, peakRef.current * 140); 
+                let dotPercent = Math.min(100, peakHoldRef.current * 140);
+                
+                // Audio Clipping LED
+                if (currentPeak >= 0.95 && clipRef.current) {
+                    clipRef.current.style.backgroundColor = '#ef4444';
+                    clipRef.current.style.boxShadow = '0 0 6px #ef4444';
+                    clearTimeout(clipTimeoutRef.current);
+                    clipTimeoutRef.current = setTimeout(() => {
+                        if (clipRef.current) {
+                            clipRef.current.style.backgroundColor = '#262626';
+                            clipRef.current.style.boxShadow = 'none';
+                        }
+                    }, 1000);
+                }
+                
+                if (isVertical) {
+                    curtainRef.current.style.height = `${100 - levelPercent}%`;
+                    if (dotRef.current) dotRef.current.style.bottom = `${dotPercent}%`;
+                } else {
+                    curtainRef.current.style.width = `${100 - levelPercent}%`;
+                    if (dotRef.current) dotRef.current.style.left = `${dotPercent}%`;
+                }
+            } else if (curtainRef.current) {
+                peakRef.current *= 0.85;
+                peakHoldRef.current *= 0.98;
+                let levelPercent = Math.min(100, peakRef.current * 140);
+                let dotPercent = Math.min(100, peakHoldRef.current * 140);
+                if (isVertical) {
+                    curtainRef.current.style.height = `${100 - levelPercent}%`;
+                    if (dotRef.current) dotRef.current.style.bottom = `${dotPercent}%`;
+                } else {
+                    curtainRef.current.style.width = `${100 - levelPercent}%`;
+                    if (dotRef.current) dotRef.current.style.left = `${dotPercent}%`;
+                }
+            }
+            reqId = requestAnimationFrame(update);
+        };
+        reqId = requestAnimationFrame(update);
+        return () => { cancelAnimationFrame(reqId); clearTimeout(clipTimeoutRef.current); };
+    }, [trackId, synthsRef, isMaster, masterAnalyserRef, isVertical]);
+
+    return (
+        <div className={`flex ${isVertical ? 'flex-col h-full w-2' : 'flex-row w-full h-1.5'} items-center gap-[2px]`}>
+            <div ref={clipRef} className={`bg-neutral-800 rounded-sm transition-colors duration-75 shrink-0 ${isVertical ? 'w-full h-1.5' : 'h-full w-1.5'}`} />
+            <div className={`relative overflow-hidden rounded-sm border border-neutral-900 shadow-inner ${isVertical ? 'w-full flex-1 bg-gradient-to-t' : 'h-full flex-1 bg-gradient-to-r'} from-green-500 via-yellow-400 to-red-500`}>
+                <div ref={curtainRef} className={`absolute bg-neutral-950/95 backdrop-blur-sm ${isVertical ? 'top-0 left-0 w-full' : 'top-0 right-0 h-full'}`} style={{ [isVertical ? 'height' : 'width']: '100%' }} />
+                
+                {/* Peak Hold Dot */}
+                <div ref={dotRef} className={`absolute bg-white shadow-[0_0_4px_rgba(255,255,255,0.8)] z-10 ${isVertical ? 'left-0 w-full h-[2px]' : 'top-0 h-full w-[2px]'}`} style={{ [isVertical ? 'bottom' : 'left']: '0%' }} />
+
+                <div className={`absolute inset-0 pointer-events-none ${isVertical ? 'bg-[linear-gradient(to_bottom,transparent_1px,rgba(0,0,0,0.6)_1px)] bg-[length:100%_3px]' : 'bg-[linear-gradient(to_right,transparent_1px,rgba(0,0,0,0.6)_1px)] bg-[length:3px_100%]'}`} />
+            </div>
+        </div>
+    );
+};
 // --- Custom Audio Waveform Preview Component ---
-const WaveformDisplay = ({ buffer, bpm, beatWidth }) => {
+const WaveformDisplay = ({ buffer, bpm, beatWidth, sampleOffset = 0 }) => {
     const canvasRef = useRef(null);
+    const widthPx = buffer.duration * (bpm / 60) * beatWidth;
 
     useEffect(() => {
         const canvas = canvasRef.current;
         if (!canvas || !buffer) return;
         const ctx = canvas.getContext('2d');
-        const width = 1000; 
+        
+        // Dynamically scale internal canvas resolution to actual render width
+        // Maxed at 16000px to prevent browser memory crashes on extreme zooms
+        const renderWidth = Math.max(1000, Math.min(16000, Math.ceil(widthPx))); 
         const height = 100;
-        canvas.width = width;
+        
+        canvas.width = renderWidth;
         canvas.height = height;
 
         const data = buffer.getChannelData(0);
-        const step = Math.ceil(data.length / width);
+        const step = Math.max(1, Math.ceil(data.length / renderWidth));
         const amp = height / 2;
 
-        ctx.clearRect(0, 0, width, height);
+        ctx.clearRect(0, 0, renderWidth, height);
         ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
         
         ctx.beginPath();
-        for (let i = 0; i < width; i++) {
+        for (let i = 0; i < renderWidth; i++) {
             let min = 0;
             let max = 0;
             for (let j = 0; j < step; j++) {
@@ -717,17 +975,14 @@ const WaveformDisplay = ({ buffer, bpm, beatWidth }) => {
             ctx.rect(i, y, 1, h);
         }
         ctx.fill();
-    }, [buffer]);
-
-    const widthPx = buffer.duration * (bpm / 60) * beatWidth;
+    }, [buffer, widthPx]); // Added widthPx to redraw in high-res when zoomed
 
     return (
-        <div className="absolute inset-y-0 left-0 overflow-hidden pointer-events-none mix-blend-overlay opacity-60" style={{ width: `${widthPx}px`, top: '16px' }}>
+        <div className="absolute inset-y-0 overflow-hidden pointer-events-none mix-blend-overlay opacity-60" style={{ width: `${widthPx}px`, left: `-${sampleOffset * beatWidth}px`, top: '16px' }}>
             <canvas ref={canvasRef} className="w-full h-full object-fill" />
         </div>
     );
 };
-
 export default class App extends Component {
   constructor(props) { super(props); this.state = { hasError: false, error: null }; }
   static getDerivedStateFromError(error) { return { hasError: true, error }; }
@@ -749,6 +1004,9 @@ function DAWStudio() {
   const [appView, setAppView] = useState('auth'); 
   const [projectId, setProjectId] = useState(null);
   const [projectName, setProjectName] = useState('New Project');
+  const [isExporting, setIsExporting] = useState(false);
+  const [isPublic, setIsPublic] = useState(false);
+  const [registeredUsers, setRegisteredUsers] = useState([]);
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
@@ -788,6 +1046,7 @@ function DAWStudio() {
   const [contextMenu, setContextMenu] = useState(null);
   const [editingTrackId, setEditingTrackId] = useState(null);
   const [draggingClip, setDraggingClip] = useState(null);
+  const [dragHover, setDragHover] = useState(null); // Real-time file drag states
   const [draggingEdge, setDraggingEdge] = useState(null);
   const [draggingNote, setDraggingNote] = useState(null);
   const [draggingNoteEdge, setDraggingNoteEdge] = useState(null);
@@ -797,6 +1056,7 @@ function DAWStudio() {
 
   const audioCtxRef = useRef(null);
   const masterGainRef = useRef(null);
+  const masterAnalyserRef = useRef(null);
   const synthsRef = useRef({});
   const lastTimeRef = useRef(0);
   
@@ -915,11 +1175,21 @@ function DAWStudio() {
       }
       if (projectId && tracks.length > 0) {
           const timer = setTimeout(() => {
-              saveProject(sharedWith, true);
+              saveProject(sharedWith, isPublic, true);
           }, 3000); 
           return () => clearTimeout(timer);
       }
-  }, [tracks, bpm, projectName, sharedWith]);
+  }, [tracks, bpm, projectName, sharedWith, isPublic]);
+
+  // Fetch users when the share modal opens
+  useEffect(() => {
+      if (showShareModal && authToken) {
+          fetch(`${API_BASE_URL}/api/users`, { headers: { 'Authorization': `Bearer ${authToken}` } })
+          .then(res => res.json())
+          .then(data => setRegisteredUsers(data))
+          .catch(e => console.error(e));
+      }
+  }, [showShareModal, authToken]);
 
   useEffect(() => {
     const style = document.createElement('style');
@@ -973,7 +1243,7 @@ function DAWStudio() {
               const next = { ...currentUser, avatar: reader.result };
               setCurrentUser(next);
               localStorage.setItem('freedaw_user', JSON.stringify(next));
-              if (socketRef.current) socketRef.current.emit('presence-update', { avatar: reader.result });
+              if (socketRef.current) socketRef.current.emit('presence-update', { username: next.username, avatar: reader.result, color: next.color });
           };
           reader.readAsDataURL(file);
       }
@@ -991,7 +1261,7 @@ function DAWStudio() {
       }
   };
 
-  const saveProject = async (currentShared = sharedWith, isAuto = false) => {
+  const saveProject = async (currentShared = sharedWith, currentPublic = isPublic, isAuto = false) => {
       const p = { 
           id: projectId || `proj_${Date.now()}`, 
           name: projectName, 
@@ -1000,7 +1270,8 @@ function DAWStudio() {
           lastModified: Date.now(),
           ownerId: currentUser?.id,
           ownerName: currentUser?.username,
-          sharedWith: currentShared
+          sharedWith: currentShared,
+          isPublic: currentPublic
       };
       await idb.set('projects', p); 
       if (!isAuto) showToast("Saved locally.", "info");
@@ -1013,7 +1284,7 @@ function DAWStudio() {
   };
 
   const loadProjectToDaw = (p) => {
-      setProjectId(p.id); setProjectName(p.name); setTracks(p.tracks || []); setBpm(p.bpm || 120); setSharedWith(p.sharedWith || []); setAppView('daw');
+      setProjectId(p.id); setProjectName(p.name); setTracks(p.tracks || []); setBpm(p.bpm || 120); setSharedWith(p.sharedWith || []); setIsPublic(p.isPublic || false); setAppView('daw');
       setTimeout(() => {
           dispatchDawAction({ type: 'REQUEST_SYNC' });
       }, 500);
@@ -1025,6 +1296,12 @@ function DAWStudio() {
       masterGainRef.current = audioCtxRef.current.createGain();
       masterGainRef.current.gain.value = masterVolume / 100;
       masterGainRef.current.connect(audioCtxRef.current.destination);
+
+      // CRITICAL FIX: Initialize and connect the Master Analyser for the VU Meters
+      const masterAnalyser = audioCtxRef.current.createAnalyser();
+      masterAnalyser.fftSize = 256;
+      masterGainRef.current.connect(masterAnalyser);
+      masterAnalyserRef.current = masterAnalyser;
     }
     if (audioCtxRef.current.state === 'suspended') await audioCtxRef.current.resume();
     
@@ -1100,6 +1377,93 @@ function DAWStudio() {
           }
       }
       pendingMidiClipsRef.current = {};
+  };
+
+  const handleExportBounce = async () => {
+      setIsExporting(true);
+      showToast("Rendering Mixdown (WAV)...", "info");
+
+      try {
+          let maxBeat = 0;
+          tracksRef.current.forEach(t => {
+              t.clips.forEach(c => {
+                  if (c.start + c.duration > maxBeat) maxBeat = c.start + c.duration;
+              });
+          });
+
+          if (maxBeat === 0) {
+              showToast("Project is empty.", "error");
+              setIsExporting(false);
+              return;
+          }
+
+          // Convert beats to seconds, and add 4 seconds to let reverb/delay tails decay
+          const durationSec = (maxBeat * (60 / stateRefs.current.bpm)) + 4.0;
+          const sampleRate = 44100;
+          const offlineCtx = new (window.OfflineAudioContext || window.webkitOfflineAudioContext)(2, sampleRate * durationSec, sampleRate);
+          
+          const masterOfflineGain = offlineCtx.createGain();
+          masterOfflineGain.gain.value = masterVolume / 100;
+          masterOfflineGain.connect(offlineCtx.destination);
+
+          const anySolo = tracksRef.current.some(t => t.solo);
+          
+          for (const track of tracksRef.current) {
+              const isMuted = track.muted || (anySolo && !track.solo);
+              if (isMuted) continue;
+
+              const synth = await initTrackRouting(track, offlineCtx, masterOfflineGain);
+
+              track.clips.forEach(clip => {
+                  const startTimeSec = clip.start * (60 / stateRefs.current.bpm);
+                  
+                  if (track.type === 'midi' && clip.notes) {
+                      clip.notes.forEach(note => {
+                          const noteStartSec = startTimeSec + (note.start * (60 / stateRefs.current.bpm));
+                          const noteDurSec = note.duration * (60 / stateRefs.current.bpm);
+                          const vel = note.velocity || 100;
+                          
+                          if (track.instrument === 'inst-drum') triggerDrum(offlineCtx, synth.inputBus, note.pitch, noteStartSec, 1, track.instrumentParams, vel);
+                          else if (track.instrument === 'inst-fm') triggerFMSynth(offlineCtx, synth.inputBus, note.pitch, noteStartSec, 1, noteDurSec, track.instrumentParams, vel);
+                          else if (track.instrument === 'inst-supersaw') triggerSupersaw(offlineCtx, synth.inputBus, note.pitch, noteStartSec, 1, noteDurSec, track.instrumentParams, vel);
+                          else if (track.instrument === 'inst-pluck') triggerPluck(offlineCtx, synth.inputBus, note.pitch, noteStartSec, 1, noteDurSec, track.instrumentParams, vel);
+                          else if (track.instrument === 'inst-acid') triggerAcid(offlineCtx, synth.inputBus, note.pitch, noteStartSec, 1, noteDurSec, track.instrumentParams, vel);
+                          else if (track.instrument === 'inst-organ') triggerOrgan(offlineCtx, synth.inputBus, note.pitch, noteStartSec, 1, noteDurSec, track.instrumentParams, vel);
+                          else triggerSubtractive(offlineCtx, synth.inputBus, note.pitch, noteStartSec, 1, noteDurSec, track.instrumentParams, vel);
+                      });
+                  } else if (track.type === 'audio' && clip.sampleId && globalAudioBufferCache.has(clip.sampleId)) {
+                      const sampleData = globalAudioBufferCache.get(clip.sampleId);
+                      const source = offlineCtx.createBufferSource();
+                      source.buffer = sampleData.buffer;
+                      source.connect(synth.inputBus);
+                      const secOffset = (clip.sampleOffset || 0) * (60 / stateRefs.current.bpm);
+                      const secDuration = clip.duration * (60 / stateRefs.current.bpm);
+                      source.start(startTimeSec, Math.max(0, secOffset), Math.max(0, secDuration));
+                  }
+              });
+          }
+
+          const renderedBuffer = await offlineCtx.startRendering();
+          const wavBlob = audioBufferToWav(renderedBuffer);
+          const url = URL.createObjectURL(wavBlob);
+          
+          const a = document.createElement('a');
+          a.style.display = 'none';
+          a.href = url;
+          a.download = `${projectName.replace(/[^a-z0-9]/gi, '_').toLowerCase()}_mixdown.wav`;
+          document.body.appendChild(a);
+          a.click();
+          window.URL.revokeObjectURL(url);
+          document.body.removeChild(a);
+
+          showToast("Export complete!", "success");
+
+      } catch (error) {
+          console.error(error);
+          showToast("Export failed: " + error.message, "error");
+      } finally {
+          setIsExporting(false);
+      }
   };
 
   const stopAudio = () => {
@@ -1224,16 +1588,22 @@ function DAWStudio() {
         } else if (track.type === 'audio' && shouldPlayTrack) {
             if (!synth.activeNoteIds.has(activeClip.id)) {
                 synth.activeNoteIds.add(activeClip.id);
-                if (activeClip.sampleId && globalAudioBufferCache.has(activeClip.sampleId)) {
-                    const sampleData = globalAudioBufferCache.get(activeClip.sampleId);
-                    const source = audioCtxRef.current.createBufferSource();
-                    source.buffer = sampleData.buffer;
-                    const offset = (newTime - activeClip.start) / (bpm / 60);
-                    source.connect(synth.inputBus);
-                    source.start(now, Math.max(0, offset));
-                    synth.activeSource = source; 
-                }
-            }
+                  if (activeClip.sampleId && globalAudioBufferCache.has(activeClip.sampleId)) {
+                      const sampleData = globalAudioBufferCache.get(activeClip.sampleId);
+                      const source = audioCtxRef.current.createBufferSource();
+                      source.buffer = sampleData.buffer;
+                      const beatOffset = (newTime - activeClip.start) + (activeClip.sampleOffset || 0);
+                      const secOffset = beatOffset / (bpm / 60);
+                      
+                      // Calculate how long this clip should play to prevent trailing audio
+                      const beatsRemaining = activeClip.duration - (newTime - activeClip.start);
+                      const secDuration = beatsRemaining / (bpm / 60);
+                      
+                      source.connect(synth.inputBus);
+                      source.start(now, Math.max(0, secOffset), Math.max(0, secDuration));
+                      synth.activeSource = source; 
+                  }
+              }
         } else { 
             synth.activeNoteIds.clear(); 
             if (track.type === 'audio' && synth.activeSource) {
@@ -1525,17 +1895,20 @@ function DAWStudio() {
   }, [isPlaying, isRecording]);
 
   useEffect(() => {
-    const el = timelineRef.current;
-    if (!el) return;
     const handleWheel = (e) => {
+      // Intercept Ctrl/Cmd + Scroll anywhere in the window
       if (e.ctrlKey || e.metaKey) {
         e.preventDefault();
-        setZoom(prev => Math.min(Math.max(0.25, prev + (e.deltaY > 0 ? -0.1 : 0.1)), 4));
+        setZoom(prev => {
+          // Use a multiplier for smoother, more natural zoom scaling
+          const factor = e.deltaY > 0 ? 0.85 : 1.15; 
+          return Math.min(Math.max(0.1, prev * factor), 8);
+        });
       }
     };
-    el.addEventListener('wheel', handleWheel, { passive: false });
-    return () => el.removeEventListener('wheel', handleWheel);
-  }, [activeView]);
+    window.addEventListener('wheel', handleWheel, { passive: false });
+    return () => window.removeEventListener('wheel', handleWheel);
+  }, []);
 
   useEffect(() => {
       const token = localStorage.getItem('freedaw_token');
@@ -1626,9 +1999,12 @@ function DAWStudio() {
           socket.on('connect', joinCurrentRoom);
 
           socket.on('user-connected', async (peerId, peerProfile) => {
-
               showToast(`${peerProfile.username} joined`, 'info');
               setPeers(prev => ({ ...prev, [peerId]: { ...peerProfile, stream: null } }));
+              
+              // CRITICAL FIX: Broadcast my profile back so the new user knows I'm online!
+              socket.emit('presence-update', { username: user.username, avatar: user.avatar, color: user.color });
+
               const pc = createPeerConnection(peerId, socket); peerConnectionsRef.current[peerId] = pc;
               const offer = await pc.createOffer(); await pc.setLocalDescription(offer);
               socket.emit('webrtc-offer', peerId, offer);
@@ -1757,7 +2133,56 @@ function DAWStudio() {
               break;
           }
           case 'DELETE_CLIP': setTracks(prev => prev.map(t => t.id === action.payload.trackId ? { ...t, clips: t.clips.filter(c => c.id !== action.payload.clipId) } : t)); break;
-          case 'UPDATE_CLIP_BOUNDS': setTracks(prev => prev.map(t => t.id === action.payload.trackId ? { ...t, clips: t.clips.map(c => c.id === action.payload.clipId ? { ...c, start: action.payload.start, duration: action.payload.duration } : c) } : t)); break;
+          case 'UPDATE_CLIP_BOUNDS': 
+              setTracks(prev => prev.map(t => t.id === action.payload.trackId ? { 
+                  ...t, clips: t.clips.map(c => c.id === action.payload.clipId ? { 
+                      ...c, 
+                      start: action.payload.start, 
+                      duration: action.payload.duration,
+                      ...(action.payload.sampleOffset !== undefined ? { sampleOffset: action.payload.sampleOffset } : {})
+                  } : c) 
+              } : t)); 
+              break;
+          case 'SPLIT_CLIP': {
+              const { trackId, clipId, sliceBeat } = action.payload;
+              setTracks(prev => prev.map(t => {
+                  if (t.id !== trackId) return t;
+                  const clip = t.clips.find(c => c.id === clipId);
+                  if (!clip || sliceBeat <= clip.start || sliceBeat >= clip.start + clip.duration) return t;
+                  
+                  const splitOffset = sliceBeat - clip.start;
+                  
+                  if (t.type === 'audio') {
+                      const c1 = { ...clip, duration: splitOffset };
+                      const c2 = { 
+                          ...clip, 
+                          id: Date.now() + Math.random(), 
+                          start: sliceBeat, 
+                          duration: clip.duration - splitOffset,
+                          sampleOffset: (clip.sampleOffset || 0) + splitOffset 
+                      };
+                      return { ...t, clips: [...t.clips.filter(c => c.id !== clipId), c1, c2] };
+                  } else if (t.type === 'midi') {
+                      const c1Notes = [];
+                      const c2Notes = [];
+                      (clip.notes || []).forEach(n => {
+                          if (n.start < splitOffset) {
+                              c1Notes.push({ ...n, duration: Math.min(n.duration, splitOffset - n.start) });
+                          }
+                          if (n.start + n.duration > splitOffset) {
+                              const newStart = Math.max(0, n.start - splitOffset);
+                              const finalDur = n.start < splitOffset ? (n.start + n.duration) - splitOffset : n.duration;
+                              c2Notes.push({ ...n, id: `n_${Date.now()}_${Math.random()}`, start: newStart, duration: finalDur });
+                          }
+                      });
+                      const c1 = { ...clip, duration: splitOffset, notes: c1Notes };
+                      const c2 = { ...clip, id: Date.now() + Math.random(), start: sliceBeat, duration: clip.duration - splitOffset, notes: c2Notes };
+                      return { ...t, clips: [...t.clips.filter(c => c.id !== clipId), c1, c2] };
+                  }
+                  return t;
+              }));
+              break;
+          }
           case 'MOVE_CLIP': {
               setTracks(prev => {
                  let newTracks = [...prev];
@@ -1874,34 +2299,41 @@ function DAWStudio() {
               }
           });
 
-      } else if (draggingEdge) {
-          const deltaX = e.clientX - draggingEdge.startX;
-          const deltaBeats = snap(deltaX / BEAT_WIDTH);
-          
-          let newStart = draggingEdge.initialStart;
-          let newDuration = draggingEdge.initialDuration;
-          if (draggingEdge.edge === 'right') {
-              newDuration = Math.max(0.25, draggingEdge.initialDuration + deltaBeats);
-          } else {
-              newStart = Math.min(draggingEdge.initialStart + draggingEdge.initialDuration - 0.25, Math.max(0, draggingEdge.initialStart + deltaBeats));
-              newDuration = draggingEdge.initialStart + draggingEdge.initialDuration - newStart;
-          }
-          dragValuesRef.current = { start: newStart, duration: newDuration };
-          
-          setTracks(prev => prev.map(t => t.id === draggingEdge.trackId ? {
-              ...t, clips: t.clips.map(c => {
-                  if (c.id !== draggingEdge.clipId) return c;
-                  return { ...c, start: newStart, duration: newDuration };
-              })
-          } : t));
+          } else if (draggingEdge) {
+              const deltaX = e.clientX - draggingEdge.startX;
+              const deltaBeats = snap(deltaX / BEAT_WIDTH);
+              
+              let newStart = draggingEdge.initialStart;
+              let newDuration = draggingEdge.initialDuration;
+              let newSampleOffset = draggingEdge.initialSampleOffset || 0;
+              
+              if (draggingEdge.edge === 'right') {
+                  newDuration = Math.max(0.25, draggingEdge.initialDuration + deltaBeats);
+              } else {
+                  const maxLeftPull = -(draggingEdge.initialSampleOffset || 0);
+                  const constrainedDelta = Math.max(maxLeftPull, deltaBeats);
+                  
+                  newStart = Math.min(draggingEdge.initialStart + draggingEdge.initialDuration - 0.25, draggingEdge.initialStart + constrainedDelta);
+                  newDuration = draggingEdge.initialStart + draggingEdge.initialDuration - newStart;
+                  newSampleOffset = (draggingEdge.initialSampleOffset || 0) + (newStart - draggingEdge.initialStart);
+              }
+              dragValuesRef.current = { start: newStart, duration: newDuration, sampleOffset: newSampleOffset };
+              
+              setTracks(prev => prev.map(t => t.id === draggingEdge.trackId ? {
+                  ...t, clips: t.clips.map(c => {
+                      if (c.id !== draggingEdge.clipId) return c;
+                      return { ...c, start: newStart, duration: newDuration, sampleOffset: newSampleOffset };
+                  })
+              } : t));
 
-          // Trigger Live Collaborative Preview
-          broadcastLivePreview({
-              type: 'UPDATE_CLIP_BOUNDS',
-              payload: { trackId: draggingEdge.trackId, clipId: draggingEdge.clipId, start: newStart, duration: newDuration }
-          });
+              // Trigger Live Collaborative Preview
+              broadcastLivePreview({
+                  type: 'UPDATE_CLIP_BOUNDS',
+                  payload: { trackId: draggingEdge.trackId, clipId: draggingEdge.clipId, start: newStart, duration: newDuration, sampleOffset: newSampleOffset }
+              });
 
-      } else if (draggingNote) {
+          } else if (draggingNote) {
+
           const deltaX = e.clientX - draggingNote.startX;
           const deltaY = e.clientY - draggingNote.startY;
           const deltaBeats = snap(deltaX / BEAT_WIDTH);
@@ -2001,7 +2433,8 @@ function DAWStudio() {
       if (draggingEdge) {
           const finalStart = dragValuesRef.current.start ?? draggingEdge.initialStart;
           const finalDuration = dragValuesRef.current.duration ?? draggingEdge.initialDuration;
-          dispatchDawAction({ type: 'UPDATE_CLIP_BOUNDS', payload: { trackId: draggingEdge.trackId, clipId: draggingEdge.clipId, start: finalStart, duration: finalDuration } });
+          const finalSampleOffset = dragValuesRef.current.sampleOffset ?? draggingEdge.initialSampleOffset;
+          dispatchDawAction({ type: 'UPDATE_CLIP_BOUNDS', payload: { trackId: draggingEdge.trackId, clipId: draggingEdge.clipId, start: finalStart, duration: finalDuration, sampleOffset: finalSampleOffset } });
           setDraggingEdge(null);
       }
       if (draggingNote) {
@@ -2044,6 +2477,90 @@ function DAWStudio() {
       stateRefs.current.currentTime = newTime;
       stopAudio();
   };
+
+  const handleDragOver = useCallback((e) => {
+      e.preventDefault(); e.stopPropagation();
+      let fileType = 'audio';
+      if (e.dataTransfer.items && e.dataTransfer.items.length > 0) {
+          const item = e.dataTransfer.items[0];
+          if (item.type.includes('midi') || item.type === '' || item.type.includes('octet-stream')) fileType = 'midi'; 
+      }
+      if (timelineRef.current) {
+          const rect = timelineRef.current.getBoundingClientRect();
+          const y = e.clientY - rect.top + timelineRef.current.scrollTop;
+          const x = e.clientX - rect.left + timelineRef.current.scrollLeft;
+          const sg = snapGridRef.current; const snap = (val) => sg === 0 ? val : Math.round(val / sg) * sg;
+          const beat = Math.max(0, snap(x / BEAT_WIDTH));
+          const trackIndex = Math.max(0, Math.floor(y / 96));
+          setDragHover({ active: true, beat, trackIndex, fileType });
+      }
+  }, [BEAT_WIDTH]);
+
+  const handleDragLeave = useCallback((e) => {
+      e.preventDefault(); e.stopPropagation();
+      if (timelineRef.current && !timelineRef.current.contains(e.relatedTarget)) setDragHover(null);
+  }, []);
+
+  const handleDrop = useCallback(async (e) => {
+      e.preventDefault(); e.stopPropagation();
+      if (!dragHover) return;
+      const { beat, trackIndex } = dragHover; setDragHover(null);
+
+      const files = Array.from(e.dataTransfer.files);
+      if (files.length === 0) return;
+      const file = files[0];
+
+      const isMidi = file.name.toLowerCase().endsWith('.mid') || file.name.toLowerCase().endsWith('.midi');
+      const isAudio = file.type.startsWith('audio/') || file.name.toLowerCase().match(/\.(wav|mp3|ogg|flac|m4a)$/);
+
+      if (!isMidi && !isAudio) { showToast("Unsupported file format.", "error"); return; }
+
+      const fileType = isMidi ? 'midi' : 'audio';
+      let targetTrack = tracksRef.current[trackIndex];
+      let finalTrackId = targetTrack?.id;
+      let needsNewTrack = !targetTrack || targetTrack.type !== fileType;
+
+      if (needsNewTrack) {
+          finalTrackId = Date.now() + Math.floor(Math.random() * 1000);
+          const newTrack = {
+              id: finalTrackId,
+              name: file.name.split('.')[0].substring(0, 16),
+              type: fileType,
+              color: fileType === 'midi' ? 'bg-pink-500' : 'bg-emerald-500',
+              volume: 80, pan: 0, muted: false, solo: false, armed: false, clips: [], effects: [],
+              ...(fileType === 'midi' ? { instrument: 'inst-subtractive', instrumentParams: {cutoff:2000, res:1} } : { audioInputId: '' })
+          };
+          dispatchDawAction({ type: 'ADD_TRACK', payload: newTrack });
+      }
+
+      if (isMidi) {
+          try {
+              const notes = await parseMidiFile(file);
+              if (notes.length === 0) throw new Error("No valid notes found in file");
+              let maxBeat = 0; notes.forEach(n => { if (n.start + n.duration > maxBeat) maxBeat = n.start + n.duration; });
+              const newClip = { id: Date.now(), start: beat, duration: Math.max(4, maxBeat), notes };
+              dispatchDawAction({ type: 'ADD_CLIP', payload: { trackId: finalTrackId, clip: newClip } });
+              showToast(`Imported MIDI: ${notes.length} notes`, 'success');
+          } catch(err) { 
+              console.error("MIDI Parse Error:", err);
+              showToast("Failed to parse MIDI: " + err.message, "error"); 
+          }
+      } else {
+          try {
+              const sampleId = `import_${Date.now()}`;
+              const formData = new FormData(); formData.append('audio', file);
+              await fetch(`${API_BASE_URL}/api/samples/upload/${sampleId}`, { method: 'POST', headers: { 'Authorization': `Bearer ${authTokenRef.current}` }, body: formData });
+              const arrayBuffer = await file.arrayBuffer();
+              if (!audioCtxRef.current) await initAudioEngine();
+              const audioBuffer = await audioCtxRef.current.decodeAudioData(arrayBuffer);
+              globalAudioBufferCache.set(sampleId, { buffer: audioBuffer, duration: audioBuffer.duration });
+              const durBeats = audioBuffer.duration * (stateRefs.current.bpm / 60);
+              const newClip = { id: Date.now(), start: beat, duration: Math.max(1, durBeats), sampleId };
+              dispatchDawAction({ type: 'ADD_CLIP', payload: { trackId: finalTrackId, clip: newClip } });
+              showToast(`Imported Audio: ${file.name}`, 'success');
+          } catch (err) { showToast("Failed to process audio file.", "error"); }
+      }
+  }, [dragHover, BEAT_WIDTH, initAudioEngine]);
 
   const handleTrackDoubleClick = (e, trackId) => {
     if (e.target !== e.currentTarget) return; 
@@ -2102,7 +2619,11 @@ function DAWStudio() {
   if (appView === 'home') {
       const allProjects = Array.from(new Map([...localProjects, ...serverProjects].map(p => [p.id, p])).values());
       const personalProjects = allProjects.filter(p => !p.ownerId || p.ownerId === currentUser?.id);
-      const sharedProjects = allProjects.filter(p => p.ownerId && p.ownerId !== currentUser?.id && p.sharedWith?.includes(currentUser?.username));
+      const sharedProjects = allProjects.filter(p => 
+          p.ownerId && 
+          p.ownerId !== currentUser?.id && 
+          (p.isPublic || (p.sharedWith && p.sharedWith.includes(currentUser?.username)))
+      );
 
       return (
         <div className="flex flex-col h-screen bg-neutral-950 text-neutral-300 p-8 overflow-y-auto custom-scrollbar select-none">
@@ -2143,7 +2664,7 @@ function DAWStudio() {
 
             {sharedProjects.length > 0 && (
                 <>
-                    <h2 className="text-lg font-bold text-white mb-4 flex items-center gap-2"><Users size={18} className="text-purple-400"/> Shared With Me</h2>
+                    <h2 className="text-lg font-bold text-white mb-4 flex items-center gap-2"><Users size={18} className="text-purple-400"/> Community & Shared Projects</h2>
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-12">
                         {sharedProjects.map(proj => (
                             <div key={proj.id} className="bg-neutral-900 border border-neutral-800 rounded-xl p-6 group hover:border-neutral-600 shadow-lg transition-colors">
@@ -2163,6 +2684,14 @@ function DAWStudio() {
       );
   }
 
+  // Calculate dynamic timeline length based on furthest clip
+  let maxBeat = 0;
+  tracks.forEach(t => t.clips.forEach(c => {
+      if (c.start + c.duration > maxBeat) maxBeat = c.start + c.duration;
+  }));
+  // At least 64 bars (256 beats), plus a padding of 16 bars (64 beats) past the last clip
+  const dynamicTotalBeats = Math.max(256, Math.ceil(maxBeat / 4) * 4 + 64);
+
   // --- RENDER: DAW STUDIO ---
   return (
     <div className="flex flex-col h-screen bg-neutral-900 text-neutral-300 font-sans select-none">
@@ -2181,6 +2710,7 @@ function DAWStudio() {
             <input value={projectName} onChange={(e) => setProjectName(e.target.value)} className="bg-transparent text-white font-bold text-sm outline-none w-[180px] focus:border-b focus:border-blue-500 transition-colors" />
             <button onClick={() => saveProject()} className="text-neutral-400 hover:text-blue-400 transition-colors" title="Save Project"><Save size={16}/></button>
             <button onClick={() => setShowShareModal(true)} className="text-neutral-400 hover:text-purple-400 ml-2 transition-colors" title="Share Project"><Users size={16}/></button>
+            <button onClick={handleExportBounce} disabled={isExporting} className={`ml-2 transition-colors ${isExporting ? 'text-green-400 animate-pulse' : 'text-neutral-400 hover:text-green-400'}`} title="Export to WAV"><Download size={16}/></button>
         </div>
         
         <div className="flex items-center justify-center gap-1.5 bg-neutral-900 px-3 py-1.5 rounded-xl border border-neutral-800 shrink-0 shadow-inner">
@@ -2200,18 +2730,29 @@ function DAWStudio() {
             <div className="hidden lg:flex items-center gap-4 bg-neutral-900/80 px-4 py-1.5 rounded-xl border border-neutral-800 font-mono text-[11px] shadow-inner mr-2">
                <div className="flex items-center gap-1 text-neutral-400">
                     <span className="uppercase text-[9px] font-bold text-neutral-600">GRID</span>
-                    <select value={snapGrid} onChange={e => setSnapGrid(Number(e.target.value))} className="bg-transparent w-12 text-white focus:outline-none text-[10px]">
-                        <option value={4}>1 Bar</option>
-                        <option value={1}>1/4</option>
-                        <option value={0.5}>1/8</option>
-                        <option value={0.25}>1/16</option>
-                        <option value={0.125}>1/32</option>
-                        <option value={0}>Off</option>
+                    <select value={snapGrid} onChange={e => setSnapGrid(Number(e.target.value))} className="bg-transparent w-12 text-blue-400 font-bold focus:outline-none text-[10px] cursor-pointer">
+                        <option value={4} className="bg-neutral-900 text-neutral-300">1 Bar</option>
+                        <option value={1} className="bg-neutral-900 text-neutral-300">1/4</option>
+                        <option value={0.5} className="bg-neutral-900 text-neutral-300">1/8</option>
+                        <option value={0.25} className="bg-neutral-900 text-neutral-300">1/16</option>
+                        <option value={0.125} className="bg-neutral-900 text-neutral-300">1/32</option>
+                        <option value={0} className="bg-neutral-900 text-neutral-300">Off</option>
                     </select>
                </div>
                <div className="flex items-center gap-1.5 text-neutral-400 border-l border-neutral-700 pl-4"><span className="uppercase text-[9px] font-bold text-neutral-600">Time</span> <span className="text-white w-14">{formatTime(currentTime, bpm)}</span></div>
                <div className="flex items-center gap-1.5 text-neutral-400"><span className="uppercase text-[9px] font-bold text-neutral-600">Pos</span> <span className="text-white">{Math.floor(currentTime / 4) + 1}.{Math.floor(currentTime % 4) + 1}.1</span></div>
                <div className="flex items-center gap-1 text-neutral-400"><span className="uppercase text-[9px] font-bold text-neutral-600">BPM</span> <input type="number" value={bpm} onChange={(e) => dispatchDawAction({ type: 'SYNC_STATE', payload: { tracks, bpm: Number(e.target.value) } })} className="bg-transparent w-8 text-white focus:outline-none" min="40" max="300" /></div>
+               
+               {/* Global Master Volume & VU Meter in the Header */}
+               <div className="flex items-center gap-2 border-l border-neutral-700 pl-4 ml-1">
+                   <Volume2 size={12} className="text-neutral-500" />
+                   <div className="flex flex-col gap-1 w-20">
+                       <input type="range" min="0" max="100" value={masterVolume} onChange={(e) => handleMasterVolumeChange(e.target.value)} onWheel={(e) => { e.stopPropagation(); handleMasterVolumeChange(Math.min(100, Math.max(0, masterVolume + (e.deltaY < 0 ? 5 : -5)))); }} className="w-full h-1 bg-black rounded-full appearance-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-2 [&::-webkit-slider-thumb]:h-2 [&::-webkit-slider-thumb]:bg-white cursor-pointer" />
+                       <div className="h-1.5 w-full">
+                           <VuMeter isMaster={true} masterAnalyserRef={masterAnalyserRef} isVertical={false} />
+                       </div>
+                   </div>
+               </div>
             </div>
 
             <div className="flex -space-x-2 mr-2">
@@ -2289,7 +2830,7 @@ function DAWStudio() {
                   
                   <div className="w-full px-4 mt-2 flex flex-col items-center" onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'mixer_pan', trackId: t.id })}>
                      <span className="text-[9px] text-neutral-500 mb-1 font-mono">PAN</span>
-                     <input type="range" min="-50" max="50" value={t.pan} onDoubleClick={() => dispatchDawAction({ type: 'UPDATE_TRACK_PAN', payload: { id: t.id, pan: 0 } })} onChange={(e) => dispatchDawAction({ type: 'UPDATE_TRACK_PAN', payload: { id: t.id, pan: Number(e.target.value) } })} className="w-full h-1 bg-neutral-800 rounded-full appearance-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-2 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-neutral-400 cursor-pointer" />
+                     <input type="range" min="-50" max="50" value={t.pan} onDoubleClick={() => dispatchDawAction({ type: 'UPDATE_TRACK_PAN', payload: { id: t.id, pan: 0 } })} onChange={(e) => dispatchDawAction({ type: 'UPDATE_TRACK_PAN', payload: { id: t.id, pan: Number(e.target.value) } })} onWheel={(e) => { e.stopPropagation(); dispatchDawAction({ type: 'UPDATE_TRACK_PAN', payload: { id: t.id, pan: Math.min(50, Math.max(-50, t.pan + (e.deltaY < 0 ? 5 : -5))) } }); }} className="w-full h-1 bg-neutral-800 rounded-full appearance-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-2 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-neutral-400 cursor-pointer" />
                   </div>
 
                   <div className="flex gap-1.5 mt-4">
@@ -2298,10 +2839,13 @@ function DAWStudio() {
                   </div>
 
                   <div className="flex-1 w-full flex justify-center py-4 relative mt-2 min-h-[200px]" onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'mixer_vol', trackId: t.id })}>
-                     <div className="w-2 bg-black rounded-full h-full relative border border-neutral-800 pointer-events-none">
-                        <div className={`absolute bottom-0 w-full rounded-full opacity-60 ${t.color}`} style={{ height: `${t.volume}%` }} />
+                     <div className="flex justify-center gap-2 h-full w-full pointer-events-none">
+                         <div className="w-2 bg-black rounded-full h-full relative border border-neutral-800">
+                            <div className={`absolute bottom-0 w-full rounded-full opacity-60 ${t.color}`} style={{ height: `${t.volume}%` }} />
+                         </div>
+                         <VuMeter trackId={t.id} synthsRef={synthsRef} isVertical={true} />
                      </div>
-                     <input type="range" orient="vertical" min="0" max="100" value={t.volume} onChange={(e) => dispatchDawAction({ type: 'UPDATE_TRACK_VOL', payload: { id: t.id, volume: Number(e.target.value) } })} className="absolute inset-0 opacity-0 cursor-pointer h-full" style={{ WebkitAppearance: 'slider-vertical' }} />
+                     <input type="range" orient="vertical" min="0" max="100" value={t.volume} onChange={(e) => dispatchDawAction({ type: 'UPDATE_TRACK_VOL', payload: { id: t.id, volume: Number(e.target.value) } })} onWheel={(e) => { e.stopPropagation(); dispatchDawAction({ type: 'UPDATE_TRACK_VOL', payload: { id: t.id, volume: Math.min(100, Math.max(0, t.volume + (e.deltaY < 0 ? 5 : -5))) } }); }} className="absolute inset-0 opacity-0 cursor-pointer h-full w-full" style={{ WebkitAppearance: 'slider-vertical' }} />
                   </div>
                   <span className="text-[10px] font-mono text-neutral-500">{t.volume}</span>
                </div>
@@ -2312,10 +2856,13 @@ function DAWStudio() {
                   <div className="w-3 h-3 rounded-full mb-2 bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.6)]" />
                   <span className="text-xs font-bold text-white truncate w-full text-center px-2">MASTER</span>
                   <div className="flex-1 w-full flex justify-center py-4 relative mt-2 min-h-[200px]" onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'master_vol' })}>
-                     <div className="w-2 bg-black rounded-full h-full relative border border-neutral-800 pointer-events-none">
-                        <div className="absolute bottom-0 w-full rounded-full bg-red-500 opacity-70 shadow-[0_0_10px_rgba(239,68,68,0.4)]" style={{ height: `${masterVolume}%` }} />
+                     <div className="flex justify-center gap-2 h-full w-full pointer-events-none">
+                         <div className="w-2 bg-black rounded-full h-full relative border border-neutral-800">
+                            <div className="absolute bottom-0 w-full rounded-full bg-red-500 opacity-70 shadow-[0_0_10px_rgba(239,68,68,0.4)]" style={{ height: `${masterVolume}%` }} />
+                         </div>
+                         <VuMeter isMaster={true} masterAnalyserRef={masterAnalyserRef} isVertical={true} />
                      </div>
-                     <input type="range" orient="vertical" min="0" max="100" value={masterVolume} onChange={(e) => handleMasterVolumeChange(e.target.value)} className="absolute inset-0 opacity-0 cursor-pointer h-full" style={{ WebkitAppearance: 'slider-vertical' }} />
+                     <input type="range" orient="vertical" min="0" max="100" value={masterVolume} onChange={(e) => handleMasterVolumeChange(e.target.value)} onWheel={(e) => { e.stopPropagation(); handleMasterVolumeChange(Math.min(100, Math.max(0, masterVolume + (e.deltaY < 0 ? 5 : -5)))); }} className="absolute inset-0 opacity-0 cursor-pointer h-full w-full" style={{ WebkitAppearance: 'slider-vertical' }} />
                   </div>
                   <span className="text-[10px] font-mono text-red-400">{masterVolume}</span>
              </div>
@@ -2357,7 +2904,11 @@ function DAWStudio() {
                                 <div className="flex flex-col gap-1 px-1">
                                     <div className="flex gap-2 items-center">
                                         <Volume2 size={10} className="text-neutral-500 shrink-0"/>
-                                        <input type="range" min="0" max="100" value={t.volume} onChange={(e) => dispatchDawAction({ type: 'UPDATE_TRACK_VOL', payload: { id: t.id, volume: Number(e.target.value) } })} className="w-full h-1 bg-black rounded-full appearance-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-2 [&::-webkit-slider-thumb]:h-2 [&::-webkit-slider-thumb]:bg-white cursor-pointer" />
+                                        <input type="range" min="0" max="100" value={t.volume} onChange={(e) => dispatchDawAction({ type: 'UPDATE_TRACK_VOL', payload: { id: t.id, volume: Number(e.target.value) } })} onWheel={(e) => { e.stopPropagation(); dispatchDawAction({ type: 'UPDATE_TRACK_VOL', payload: { id: t.id, volume: Math.min(100, Math.max(0, t.volume + (e.deltaY < 0 ? 5 : -5))) } }); }} className="w-full h-1 bg-black rounded-full appearance-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-2 [&::-webkit-slider-thumb]:h-2 [&::-webkit-slider-thumb]:bg-white cursor-pointer" />
+                                    </div>
+                                    <div className="flex gap-2 items-center mb-1 pr-2">
+                                        <Activity size={10} className="text-neutral-600 shrink-0"/>
+                                        <VuMeter trackId={t.id} synthsRef={synthsRef} isVertical={false} />
                                     </div>
                                 </div>
                             </div>
@@ -2368,8 +2919,8 @@ function DAWStudio() {
                 {/* Timeline */}
                 <div className="flex-1 bg-neutral-950 flex flex-col overflow-hidden">
                     <div className="h-8 border-b border-neutral-800 bg-neutral-900 relative shrink-0 overflow-hidden cursor-pointer" onMouseDown={handleTimelineMouseDown}>
-                       <div className="absolute top-0 bottom-0 pointer-events-none text-[10px] text-neutral-600 font-mono" style={{ width: `${TOTAL_BEATS * BEAT_WIDTH}px`, left: timelineRef.current ? -timelineRef.current.scrollLeft : 0 }}>
-                          {Array.from({length: TOTAL_BEATS/4}).map((_, i) => <div key={i} className="absolute border-l border-neutral-700 pl-1 h-full" style={{ left: `${i * 4 * BEAT_WIDTH}px` }}>{i + 1}</div>)}
+                       <div className="absolute top-0 bottom-0 pointer-events-none text-[10px] text-neutral-600 font-mono" style={{ width: `${dynamicTotalBeats * BEAT_WIDTH}px`, left: timelineRef.current ? -timelineRef.current.scrollLeft : 0 }}>
+                          {Array.from({length: dynamicTotalBeats/4}).map((_, i) => <div key={i} className="absolute border-l border-neutral-700 pl-1 h-full" style={{ left: `${i * 4 * BEAT_WIDTH}px` }}>{i + 1}</div>)}
                           
                           {/* Loop Region Brace */}
                           {loopRegion.enabled && (
@@ -2385,7 +2936,31 @@ function DAWStudio() {
                        </div>
                     </div>
                     <div ref={timelineRef} onScroll={(e) => e.currentTarget.previousSibling.firstChild.style.left = `-${e.currentTarget.scrollLeft}px`} className="flex-1 overflow-auto relative custom-scrollbar">
-                        <div className="relative min-h-full" style={{ width: `${TOTAL_BEATS * BEAT_WIDTH}px` }} onMouseDown={handleTimelineMouseDown}>
+                        <div 
+                           className="relative min-h-full" 
+                           style={{ width: `${dynamicTotalBeats * BEAT_WIDTH}px` }} 
+                           onMouseDown={handleTimelineMouseDown}
+                           onDragOver={handleDragOver}
+                           onDragLeave={handleDragLeave}
+                           onDrop={handleDrop}
+                        >
+                            {/* Drag-and-Drop Ghost Element */}
+                            {dragHover && dragHover.active && (
+                                <div 
+                                    className={`absolute z-[100] rounded-xl border-2 border-dashed pointer-events-none flex items-center justify-center backdrop-blur-md shadow-2xl transition-all ${
+                                        dragHover.fileType === 'midi' ? 'border-pink-400 bg-pink-500/20 text-pink-300' : 'border-emerald-400 bg-emerald-500/20 text-emerald-300'
+                                    }`}
+                                    style={{ left: `${dragHover.beat * BEAT_WIDTH}px`, top: `${dragHover.trackIndex * 96 + 8}px`, width: `${4 * BEAT_WIDTH}px`, height: `80px` }}
+                                >
+                                    <div className="flex flex-col items-center gap-1 font-bold text-xs uppercase tracking-wider opacity-90">
+                                        {dragHover.fileType === 'midi' ? <FileCode size={24} /> : <FileAudio size={24} />}
+                                        <span>Drop to Import</span>
+                                        {(!tracks[dragHover.trackIndex] || tracks[dragHover.trackIndex].type !== dragHover.fileType) && (
+                                            <span className="text-[9px] bg-black/60 px-2 py-0.5 rounded-full mt-1 border border-white/10 text-white shadow-inner">New Track</span>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
                             {/* Grid Background */}
                             <div className="absolute inset-0 pointer-events-none" style={getGridStyle(snapGrid, BEAT_WIDTH, false)} />
                             {/* Playhead */}
@@ -2399,13 +2974,20 @@ function DAWStudio() {
                                           key={c.id} 
                                           onMouseDown={(e) => { if(!e.target.dataset.edge) { e.stopPropagation(); dispatchPresence(t.id); setDraggingClip({ trackId: t.id, initialTrackId: t.id, clipId: c.id, startX: e.clientX, initialStart: c.start }); } }}
                                           onDoubleClick={(e) => { e.stopPropagation(); setBottomDock({ type: t.type === 'audio' ? 'audio-editor' : 'piano-roll', trackId: t.id, clipId: c.id }); }}
-                                          onContextMenu={(e) => handleContextMenu(e, 'clip', { trackId: t.id, clipId: c.id })}
+                                          onContextMenu={(e) => {
+                                              const rect = timelineRef.current.getBoundingClientRect();
+                                              const x = e.clientX - rect.left + timelineRef.current.scrollLeft;
+                                              const sg = snapGridRef.current;
+                                              const snap = (val) => sg === 0 ? val : Math.round(val / sg) * sg;
+                                              const sliceBeat = snap(x / BEAT_WIDTH);
+                                              handleContextMenu(e, 'clip', { trackId: t.id, clipId: c.id, sliceBeat });
+                                          }}
                                           className={`clip-element absolute top-2 bottom-2 rounded border border-white/20 overflow-hidden cursor-grab active:cursor-grabbing bg-gradient-to-br ${t.color.replace('bg-','from-')}/80 ${t.color.replace('bg-','to-')}/40 hover:brightness-110 shadow-lg`} 
                                           style={{ left: `${c.start * BEAT_WIDTH}px`, width: `${c.duration * BEAT_WIDTH}px`, zIndex: draggingClip?.clipId === c.id ? 50 : 10 }}
                                         >
                                             {/* Resize Handles */}
-                                            <div className="absolute left-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-white/30 z-10" onMouseDown={(e) => { e.stopPropagation(); setDraggingEdge({ trackId: t.id, clipId: c.id, edge: 'left', startX: e.clientX, initialStart: c.start, initialDuration: c.duration }); }} data-edge="left" />
-                                            <div className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-white/30 z-10" onMouseDown={(e) => { e.stopPropagation(); setDraggingEdge({ trackId: t.id, clipId: c.id, edge: 'right', startX: e.clientX, initialStart: c.start, initialDuration: c.duration }); }} data-edge="right" />
+                                            <div className="absolute left-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-white/30 z-10" onMouseDown={(e) => { e.stopPropagation(); setDraggingEdge({ trackId: t.id, clipId: c.id, edge: 'left', startX: e.clientX, initialStart: c.start, initialDuration: c.duration, initialSampleOffset: c.sampleOffset || 0 }); }} data-edge="left" />
+                                            <div className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-white/30 z-10" onMouseDown={(e) => { e.stopPropagation(); setDraggingEdge({ trackId: t.id, clipId: c.id, edge: 'right', startX: e.clientX, initialStart: c.start, initialDuration: c.duration, initialSampleOffset: c.sampleOffset || 0 }); }} data-edge="right" />
 
                                             <div className="px-2 pt-1 text-[9px] font-bold text-white/90 truncate pointer-events-none select-none relative z-10">{t.type === 'midi' ? 'MIDI Clip' : 'Audio Clip'}</div>
                                             {t.type === 'midi' && c.notes && (
@@ -2417,7 +2999,8 @@ function DAWStudio() {
                                                 <WaveformDisplay 
                                                     buffer={globalAudioBufferCache.get(c.sampleId).buffer} 
                                                     bpm={bpm} 
-                                                    beatWidth={BEAT_WIDTH} 
+                                                    beatWidth={BEAT_WIDTH}
+                                                    sampleOffset={c.sampleOffset || 0}
                                                 />
                                             )}
                                         </div>
@@ -2453,13 +3036,13 @@ function DAWStudio() {
                            </div>
                            <div className="flex items-center gap-1.5 border-l border-neutral-800 pl-4">
                                <span className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider">Snap:</span>
-                               <select value={snapGrid} onChange={e => setSnapGrid(Number(e.target.value))} className="bg-transparent w-20 text-neutral-300 focus:outline-none text-xs cursor-pointer">
-                                    <option value={4}>1 Bar</option>
-                                    <option value={1}>1/4 Beat</option>
-                                    <option value={0.5}>1/8 Beat</option>
-                                    <option value={0.25}>1/16 Beat</option>
-                                    <option value={0.125}>1/32 Beat</option>
-                                    <option value={0}>Off</option>
+                               <select value={snapGrid} onChange={e => setSnapGrid(Number(e.target.value))} className="bg-transparent w-20 text-blue-400 font-bold focus:outline-none text-xs cursor-pointer">
+                                    <option value={4} className="bg-neutral-900 text-neutral-300">1 Bar</option>
+                                    <option value={1} className="bg-neutral-900 text-neutral-300">1/4 Beat</option>
+                                    <option value={0.5} className="bg-neutral-900 text-neutral-300">1/8 Beat</option>
+                                    <option value={0.25} className="bg-neutral-900 text-neutral-300">1/16 Beat</option>
+                                    <option value={0.125} className="bg-neutral-900 text-neutral-300">1/32 Beat</option>
+                                    <option value={0} className="bg-neutral-900 text-neutral-300">Off</option>
                                 </select>
                            </div>
                         </div>
@@ -2672,6 +3255,20 @@ function DAWStudio() {
                 )}
                 {contextMenu.type === 'clip' && (
                   <>
+                    <button onClick={() => {
+                        const { trackId, clipId, sliceBeat } = contextMenu.payload;
+                        const track = tracks.find(t => t.id === trackId);
+                        const clipToSplit = track?.clips.find(c => c.id === clipId);
+                        if (clipToSplit && sliceBeat > clipToSplit.start && sliceBeat < clipToSplit.start + clipToSplit.duration) {
+                             dispatchDawAction({ type: 'SPLIT_CLIP', payload: { trackId, clipId, sliceBeat } });
+                        } else {
+                             showToast("Cannot slice at the very edge of the clip.", "error");
+                        }
+                        setContextMenu(null);
+                    }} className="w-full text-left px-4 py-2 text-sm text-neutral-300 hover:bg-neutral-800 hover:text-white flex items-center gap-2">
+                        <Scissors size={14}/> Slice Here
+                    </button>
+                    <div className="h-px bg-neutral-800 my-1"/>
                     <button onClick={() => { 
                         const track = tracks.find(t => t.id === contextMenu.payload.trackId);
                         const clipToDuplicate = track?.clips.find(c => c.id === contextMenu.payload.clipId);
@@ -2778,46 +3375,89 @@ function DAWStudio() {
             {/* Share Project Modal */}
             {showShareModal && (
                 <div className="fixed inset-0 z-[200] bg-black/80 backdrop-blur-sm flex items-center justify-center">
-                    <div className="bg-neutral-900 border border-neutral-700 rounded-2xl w-full max-w-sm p-6 shadow-2xl animate-in zoom-in-95 duration-200">
+                    <div className="bg-neutral-900 border border-neutral-700 rounded-2xl w-full max-w-md p-6 shadow-2xl animate-in zoom-in-95 duration-200">
                         <div className="flex justify-between items-center mb-6">
                             <h2 className="text-lg font-bold text-white flex items-center gap-2"><Users size={18} className="text-purple-400"/> Share Project</h2>
                             <button onClick={() => setShowShareModal(false)} className="text-neutral-500 hover:text-white transition-colors"><X size={18}/></button>
                         </div>
+                        
                         <div className="flex flex-col gap-4">
-                            <p className="text-xs text-neutral-400 leading-relaxed">Share this project with other registered users. They will see it in their "Shared With Me" tab on the home screen.</p>
-                            
-                            <div className="flex gap-2">
-                                <input 
-                                    type="text" 
-                                    value={shareUsername} 
-                                    onChange={(e) => setShareUsername(e.target.value)} 
-                                    placeholder="Enter username..." 
-                                    className="flex-1 bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-purple-500" 
-                                    onKeyDown={(e) => e.key === 'Enter' && handleShareProject()}
-                                />
-                                <button onClick={handleShareProject} className="bg-purple-600 hover:bg-purple-500 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors">Share</button>
+                            <div className="flex items-center justify-between bg-neutral-950 border border-neutral-800 p-3 rounded-xl">
+                                <div className="flex flex-col">
+                                    <span className="text-sm font-bold text-white">Public Project</span>
+                                    <span className="text-[10px] text-neutral-400 mt-0.5">Anyone logged in can see and copy this project.</span>
+                                </div>
+                                <button 
+                                    onClick={async () => {
+                                        const nextPublic = !isPublic;
+                                        setIsPublic(nextPublic);
+                                        await saveProject(sharedWith, nextPublic);
+                                        showToast(nextPublic ? "Project is now public" : "Project is private", "success");
+                                        if (socketRef.current) socketRef.current.emit('daw-action', { type: 'PROJECT_SHARED' });
+                                    }} 
+                                    className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${isPublic ? 'bg-purple-600' : 'bg-neutral-700'}`}
+                                >
+                                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${isPublic ? 'translate-x-6' : 'translate-x-1'}`} />
+                                </button>
                             </div>
 
-                            {sharedWith.length > 0 && (
-                                <div className="mt-4">
-                                    <h3 className="text-xs font-bold text-neutral-500 uppercase tracking-wider mb-2">Currently Shared With</h3>
-                                    <div className="flex flex-col gap-2">
-                                        {sharedWith.map(user => (
-                                            <div key={user} className="flex justify-between items-center bg-neutral-950 border border-neutral-800 p-2 rounded-lg">
-                                                <div className="flex items-center gap-2">
-                                                    <div className="w-6 h-6 rounded-full bg-neutral-800 flex items-center justify-center text-[10px] font-bold text-white">{user.charAt(0).toUpperCase()}</div>
-                                                    <span className="text-sm text-neutral-300">{user}</span>
+                            <h3 className="text-xs font-bold text-neutral-500 uppercase tracking-wider mt-2">Registered Users</h3>
+                            <div className="flex flex-col gap-2 max-h-[40vh] overflow-y-auto custom-scrollbar pr-2">
+                                {(() => {
+                                    // Merge registered users with currently active peers to guarantee online users always show up
+                                    const unifiedUsers = new Map();
+                                    
+                                    registeredUsers.forEach(u => {
+                                        if (u.username && u.username !== currentUser?.username) {
+                                            unifiedUsers.set(u.username, { ...u, isOnline: false });
+                                        }
+                                    });
+                                    
+                                    Object.values(peers).forEach(p => {
+                                        if (p.username && p.username !== currentUser?.username) {
+                                            if (unifiedUsers.has(p.username)) {
+                                                unifiedUsers.get(p.username).isOnline = true;
+                                            } else {
+                                                unifiedUsers.set(p.username, { id: `peer_${p.username}`, username: p.username, isOnline: true });
+                                            }
+                                        }
+                                    });
+
+                                    const sortedUsers = Array.from(unifiedUsers.values()).sort((a, b) => {
+                                        if (a.isOnline && !b.isOnline) return -1;
+                                        if (!a.isOnline && b.isOnline) return 1;
+                                        return a.username.localeCompare(b.username);
+                                    });
+
+                                    if (sortedUsers.length === 0) return <p className="text-xs text-neutral-500 text-center py-4">No other users found.</p>;
+
+                                    return sortedUsers.map(u => {
+                                        const isShared = sharedWith.includes(u.username);
+                                        return (
+                                            <div key={u.id} className="flex justify-between items-center bg-neutral-950 border border-neutral-800 p-2 rounded-lg group hover:border-neutral-700 transition-colors">
+                                                <div className="flex items-center gap-3">
+                                                    <div className="relative">
+                                                        <div className="w-8 h-8 rounded-full bg-neutral-800 flex items-center justify-center text-xs font-bold text-white shadow-inner">{u.username.charAt(0).toUpperCase()}</div>
+                                                        {u.isOnline && <div className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-green-500 rounded-full border-2 border-neutral-950 shadow-[0_0_5px_#22c55e]" title="Online" />}
+                                                    </div>
+                                                    <span className="text-sm text-neutral-300 font-medium">{u.username}</span>
                                                 </div>
-                                                <button onClick={() => {
-                                                    const nextShared = sharedWith.filter(u => u !== user);
-                                                    setSharedWith(nextShared);
-                                                    saveProject(nextShared);
-                                                }} className="text-neutral-500 hover:text-red-400 p-1"><X size={14}/></button>
+                                                <button 
+                                                    onClick={async () => {
+                                                        const nextShared = isShared ? sharedWith.filter(n => n !== u.username) : [...sharedWith, u.username];
+                                                        setSharedWith(nextShared);
+                                                        await saveProject(nextShared, isPublic);
+                                                        if (socketRef.current) socketRef.current.emit('daw-action', { type: 'PROJECT_SHARED' });
+                                                    }} 
+                                                    className={`px-3 py-1.5 text-[10px] uppercase tracking-wider font-bold rounded transition-colors ${isShared ? 'bg-red-500/10 text-red-400 hover:bg-red-500/20 border border-red-500/20' : 'bg-neutral-800 text-neutral-400 hover:bg-blue-600 hover:text-white border border-transparent'}`}
+                                                >
+                                                    {isShared ? 'Revoke' : 'Share'}
+                                                </button>
                                             </div>
-                                        ))}
-                                    </div>
-                                </div>
-                            )}
+                                        );
+                                    });
+                                })()}
+                            </div>
                         </div>
                     </div>
                 </div>

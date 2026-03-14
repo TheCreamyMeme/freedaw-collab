@@ -23,8 +23,14 @@ app.use(express.json({ limit: '100mb' }));
 
 const PROJECTS_DIR = path.join(__dirname, 'projects');
 const SAMPLES_DIR = path.join(__dirname, 'samples');
+const USERS_FILE = path.join(__dirname, 'users.json');
 if (!fs.existsSync(PROJECTS_DIR)) fs.mkdirSync(PROJECTS_DIR, { recursive: true });
 if (!fs.existsSync(SAMPLES_DIR)) fs.mkdirSync(SAMPLES_DIR, { recursive: true });
+
+let allRegisteredUsers = [];
+if (fs.existsSync(USERS_FILE)) {
+    try { allRegisteredUsers = JSON.parse(fs.readFileSync(USERS_FILE, 'utf-8')); } catch(e){}
+}
 
 // Multer Storage Configuration for Audio Samples
 const storage = multer.diskStorage({
@@ -37,11 +43,11 @@ const upload = multer({ storage });
 app.post('/api/auth/login', (req, res) => {
     const { username } = req.body;
     if (!username) return res.status(400).json({ error: 'Username required' });
-
+    
     // In production, verify passwords against a database here.
     const user = { id: `u_${username}_${Date.now()}`, username };
     const token = jwt.sign(user, JWT_SECRET, { expiresIn: '7d' });
-
+    
     res.json({ token, user });
 });
 
@@ -78,6 +84,12 @@ app.delete('/api/samples/:sampleId', authenticateToken, (req, res) => {
     }
 });
 
+// User Lookup API
+app.get('/api/users', authenticateToken, (req, res) => {
+    // Strip sensitive info if you had any; send just what client needs
+    res.json(allRegisteredUsers.map(u => ({ id: u.id, username: u.username })));
+});
+
 // --- 3. PROJECTS API (Protected Upload/Delete) ---
 app.get('/api/projects', authenticateToken, (req, res) => {
     try {
@@ -86,12 +98,12 @@ app.get('/api/projects', authenticateToken, (req, res) => {
 
         for (const file of files) {
             const project = JSON.parse(fs.readFileSync(path.join(PROJECTS_DIR, file), 'utf-8'));
-
+            
             const isOwner = project.ownerId === req.user.id;
             const isSharedWithMe = project.sharedWith && project.sharedWith.includes(req.user.username);
-            const isPublicLegacy = !project.ownerId;
+            const isPublic = project.isPublic === true || !project.ownerId;
 
-            if (isOwner || isSharedWithMe || isPublicLegacy) {
+            if (isOwner || isSharedWithMe || isPublic) {
                 authorizedProjects.push(project);
             }
         }
@@ -106,7 +118,7 @@ app.post('/api/projects', authenticateToken, (req, res) => {
     try {
         const project = req.body;
         if (!project || !project.id) return res.status(400).json({ error: 'Invalid project data' });
-
+        
         fs.writeFileSync(path.join(PROJECTS_DIR, `${project.id}.json`), JSON.stringify(project, null, 2));
         res.json({ status: 'saved', id: project.id });
     } catch (error) {
@@ -117,10 +129,10 @@ app.post('/api/projects', authenticateToken, (req, res) => {
 app.delete('/api/projects/:projectId', authenticateToken, (req, res) => {
     try {
         const filePath = path.join(PROJECTS_DIR, `${req.params.projectId}.json`);
-
+        
         if (fs.existsSync(filePath)) {
             const project = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-
+            
             if (project.ownerId && project.ownerId !== req.user.id) {
                 return res.status(403).json({ error: 'Forbidden: Only the owner can delete this project' });
             }
@@ -163,7 +175,7 @@ io.on('connection', (socket) => {
             socket.broadcast.to(currentRoom).emit('daw-action', actionData);
         }
     });
-
+    
     // Presence (Avatars, Mouse cursors, active tracks)
     socket.on('presence-update', (presenceData) => {
         if (currentRoom) {
