@@ -21,49 +21,55 @@ RUN npm install
 RUN npm install lucide-react tailwindcss@3 postcss autoprefixer tailwindcss-animate socket.io-client
 
 # 4. Inject PostCSS Configuration dynamically
-RUN printf 'export default {\n\
-  plugins: {\n\
-    tailwindcss: {},\n\
-    autoprefixer: {},\n\
-  },\n\
-}\n' > postcss.config.js
+RUN cat <<EOF > postcss.config.js
+export default {
+  plugins: {
+    tailwindcss: {},
+    autoprefixer: {},
+  },
+}
+EOF
 
 # 5. Inject the Tailwind Configuration dynamically
 # CRITICAL FIX: Changed from 'require' to 'import' to prevent ES Module compilation crashes in Vite
-RUN printf 'import tailwindcssAnimate from "tailwindcss-animate";\n\
-\n\
-/** @type {import("tailwindcss").Config} */\n\
-export default {\n\
-  content: [\n\
-    "./index.html",\n\
-    "./src/**/*.{js,ts,jsx,tsx}",\n\
-  ],\n\
-  theme: {\n\
-    extend: {},\n\
-  },\n\
-  plugins: [\n\
-    tailwindcssAnimate\n\
-  ],\n\
-}\n' > tailwind.config.js
+RUN cat <<EOF > tailwind.config.js
+import tailwindcssAnimate from "tailwindcss-animate";
+
+/** @type {import("tailwindcss").Config} */
+export default {
+  content: [
+    "./index.html",
+    "./src/**/*.{js,ts,jsx,tsx}",
+  ],
+  theme: {
+    extend: {},
+  },
+  plugins: [
+    tailwindcssAnimate
+  ],
+}
+EOF
 
 # 6. Inject the Base CSS
-# CRITICAL FIX: Added strict root bounds and overflow constraints so the DAW fills the screen and doesn't scroll
-RUN printf '@tailwind base;\n\
-@tailwind components;\n\
-@tailwind utilities;\n\
-\n\
-body {\n\
-  margin: 0;\n\
-  overflow: hidden;\n\
-  touch-action: none;\n\
-  background-color: #0a0a0a;\n\
-  color: #d4d4d4;\n\
-}\n\
-\n\
-#root {\n\
-  width: 100vw;\n\
-  height: 100vh;\n\
-}\n' > src/index.css
+# CRITICAL FIX: Switched to heredoc (EOF) to prevent printf syntax errors in index.css
+RUN cat <<EOF > src/index.css
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  margin: 0;
+  overflow: hidden;
+  touch-action: none;
+  background-color: #0a0a0a;
+  color: #d4d4d4;
+}
+
+#root {
+  width: 100vw;
+  height: 100vh;
+}
+EOF
 
 # 7. Copy your local React file into the container
 COPY DAW_WEBAPP.jsx src/App.jsx
