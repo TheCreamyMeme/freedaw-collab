@@ -401,7 +401,9 @@ const getAutomationConstraints = (paramKey) => {
 const INTERNAL_PLUGINS = [
   { id: 'fx-delay', name: 'Digital Delay', category: 'effect', type: 'delay', vendor: 'FreeDaw-Collab', params: { time: 0.3, feedback: 0.4, mix: 0.5 } },
   { id: 'fx-pareq', name: 'Parametric EQ', category: 'effect', type: 'parametric-eq', vendor: 'FreeDaw-Collab', params: { lowFreq: 100, lowGain: 0, mid1Freq: 500, mid1Q: 1.0, mid1Gain: 0, mid2Freq: 2000, mid2Q: 1.0, mid2Gain: 0, highFreq: 5000, highGain: 0 } },
-  { id: 'fx-reverb', name: 'Simple Algorithmic Reverb', category: 'effect', type: 'reverb', vendor: 'FreeDaw-Collab', params: { decay: 2.0, size: 1.0, damping: 5000, mix: 0.4 } },
+  { id: 'fx-reverb-room', name: 'Room Reverb', category: 'effect', type: 'reverb-room', vendor: 'FreeDaw-Collab', params: { mix: 0.3 } },
+  { id: 'fx-reverb-plate', name: 'Plate Reverb', category: 'effect', type: 'reverb-plate', vendor: 'FreeDaw-Collab', params: { mix: 0.4 } },
+  { id: 'fx-reverb-hall', name: 'Hall Reverb', category: 'effect', type: 'reverb-hall', vendor: 'FreeDaw-Collab', params: { mix: 0.5 } },
   { id: 'fx-distortion', name: 'Tube Distortion', category: 'effect', type: 'distortion', vendor: 'FreeDaw-Collab', params: { amount: 50, mix: 1.0 } },
   { id: 'fx-chorus', name: 'Stereo Chorus', category: 'effect', type: 'chorus', vendor: 'FreeDaw-Collab', params: { rate: 1.5, depth: 0.003, mix: 0.5 } },
   { id: 'fx-phaser', name: 'Phaser', category: 'effect', type: 'phaser', vendor: 'FreeDaw-Collab', params: { rate: 0.5, depth: 800, feedback: 0.5, mix: 0.5 } },
@@ -461,6 +463,25 @@ const formatAutoName = (track, paramKey) => {
 // ==========================================
 // FULL DSP & WEB AUDIO ENGINE
 // ==========================================
+
+const reverbIRCache = {};
+const getReverbIR = (ctx, type) => {
+    if (reverbIRCache[type]) return reverbIRCache[type];
+    const sampleRate = ctx.sampleRate || 44100;
+    const duration = type === 'hall' ? 3.0 : type === 'room' ? 0.6 : 1.5;
+    const length = Math.floor(sampleRate * duration);
+    const buffer = ctx.createBuffer(2, length, sampleRate);
+    const left = buffer.getChannelData(0);
+    const right = buffer.getChannelData(1);
+    for (let i = 0; i < length; i++) {
+        const decay = 1 - (i / length);
+        const curve = decay * decay * decay; // Fast exponential-like curve without blocking the main thread math
+        left[i] = (Math.random() * 2 - 1) * curve;
+        right[i] = (Math.random() * 2 - 1) * curve;
+    }
+    reverbIRCache[type] = buffer;
+    return buffer;
+};
 
 const getBitcrusherCurve = (bitDepth) => {
   const steps = Math.pow(2, bitDepth); const curve = new Float32Array(44100);
@@ -2312,18 +2333,8 @@ function DAWStudio() {
       if (param === 'feedback') nodeObj.feedback.gain.setTargetAtTime(numVal, now, 0.05);
       if (param === 'mix') { nodeObj.wet.gain.setTargetAtTime(numVal, now, 0.05); nodeObj.dry.gain.setTargetAtTime(1-numVal, now, 0.05); }
   } else if (nodeObj.fxType === 'reverb') {
+      // Simplified reverb now only manages the Wet/Dry mix. Internal room attributes are baked into the IR buffers.
       if (param === 'mix') { nodeObj.wet.gain.setTargetAtTime(numVal, now, 0.05); nodeObj.dry.gain.setTargetAtTime(1-numVal, now, 0.05); }
-      if (param === 'damping') nodeObj.dampingFilters.forEach(f => f.frequency.setTargetAtTime(numVal, now, 0.05));
-      if (param === 'size' || param === 'decay') {
-          nodeObj.state[param] = numVal;
-          const baseDelays = [0.0297, 0.0371, 0.0411, 0.0437];
-          nodeObj.delays.forEach((d, i) => {
-              const t = baseDelays[i] * (nodeObj.state.size || 1.0);
-              if (param === 'size') d.delayTime.setTargetAtTime(t, now, 0.05);
-              const g = Math.pow(10, -3 * t / (nodeObj.state.decay || 2.0));
-              nodeObj.fbs[i].gain.setTargetAtTime(g, now, 0.05);
-          });
-      }
   } else if (nodeObj.fxType === 'distortion' || nodeObj.fxType === 'bitcrusher') {
       if (param === 'mix') { nodeObj.wet.gain.setTargetAtTime(numVal, now, 0.05); nodeObj.dry.gain.setTargetAtTime(1-numVal, now, 0.05); }
       if (nodeObj.fxType === 'bitcrusher' && param === 'bitDepth') nodeObj.node.curve = getBitcrusherCurve(numVal);
