@@ -17,12 +17,13 @@ WORKDIR /app/webdaw
 RUN npm install
 
 # 3. Install specific libraries
-# (Removed tailwindcss-animate to prevent silent ESM import failures during build)
-RUN npm install lucide-react tailwindcss@3 postcss autoprefixer socket.io-client
+# (Re-adding tailwindcss-animate. Using .cjs config files below to safely prevent ESM crashes!)
+RUN npm install lucide-react tailwindcss@3 postcss autoprefixer tailwindcss-animate socket.io-client
 
-# 4. Inject PostCSS Configuration dynamically
-RUN cat <<EOF > postcss.config.js
-export default {
+# 4. Inject PostCSS Configuration dynamically (Using .cjs for CommonJS compatibility)
+RUN rm -f postcss.config.js tailwind.config.js
+RUN cat <<EOF > postcss.config.cjs
+module.exports = {
   plugins: {
     tailwindcss: {},
     autoprefixer: {},
@@ -30,10 +31,10 @@ export default {
 }
 EOF
 
-# 5. Inject the Tailwind Configuration dynamically with explicit SAFELIST
-RUN cat <<EOF > tailwind.config.js
+# 5. Inject the Tailwind Configuration dynamically with explicit SAFELIST and Animate Plugin
+RUN cat <<EOF > tailwind.config.cjs
 /** @type {import("tailwindcss").Config} */
-export default {
+module.exports = {
   content: [
     "./index.html",
     "./src/**/*.{js,ts,jsx,tsx}",
@@ -49,7 +50,9 @@ export default {
   theme: {
     extend: {},
   },
-  plugins: [],
+  plugins: [
+    require("tailwindcss-animate")
+  ],
 }
 EOF
 
@@ -72,6 +75,9 @@ body {
   height: 100vh;
 }
 EOF
+
+# 6.5 HARD CACHE BUSTING: Inject meta tags directly into the index.html so browsers NEVER cache the old UI
+RUN sed -i 's/<head>/<head>\n    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">\n    <meta http-equiv="Pragma" content="no-cache">\n    <meta http-equiv="Expires" content="0">/' index.html
 
 # 7. Create a serve.json to defeat aggressive browser caching for the SPA
 RUN cat <<EOF > serve.json
