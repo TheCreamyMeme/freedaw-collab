@@ -365,6 +365,7 @@ const getInterpolatedValue = (points, time) => {
 
 const getParamConstraints = (param) => {
     const p = param.toLowerCase();
+    if (p === 'size') return { min: 0.1, max: 3.0, step: 0.1 };
     if (p.includes('freq') || p === 'cutoff' || p === 'damping') return { min: 20, max: 20000, step: 1, isLog: true };
     if (p.includes('gain') || p === 'low' || p === 'mid' || p === 'high') return { min: -24, max: 24, step: 0.1 };
     if (p.includes('q') || p === 'res') return { min: 0.1, max: 20, step: 0.1 };
@@ -400,7 +401,7 @@ const getAutomationConstraints = (paramKey) => {
 const INTERNAL_PLUGINS = [
   { id: 'fx-delay', name: 'Digital Delay', category: 'effect', type: 'delay', vendor: 'FreeDaw-Collab', params: { time: 0.3, feedback: 0.4, mix: 0.5 } },
   { id: 'fx-pareq', name: 'Parametric EQ', category: 'effect', type: 'parametric-eq', vendor: 'FreeDaw-Collab', params: { lowFreq: 100, lowGain: 0, mid1Freq: 500, mid1Q: 1.0, mid1Gain: 0, mid2Freq: 2000, mid2Q: 1.0, mid2Gain: 0, highFreq: 5000, highGain: 0 } },
-  { id: 'fx-reverb', name: 'Room Reverb', category: 'effect', type: 'reverb', vendor: 'FreeDaw-Collab', params: { decay: 2.0, mix: 0.4 } },
+  { id: 'fx-reverb', name: 'Simple Algorithmic Reverb', category: 'effect', type: 'reverb', vendor: 'FreeDaw-Collab', params: { decay: 2.0, size: 1.0, damping: 5000, mix: 0.4 } },
   { id: 'fx-distortion', name: 'Tube Distortion', category: 'effect', type: 'distortion', vendor: 'FreeDaw-Collab', params: { amount: 50, mix: 1.0 } },
   { id: 'fx-chorus', name: 'Stereo Chorus', category: 'effect', type: 'chorus', vendor: 'FreeDaw-Collab', params: { rate: 1.5, depth: 0.003, mix: 0.5 } },
   { id: 'fx-phaser', name: 'Phaser', category: 'effect', type: 'phaser', vendor: 'FreeDaw-Collab', params: { rate: 0.5, depth: 800, feedback: 0.5, mix: 0.5 } },
@@ -460,16 +461,6 @@ const formatAutoName = (track, paramKey) => {
 // ==========================================
 // FULL DSP & WEB AUDIO ENGINE
 // ==========================================
-const createReverbIR = (ctx, duration) => {
-  const sampleRate = ctx.sampleRate; const length = sampleRate * duration;
-  const impulse = ctx.createBuffer(2, length, sampleRate);
-  for (let i = 0; i < length; i++) {
-    const decay = Math.exp(-i / (sampleRate * (duration / 4)));
-    impulse.getChannelData(0)[i] = (Math.random() * 2 - 1) * decay;
-    impulse.getChannelData(1)[i] = (Math.random() * 2 - 1) * decay;
-  }
-  return impulse;
-};
 
 const getBitcrusherCurve = (bitDepth) => {
   const steps = Math.pow(2, bitDepth); const curve = new Float32Array(44100);
@@ -654,9 +645,36 @@ const createFXNode = (ctx, fx) => {
     input.connect(delay); delay.connect(fb); fb.connect(delay); delay.connect(wet); wet.connect(output);
     return { input, output, delay, feedback: fb, wet, dry, fxType: 'delay' };
   } else if (fx.type === 'reverb') {
-    const conv = ctx.createConvolver(); conv.buffer = createReverbIR(ctx, fx.params?.decay || 2.0);
-    input.connect(conv); conv.connect(wet); wet.connect(output);
-    return { input, output, conv, wet, dry, fxType: 'reverb' };
+    // PERFORMANCE FIX: Replaced heavy convolution engine with a lightweight algorithmic 4-tap Schroeder comb network
+    const size = fx.params?.size || 1.0;
+    const decay = fx.params?.decay || 2.0;
+    const damping = fx.params?.damping || 5000;
+    
+    const baseDelays = [0.0297, 0.0371, 0.0411, 0.0437];
+    const delays = [], fbs = [], dampingFilters = [];
+
+    baseDelays.forEach(d => {
+        const del = ctx.createDelay(1);
+        del.delayTime.value = d * size;
+        delays.push(del);
+
+        const fb = ctx.createGain();
+        fb.gain.value = Math.pow(10, -3 * (d * size) / decay);
+        fbs.push(fb);
+
+        const filter = ctx.createBiquadFilter();
+        filter.type = 'lowpass';
+        filter.frequency.value = damping;
+        dampingFilters.push(filter);
+
+        input.connect(del);
+        del.connect(filter);
+        filter.connect(fb);
+        fb.connect(del);
+        filter.connect(wet);
+    });
+    
+    return { input, output, delays, fbs, dampingFilters, wet, dry, state: { size, decay }, fxType: 'reverb' };
   } else if (fx.type === 'filter') {
     const node = ctx.createBiquadFilter(); node.type = 'lowpass'; node.frequency.value = fx.params?.freq || 1200; node.Q.value = fx.params?.res || 1.5;
     input.connect(node); node.connect(output);
@@ -2290,15 +2308,27 @@ function DAWStudio() {
       const now = time !== null ? time : (audioCtxRef.current?.currentTime || 0);
 
       if (nodeObj.fxType === 'delay') {
-          if (param === 'time') nodeObj.delay.delayTime.setTargetAtTime(numVal, now, 0.05);
-          if (param === 'feedback') nodeObj.feedback.gain.setTargetAtTime(numVal, now, 0.05);
-          if (param === 'mix') { nodeObj.wet.gain.setTargetAtTime(numVal, now, 0.05); nodeObj.dry.gain.setTargetAtTime(1-numVal, now, 0.05); }
-      } else if (nodeObj.fxType === 'reverb' || nodeObj.fxType === 'distortion' || nodeObj.fxType === 'bitcrusher') {
-          if (param === 'mix') { nodeObj.wet.gain.setTargetAtTime(numVal, now, 0.05); nodeObj.dry.gain.setTargetAtTime(1-numVal, now, 0.05); }
-          if (nodeObj.fxType === 'bitcrusher' && param === 'bitDepth') nodeObj.node.curve = getBitcrusherCurve(numVal);
-          if (nodeObj.fxType === 'reverb' && param === 'decay') { if(audioCtxRef.current) nodeObj.conv.buffer = createReverbIR(audioCtxRef.current, numVal); }
-      } else if (nodeObj.fxType === 'filter') {
-          if (param === 'freq') nodeObj.node.frequency.setTargetAtTime(numVal, now, 0.05);
+      if (param === 'time') nodeObj.delay.delayTime.setTargetAtTime(numVal, now, 0.05);
+      if (param === 'feedback') nodeObj.feedback.gain.setTargetAtTime(numVal, now, 0.05);
+      if (param === 'mix') { nodeObj.wet.gain.setTargetAtTime(numVal, now, 0.05); nodeObj.dry.gain.setTargetAtTime(1-numVal, now, 0.05); }
+  } else if (nodeObj.fxType === 'reverb') {
+      if (param === 'mix') { nodeObj.wet.gain.setTargetAtTime(numVal, now, 0.05); nodeObj.dry.gain.setTargetAtTime(1-numVal, now, 0.05); }
+      if (param === 'damping') nodeObj.dampingFilters.forEach(f => f.frequency.setTargetAtTime(numVal, now, 0.05));
+      if (param === 'size' || param === 'decay') {
+          nodeObj.state[param] = numVal;
+          const baseDelays = [0.0297, 0.0371, 0.0411, 0.0437];
+          nodeObj.delays.forEach((d, i) => {
+              const t = baseDelays[i] * (nodeObj.state.size || 1.0);
+              if (param === 'size') d.delayTime.setTargetAtTime(t, now, 0.05);
+              const g = Math.pow(10, -3 * t / (nodeObj.state.decay || 2.0));
+              nodeObj.fbs[i].gain.setTargetAtTime(g, now, 0.05);
+          });
+      }
+  } else if (nodeObj.fxType === 'distortion' || nodeObj.fxType === 'bitcrusher') {
+      if (param === 'mix') { nodeObj.wet.gain.setTargetAtTime(numVal, now, 0.05); nodeObj.dry.gain.setTargetAtTime(1-numVal, now, 0.05); }
+      if (nodeObj.fxType === 'bitcrusher' && param === 'bitDepth') nodeObj.node.curve = getBitcrusherCurve(numVal);
+  } else if (nodeObj.fxType === 'filter') {
+      if (param === 'freq') nodeObj.node.frequency.setTargetAtTime(numVal, now, 0.05);
           if (param === 'res') nodeObj.node.Q.setTargetAtTime(numVal, now, 0.05);
       } else if (nodeObj.fxType === 'chorus' || nodeObj.fxType === 'autopan') {
           if (param === 'rate') nodeObj.lfo.frequency.setTargetAtTime(numVal, now, 0.05);
