@@ -1527,12 +1527,30 @@ function DAWStudio() {
   // NEW REFS FOR FOCUS & SAFARI FIXES
   const appContainerRef = useRef(null);
 
-  // 1. TAILWIND PREVIEW FIX: Inject Tailwind CDN for Canvas Preview
+  // 1. ENVIRONMENT-AGNOSTIC TAILWIND INJECTION
+  // This detects if Vite compiled the CSS (Live Deployment). If not (Canvas Preview), 
+  // it safely loads the CDN so the code is 100% identical and works perfectly in both environments!
   useEffect(() => {
-      if (!document.getElementById('tailwind-cdn')) {
+      const isPreviewEnv = document.styleSheets.length === 0 || !Array.from(document.styleSheets).some(s => s.href?.includes('assets/'));
+      
+      if (isPreviewEnv && !document.getElementById('tailwind-cdn')) {
           const script = document.createElement('script');
           script.id = 'tailwind-cdn';
           script.src = 'https://cdn.tailwindcss.com';
+          script.onload = () => {
+              // Polyfill the 'tailwindcss-animate' plugin so Context Menus/Modals animate in the Canvas just like in deployment
+              const style = document.createElement('style');
+              style.innerHTML = `
+                  .animate-in { animation: animate-in 200ms ease-out forwards; }
+                  @keyframes animate-in {
+                      0% { opacity: 0; transform: scale(0.95); }
+                      100% { opacity: 1; transform: scale(1); }
+                  }
+                  .fade-in { opacity: 0; }
+                  .zoom-in, .zoom-in-95 { transform: scale(0.95); }
+              `;
+              document.head.appendChild(style);
+          };
           document.head.appendChild(script);
       }
   }, []);
@@ -4103,7 +4121,7 @@ function DAWStudio() {
       {/* MIDI Learn Global Indicator */}
       {midiLearnTarget && (
         <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[250] bg-blue-600 text-white px-6 py-3 rounded-full shadow-[0_0_20px_rgba(37,99,235,0.8)] font-bold text-sm animate-pulse flex items-center gap-3">
-            <Radio size={18} className="animate-spin-slow" />
+            <Radio size={18} className="animate-spin" />
             MIDI LEARN ACTIVE: Turn a knob/fader on your controller... (Press Esc to cancel)
         </div>
       )}
