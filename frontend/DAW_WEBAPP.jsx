@@ -6,7 +6,7 @@ import {
   Folder, Sliders, Piano,
   MousePointer2, Pencil, Eraser, X, Grid, Trash2, Activity,
   Settings2, Plug, Power, LogOut, FileAudio, FileCode, Cpu,
-  Repeat, Home, Save, Download, Upload, FileJson, Info, AlertTriangle, CheckCircle2, Network, Video, VideoOff, MicOff, Lock, Copy, MoreHorizontal, Scissors, Mail, Globe, Instagram, Twitter, Bell
+  Repeat, Home, Save, Download, Upload, FileJson, Info, AlertTriangle, CheckCircle2, Network, Video, VideoOff, MicOff, Lock, Copy, MoreHorizontal, Scissors, Mail, Globe, Instagram, Twitter, Bell, Loader2
 } from 'lucide-react';
 import { io } from 'socket.io-client';
 
@@ -3441,7 +3441,12 @@ function DAWStudio() {
               setTracks(prev => prev.map(t => t.id === action.payload.trackId ? { ...t, effects: [...t.effects, action.payload.effect] } : t)); 
               if (!isLocal && audioCtxRef.current) {
                   const updatedTrack = { ...tracksRef.current.find(t => t.id === action.payload.trackId), effects: [...tracksRef.current.find(t => t.id === action.payload.trackId).effects, action.payload.effect] };
-                  initTrackRouting(updatedTrack, audioCtxRef.current, masterGainRef.current).then(synth => { synthsRef.current[action.payload.trackId] = synth; });
+                  setIsProcessingAudio(true);
+                  setTimeout(async () => {
+                      disconnectTrackRouting(synthsRef.current[action.payload.trackId]);
+                      synthsRef.current[action.payload.trackId] = await initTrackRouting(updatedTrack, audioCtxRef.current, masterGainRef.current);
+                      setIsProcessingAudio(false);
+                  }, 50);
               }
               break;
           case 'DELETE_EFFECT': 
@@ -3449,7 +3454,12 @@ function DAWStudio() {
               if (!isLocal && audioCtxRef.current) {
                   const updatedTrack = { ...tracksRef.current.find(t => t.id === action.payload.trackId) };
                   updatedTrack.effects = updatedTrack.effects.filter(fx => fx.id !== action.payload.fxId);
-                  initTrackRouting(updatedTrack, audioCtxRef.current, masterGainRef.current).then(synth => { synthsRef.current[action.payload.trackId] = synth; });
+                  setIsProcessingAudio(true);
+                  setTimeout(async () => {
+                      disconnectTrackRouting(synthsRef.current[action.payload.trackId]);
+                      synthsRef.current[action.payload.trackId] = await initTrackRouting(updatedTrack, audioCtxRef.current, masterGainRef.current);
+                      setIsProcessingAudio(false);
+                  }, 50);
               }
               break;
           case 'UPDATE_EFFECT_PARAM': 
@@ -3474,8 +3484,12 @@ function DAWStudio() {
                       newEffects[startIndex] = newEffects[endIndex];
                       newEffects[endIndex] = temp;
                       updatedTrack.effects = newEffects;
-                      disconnectTrackRouting(synthsRef.current[trackId]);
-                      initTrackRouting(updatedTrack, audioCtxRef.current, masterGainRef.current).then(synth => { synthsRef.current[trackId] = synth; });
+                      setIsProcessingAudio(true);
+                      setTimeout(async () => {
+                          disconnectTrackRouting(synthsRef.current[trackId]);
+                          synthsRef.current[trackId] = await initTrackRouting(updatedTrack, audioCtxRef.current, masterGainRef.current);
+                          setIsProcessingAudio(false);
+                      }, 50);
                   }
               }
               break;
