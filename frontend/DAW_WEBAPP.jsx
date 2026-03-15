@@ -1475,6 +1475,7 @@ function DAWStudio() {
   const [bottomDock, setBottomDock] = useState(null);
   const [zoom, setZoom] = useState(1);
   const [toasts, setToasts] = useState([]);
+  const [isProcessingAudio, setIsProcessingAudio] = useState(false);
   
   const [loopRegion, setLoopRegion] = useState({ start: 0, end: 8, enabled: false });
   const [draggingLoop, setDraggingLoop] = useState(null);
@@ -1853,14 +1854,26 @@ function DAWStudio() {
       }
   }, [sharedWith, isPublic, projectOwnerId, projectOwnerName, currentUser, showToast]);
 
-  const loadProjectToDaw = (p) => {
+  const loadProjectToDaw = async (p) => {
+      setIsProcessingAudio(true);
       setProjectId(p.id); setProjectName(p.name); setProjectOwnerId(p.ownerId || null); setProjectOwnerName(p.ownerName || ''); setTracks(p.tracks || []); setBpm(p.bpm || 120); setSharedWith(p.sharedWith || []); setIsPublic(p.isPublic || false); setAppView('daw');
-      setTimeout(() => {
-          dispatchDawAction({ type: 'REQUEST_SYNC' });
-      }, 500);
+      
+      // Let React render the DAW + loading spinner before locking the thread with audio
+      await new Promise(r => setTimeout(r, 100)); 
+      
+      try {
+          await initAudioEngine(p.tracks);
+      } catch (err) {
+          console.error("Audio engine failed to start on load:", err);
+      } finally {
+          setIsProcessingAudio(false);
+          setTimeout(() => {
+              dispatchDawAction({ type: 'REQUEST_SYNC' });
+          }, 500);
+      }
   };
 
-  const initAudioEngine = async () => {
+  const initAudioEngine = async (explicitTracks = null) => {
     if (!audioCtxRef.current) {
       audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
       masterGainRef.current = audioCtxRef.current.createGain();
@@ -1875,8 +1888,12 @@ function DAWStudio() {
     }
     if (audioCtxRef.current.state === 'suspended') await audioCtxRef.current.resume();
     
-    for (const track of tracksRef.current) {
-      if (!synthsRef.current[track.id]) synthsRef.current[track.id] = await initTrackRouting(track, audioCtxRef.current, masterGainRef.current);
+    const targetTracks = explicitTracks || tracksRef.current;
+    for (const track of targetTracks) {
+      if (!synthsRef.current[track.id]) {
+          synthsRef.current[track.id] = await initTrackRouting(track, audioCtxRef.current, masterGainRef.current);
+          await new Promise(r => setTimeout(r, 20)); // Yield to prevent browser freeze during initialization
+      }
     }
   };
 
@@ -2219,7 +2236,12 @@ function DAWStudio() {
 
   const togglePlay = async () => {
     if (!isPlaying) { 
+        if (!audioCtxRef.current || Object.keys(synthsRef.current).length < tracksRef.current.length) {
+            setIsProcessingAudio(true);
+            await new Promise(r => setTimeout(r, 20));
+        }
         await initAudioEngine(); 
+        setIsProcessingAudio(false);
         setIsPlaying(true); 
         lastMetronomeBeatRef.current = Math.floor(stateRefs.current.currentTime) - 1;
         if (isRecording) {
@@ -3262,9 +3284,15 @@ function DAWStudio() {
                   setTracks(action.payload.tracks); 
                   setBpm(action.payload.bpm); 
                   if (audioCtxRef.current) {
-                      action.payload.tracks.forEach(t => {
-                          initTrackRouting(t, audioCtxRef.current, masterGainRef.current).then(synth => { synthsRef.current[t.id] = synth; });
-                      });
+                      setIsProcessingAudio(true);
+                      setTimeout(async () => {
+                          for (const t of action.payload.tracks) {
+                              disconnectTrackRouting(synthsRef.current[t.id]);
+                              synthsRef.current[t.id] = await initTrackRouting(t, audioCtxRef.current, masterGainRef.current);
+                              await new Promise(r => setTimeout(r, 20));
+                          }
+                          setIsProcessingAudio(false);
+                      }, 50);
                   }
               } 
               break;
@@ -3998,6 +4026,15 @@ function DAWStudio() {
   return (
     <div className="flex flex-col h-screen bg-neutral-900 text-neutral-300 font-sans select-none">
       
+      {/* Loading Overlay */}
+      {isProcessingAudio && (
+        <div className="fixed inset-0 z-[500] bg-neutral-950/80 backdrop-blur-sm flex flex-col items-center justify-center text-white">
+            <div className="animate-spin mb-6"><Loader2 size={48} className="text-blue-500" /></div>
+            <h2 className="text-xl font-bold tracking-widest uppercase mb-2 text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-500">Processing Audio Engine</h2>
+            <p className="text-neutral-400 text-sm font-mono bg-neutral-900 px-4 py-1.5 rounded-lg border border-neutral-800 shadow-inner">Optimizing DSP chains & Effects...</p>
+        </div>
+      )}
+
       {/* MIDI Learn Global Indicator */}
       {midiLearnTarget && (
         <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[250] bg-blue-600 text-white px-6 py-3 rounded-full shadow-[0_0_20px_rgba(37,99,235,0.8)] font-bold text-sm animate-pulse flex items-center gap-3">
