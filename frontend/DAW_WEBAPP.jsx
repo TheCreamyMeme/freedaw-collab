@@ -1524,6 +1524,39 @@ function DAWStudio() {
   const isUndoRedoRef = useRef(false);
   const transportActionsRef = useRef({});
 
+  // NEW REFS FOR FOCUS & SAFARI FIXES
+  const appContainerRef = useRef(null);
+
+  // 1. TAILWIND PREVIEW FIX: Inject Tailwind CDN for Canvas Preview
+  useEffect(() => {
+      if (!document.getElementById('tailwind-cdn')) {
+          const script = document.createElement('script');
+          script.id = 'tailwind-cdn';
+          script.src = 'https://cdn.tailwindcss.com';
+          document.head.appendChild(script);
+      }
+  }, []);
+
+  // 2. SAFARI/FIREFOX AUDIO FIX: Force AudioContext resume on any interaction
+  useEffect(() => {
+      const unlockAudio = () => {
+          if (audioCtxRef.current && audioCtxRef.current.state === 'suspended') {
+              audioCtxRef.current.resume().catch(() => {});
+          }
+      };
+      document.addEventListener('click', unlockAudio);
+      document.addEventListener('keydown', unlockAudio);
+      return () => {
+          document.removeEventListener('click', unlockAudio);
+          document.removeEventListener('keydown', unlockAudio);
+      };
+  }, []);
+
+  // 3. HOTKEY PREVIEW FIX: Auto-focus the main container so iframe hotkeys work
+  useEffect(() => {
+      if (appContainerRef.current) appContainerRef.current.focus();
+  }, [appView]);
+
   // NEW: A throttled network emitter for butter-smooth visual dragging across clients
   const broadcastLivePreview = useCallback((action) => {
       const now = Date.now();
@@ -2198,6 +2231,11 @@ function DAWStudio() {
   };
 
   const togglePlay = async () => {
+    // SAFARI FIX: Resume IMMEDIATELY before any async/await pauses
+    if (audioCtxRef.current && audioCtxRef.current.state === 'suspended') {
+        audioCtxRef.current.resume().catch(() => {});
+    }
+
     if (!isPlaying) { 
         if (!audioCtxRef.current || Object.keys(synthsRef.current).length < tracksRef.current.length) {
             setIsProcessingAudio(true);
@@ -4040,7 +4078,18 @@ function DAWStudio() {
 
   // --- RENDER: DAW STUDIO ---
   return (
-    <div className="flex flex-col h-screen bg-neutral-900 text-neutral-300 font-sans select-none">
+    <div 
+        ref={appContainerRef}
+        tabIndex={0}
+        onMouseEnter={() => appContainerRef.current?.focus()}
+        onContextMenu={(e) => { 
+            // Prevent default browser context menu globally so custom ones work
+            if (e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA') {
+                e.preventDefault(); 
+            }
+        }}
+        className="flex flex-col h-screen bg-neutral-900 text-neutral-300 font-sans select-none outline-none"
+    >
       
       {/* Loading Overlay */}
       {isProcessingAudio && (
@@ -4277,7 +4326,7 @@ function DAWStudio() {
                         <span className="text-[10px] font-bold text-neutral-500">TRACKS</span>
                         <div className="flex gap-1">
                             {/* Auto Tracks Toggle Button */}
-                            <button onClick={() => setIsAutomationMode(!isAutomationMode)} className={`text-[9px] uppercase font-bold flex items-center gap-1 px-1.5 py-0.5 rounded transition-colors ${isAutomationMode ? 'bg-blue-500 text-white shadow-[0_0_8px_rgba(59,130,246,0.5)]' : 'bg-neutral-800 text-neutral-400 hover:text-white hover:bg-neutral-700'}`} title="Toggle Automation Lanes (Ctrl+Shift+A)"><Activity size={10}/> Auto Tracks</button>
+                            <button onClick={() => setIsAutomationMode(!isAutomationMode)} className={`text-[9px] uppercase font-bold flex items-center gap-1 px-1.5 py-0.5 rounded transition-colors ${isAutomationMode ? 'bg-blue-500 text-white shadow-[0_0_8px_rgba(59,130,246,0.5)]' : 'bg-neutral-800 text-neutral-400 hover:text-white hover:bg-neutral-700'}`} title="Toggle Automation Lanes (Ctrl+Shift+A)"><Activity size={10}/> Auto Tracks (Right-Click Knobs)</button>
                             <button onClick={() => dispatchDawAction({ type: 'ADD_TRACK', payload: { id: Date.now(), name: 'New MIDI', type: 'midi', instrument: 'inst-subtractive', instrumentParams: {cutoff:2000, res:1}, color: 'bg-pink-500', volume: 80, pan: 0, automation: {}, activeAutomationParam: 'volume', clips: [], effects: [] }})} className="text-[9px] uppercase text-neutral-400 hover:text-white font-bold flex items-center gap-1 bg-neutral-800 hover:bg-neutral-700 px-1.5 py-0.5 rounded transition-colors"><Plus size={10}/> MIDI</button>
                             <button onClick={() => dispatchDawAction({ type: 'ADD_TRACK', payload: { id: Date.now(), name: 'New Audio', type: 'audio', color: 'bg-emerald-500', volume: 80, pan: 0, automation: {}, activeAutomationParam: 'volume', clips: [], effects: [] }})} className="text-[9px] uppercase text-neutral-400 hover:text-white font-bold flex items-center gap-1 bg-neutral-800 hover:bg-neutral-700 px-1.5 py-0.5 rounded transition-colors"><Plus size={10}/> Audio</button>
                         </div>
