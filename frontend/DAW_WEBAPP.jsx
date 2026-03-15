@@ -962,6 +962,17 @@ const triggerOrgan = (ctx, bus, pitch, time, vol, dur, p={}, vel=100, pbNode) =>
   amp.connect(bus);
 };
 
+const noiseBufferCache = {};
+const getNoiseBuffer = (ctx, duration) => {
+    const bufSize = Math.floor(ctx.sampleRate * duration);
+    if (noiseBufferCache[bufSize]) return noiseBufferCache[bufSize];
+    const buffer = ctx.createBuffer(1, bufSize, ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < bufSize; i++) data[i] = Math.random() * 2 - 1;
+    noiseBufferCache[bufSize] = buffer;
+    return buffer;
+};
+
 const triggerDrum = (ctx, bus, pitch, time, vol, p={}, vel=100) => {
   const realVol = vol * (vel / 127);
   if (pitch === 36) { // Kick
@@ -975,15 +986,13 @@ const triggerDrum = (ctx, bus, pitch, time, vol, p={}, vel=100) => {
     env.gain.setValueAtTime(realVol*0.5, time); env.gain.exponentialRampToValueAtTime(0.01, time + 0.2);
     osc.connect(env); env.connect(bus); osc.start(time); osc.stop(time + 0.2);
     
-    const bufSize = ctx.sampleRate * 0.2, buffer = ctx.createBuffer(1, bufSize, ctx.sampleRate), data = buffer.getChannelData(0);
-    for (let i=0; i<bufSize; i++) data[i] = Math.random() * 2 - 1;
+    const buffer = getNoiseBuffer(ctx, 0.2);
     const noise = ctx.createBufferSource(), filter = ctx.createBiquadFilter(), nEnv = ctx.createGain();
     noise.buffer = buffer; filter.type = pitch === 39 ? 'bandpass' : 'highpass'; filter.frequency.value = 1000;
     nEnv.gain.setValueAtTime(realVol*0.8, time); nEnv.gain.exponentialRampToValueAtTime(0.01, time + 0.2);
     noise.connect(filter); filter.connect(nEnv); nEnv.connect(bus); noise.start(time);
   } else { // Hats/Cymbals
-    const bufSize = ctx.sampleRate * 0.1, buffer = ctx.createBuffer(1, bufSize, ctx.sampleRate), data = buffer.getChannelData(0);
-    for (let i=0; i<bufSize; i++) data[i] = Math.random() * 2 - 1;
+    const buffer = getNoiseBuffer(ctx, 0.1);
     const noise = ctx.createBufferSource(), filter = ctx.createBiquadFilter(), nEnv = ctx.createGain();
     noise.buffer = buffer; filter.type = 'highpass'; filter.frequency.value = 7000;
     nEnv.gain.setValueAtTime(realVol*0.5, time); nEnv.gain.exponentialRampToValueAtTime(0.01, time + 0.1);
@@ -2287,6 +2296,7 @@ function DAWStudio() {
       } else if (nodeObj.fxType === 'reverb' || nodeObj.fxType === 'distortion' || nodeObj.fxType === 'bitcrusher') {
           if (param === 'mix') { nodeObj.wet.gain.setTargetAtTime(numVal, now, 0.05); nodeObj.dry.gain.setTargetAtTime(1-numVal, now, 0.05); }
           if (nodeObj.fxType === 'bitcrusher' && param === 'bitDepth') nodeObj.node.curve = getBitcrusherCurve(numVal);
+          if (nodeObj.fxType === 'reverb' && param === 'decay') { if(audioCtxRef.current) nodeObj.conv.buffer = createReverbIR(audioCtxRef.current, numVal); }
       } else if (nodeObj.fxType === 'filter') {
           if (param === 'freq') nodeObj.node.frequency.setTargetAtTime(numVal, now, 0.05);
           if (param === 'res') nodeObj.node.Q.setTargetAtTime(numVal, now, 0.05);
