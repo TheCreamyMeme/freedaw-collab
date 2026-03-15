@@ -470,37 +470,21 @@ const getReverbIR = async (ctx, type) => {
     const sampleRate = ctx.sampleRate || 44100;
     const duration = type === 'reverb-hall' ? 2.5 : type === 'reverb-plate' ? 1.5 : 0.8;
     
-    // ASYNC OFF-THREAD OPTIMIZATION: Generate Impulse Response natively in C++ via OfflineAudioContext
-    // This completely prevents the massive UI freezes caused by main-thread Math loops and FFT processing.
-    const offlineCtx = new (window.OfflineAudioContext || window.webkitOfflineAudioContext)(2, sampleRate * duration, sampleRate);
+    // CRITICAL FIX: OfflineAudioContext.startRendering() causes hard "Page Unresponsive" lockups on some browsers.
+    // A simple math array fill is sub-5ms and completely bypasses the browser's audio-thread bottlenecks safely.
+    const length = Math.floor(sampleRate * duration);
+    const buffer = ctx.createBuffer(2, length, sampleRate);
+    const left = buffer.getChannelData(0);
+    const right = buffer.getChannelData(1);
     
-    const noiseBuffer = offlineCtx.createBuffer(2, sampleRate * duration, sampleRate);
-    const left = noiseBuffer.getChannelData(0);
-    const right = noiseBuffer.getChannelData(1);
-    for (let i = 0; i < left.length; i++) {
-        left[i] = Math.random() * 2 - 1;
-        right[i] = Math.random() * 2 - 1;
+    for (let i = 0; i < length; i++) {
+        const decay = Math.pow(1 - (i / length), 3);
+        left[i] = (Math.random() * 2 - 1) * decay;
+        right[i] = (Math.random() * 2 - 1) * decay;
     }
     
-    const noiseSource = offlineCtx.createBufferSource();
-    noiseSource.buffer = noiseBuffer;
-    
-    const filter = offlineCtx.createBiquadFilter();
-    filter.type = 'lowpass';
-    filter.frequency.value = type === 'reverb-hall' ? 4000 : 6000;
-
-    const envelope = offlineCtx.createGain();
-    envelope.gain.setValueAtTime(1, 0);
-    envelope.gain.exponentialRampToValueAtTime(0.001, duration);
-
-    noiseSource.connect(filter);
-    filter.connect(envelope);
-    envelope.connect(offlineCtx.destination);
-    noiseSource.start();
-
-    const renderedBuffer = await offlineCtx.startRendering();
-    reverbIRCache[type] = renderedBuffer;
-    return renderedBuffer;
+    reverbIRCache[type] = buffer;
+    return buffer;
 };
 
 const bitcrusherCurveCache = {};
@@ -1751,16 +1735,24 @@ function DAWStudio() {
 
     const rebuildAllSynths = useCallback(async (newTracks) => {
         if (!audioCtxRef.current) return;
-        const newTrackIds = new Set(newTracks.map(t => t.id));
-        Object.keys(synthsRef.current).forEach(id => {
-            if (!newTrackIds.has(Number(id))) {
-                disconnectTrackRouting(synthsRef.current[id]);
-                delete synthsRef.current[id];
+        setIsProcessingAudio(true);
+        // Force React to paint the loading screen before doing heavy audio tasks
+        await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+        
+        try {
+            const newTrackIds = new Set(newTracks.map(t => t.id));
+            Object.keys(synthsRef.current).forEach(id => {
+                if (!newTrackIds.has(Number(id))) {
+                    disconnectTrackRouting(synthsRef.current[id]);
+                    delete synthsRef.current[id];
+                }
+            });
+            for (const track of newTracks) {
+                disconnectTrackRouting(synthsRef.current[track.id]);
+                synthsRef.current[track.id] = await initTrackRouting(track, audioCtxRef.current, masterGainRef.current);
             }
-        });
-        for (const track of newTracks) {
-            disconnectTrackRouting(synthsRef.current[track.id]);
-            synthsRef.current[track.id] = await initTrackRouting(track, audioCtxRef.current, masterGainRef.current);
+        } finally {
+            setIsProcessingAudio(false);
         }
     }, []);
 
@@ -2197,7 +2189,8 @@ function DAWStudio() {
     if (!isPlaying) { 
         if (!audioCtxRef.current || Object.keys(synthsRef.current).length < tracksRef.current.length) {
             setIsProcessingAudio(true);
-            await new Promise(r => setTimeout(r, 20));
+            await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+            await new Promise(r => setTimeout(r, 50));
         }
         await initAudioEngine(); 
         setIsProcessingAudio(false);
@@ -2497,42 +2490,80 @@ function DAWStudio() {
 
   const addEffect = async (trackId, fxDef) => {
     const newFx = { id: `fx-${Date.now()}`, type: fxDef.type, name: fxDef.name, params: fxDef.params ? { ...fxDef.params } : {} };
+    
+    setIsProcessingAudio(true);
+    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))); // Force loader paint
+    
     dispatchDawAction({ type: 'ADD_EFFECT', payload: { trackId, effect: newFx } });
     const updatedTrack = { ...tracksRef.current.find(t => t.id === trackId) };
+    
     if (updatedTrack) {
         updatedTrack.effects = [...(updatedTrack.effects || []), newFx];
         if (audioCtxRef.current) {
-            disconnectTrackRouting(synthsRef.current[trackId]);
-            synthsRef.current[trackId] = await initTrackRouting(updatedTrack, audioCtxRef.current, masterGainRef.current);
+            try {
+                disconnectTrackRouting(synthsRef.current[trackId]);
+                synthsRef.current[trackId] = await initTrackRouting(updatedTrack, audioCtxRef.current, masterGainRef.current);
+            } finally {
+                setIsProcessingAudio(false);
+            }
+        } else {
+            setIsProcessingAudio(false);
         }
+    } else {
+        setIsProcessingAudio(false);
     }
   };
 
   const deleteEffect = async (trackId, fxId) => {
+    setIsProcessingAudio(true);
+    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+    
     dispatchDawAction({ type: 'DELETE_EFFECT', payload: { trackId, fxId } });
     const updatedTrack = { ...tracksRef.current.find(t => t.id === trackId) };
+    
     if (updatedTrack) {
         updatedTrack.effects = updatedTrack.effects.filter(fx => fx.id !== fxId);
         if (audioCtxRef.current) {
-            disconnectTrackRouting(synthsRef.current[trackId]);
-            synthsRef.current[trackId] = await initTrackRouting(updatedTrack, audioCtxRef.current, masterGainRef.current);
+            try {
+                disconnectTrackRouting(synthsRef.current[trackId]);
+                synthsRef.current[trackId] = await initTrackRouting(updatedTrack, audioCtxRef.current, masterGainRef.current);
+            } finally {
+                setIsProcessingAudio(false);
+            }
+        } else {
+            setIsProcessingAudio(false);
         }
+    } else {
+        setIsProcessingAudio(false);
     }
   };
 
   const reorderEffects = async (trackId, startIndex, endIndex) => {
     if (startIndex === endIndex) return;
+    
+    setIsProcessingAudio(true);
+    await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+    
     dispatchDawAction({ type: 'REORDER_EFFECTS', payload: { trackId, startIndex, endIndex } });
     const updatedTrack = { ...tracksRef.current.find(t => t.id === trackId) };
+    
     if (updatedTrack && updatedTrack.effects) {
         const effects = [...updatedTrack.effects];
         const [moved] = effects.splice(startIndex, 1);
         effects.splice(endIndex, 0, moved);
         updatedTrack.effects = effects;
         if (audioCtxRef.current) {
-            disconnectTrackRouting(synthsRef.current[trackId]);
-            synthsRef.current[trackId] = await initTrackRouting(updatedTrack, audioCtxRef.current, masterGainRef.current);
+            try {
+                disconnectTrackRouting(synthsRef.current[trackId]);
+                synthsRef.current[trackId] = await initTrackRouting(updatedTrack, audioCtxRef.current, masterGainRef.current);
+            } finally {
+                setIsProcessingAudio(false);
+            }
+        } else {
+            setIsProcessingAudio(false);
         }
+    } else {
+        setIsProcessingAudio(false);
     }
   };
 
