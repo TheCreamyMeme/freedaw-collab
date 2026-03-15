@@ -2602,7 +2602,7 @@ function DAWStudio() {
 
       // 2. TEXT FIELD EXCEPTION: If typing, allow space, arrows, delete, and copy/paste to work normally
       if (isTextInput) {
-          if (code === 'Space' || code === 'ArrowLeft' || code === 'ArrowRight' || code === 'Backspace' || code === 'Delete' || (!cmd && key.length === 1) || (cmd && ['c', 'v', 'x'].includes(key))) {
+          if (code === 'Enter' || code === 'Space' || code === 'ArrowLeft' || code === 'ArrowRight' || code === 'Backspace' || code === 'Delete' || (!cmd && key.length === 1) || (cmd && ['c', 'v', 'x'].includes(key))) {
               return; 
           }
       } else {
@@ -2620,6 +2620,12 @@ function DAWStudio() {
           togglePlay();
           return;
       } 
+
+      // Return to beginning
+      if (code === 'Enter') {
+          transportActionsRef.current.rewind?.();
+          return;
+      }
 
       // Save / Save As
       if (cmd && key === 's') {
