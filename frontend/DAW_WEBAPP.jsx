@@ -4199,7 +4199,7 @@ function DAWStudio() {
                                     ))}
                                     {/* Live Recording Block Preview */}
                                     {t.armed && isRecording && isPlaying && (
-                                       <div className="absolute top-2 bottom-2 rounded bg-red-500/50 border border-red-400 pointer-events-none" style={{ left: `${recordingStartTimeRef.current * BEAT_WIDTH}px`, width: `${Math.max(1, (currentTime - recordingStartTimeRef.current) * BEAT_WIDTH)}px` }}>
+                                       <div id={`record-preview-${t.id}`} className="absolute top-2 bottom-2 rounded bg-red-500/50 border border-red-400 pointer-events-none" style={{ left: `${recordingStartTimeRef.current * BEAT_WIDTH}px`, width: `${Math.max(1, (currentTime - recordingStartTimeRef.current) * BEAT_WIDTH)}px` }}>
                                            <div className="px-2 pt-1 text-[9px] font-bold text-white">RECORDING...</div>
                                        </div>
                                     )}
