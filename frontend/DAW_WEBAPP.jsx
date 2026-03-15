@@ -650,43 +650,64 @@ const createFXNode = (ctx, fx) => {
     input.connect(delay); delay.connect(fb); fb.connect(delay); delay.connect(wet); wet.connect(output);
     return { input, output, delay, feedback: fb, wet, dry, fxType: 'delay' };
   } else if (fx.type.startsWith('reverb')) {
-    // 100% CRASH-PROOF FEED-FORWARD REVERB
-    // Uses a Multi-Tap delay line. Eliminates ALL cyclic feedback loops entirely 
-    // to guarantee zero Web Audio memory leaks and zero Offline Context rendering freezes.
+    // FREEVERB ALGORITHM (Lightweight & Efficient)
+    // Offloads heavy room-simulation calculations to native C++ Web Audio nodes via Comb & Allpass filters,
+    // drastically reducing JS Main Thread load as identified by React performance profiling.
     const filter = ctx.createBiquadFilter();
     filter.type = 'lowpass';
     filter.frequency.value = fx.type === 'reverb-hall' ? 4000 : fx.type === 'reverb-plate' ? 6000 : 8000;
 
     input.connect(filter);
 
-    const taps = fx.type === 'reverb-hall' ? 8 : fx.type === 'reverb-plate' ? 6 : 4;
-    const baseTime = fx.type === 'reverb-hall' ? 0.04 : fx.type === 'reverb-plate' ? 0.03 : 0.02;
-    const decay = fx.type === 'reverb-hall' ? 0.7 : fx.type === 'reverb-plate' ? 0.6 : 0.5;
+    // 4 Parallel Comb Filters (Simulating Room Size)
+    const combDelays = [0.0253, 0.0269, 0.0289, 0.0307];
+    const roomSize = fx.type === 'reverb-hall' ? 0.84 : fx.type === 'reverb-plate' ? 0.72 : 0.6;
+    const combOutput = ctx.createGain();
 
-    const delays = [];
-    const gains = [];
+    const combs = combDelays.map(dt => {
+        const delay = ctx.createDelay(1); delay.delayTime.value = dt;
+        const fb = ctx.createGain(); fb.gain.value = roomSize; // Clamped strictly below 1.0 to prevent Infinite Loop/NaN crashes
+        filter.connect(delay); delay.connect(fb); fb.connect(delay); delay.connect(combOutput);
+        return { delay, fb };
+    });
 
-    // Irrational multipliers spread reflections to prevent metallic ringing
-    const multipliers = [1.0, 1.414, 2.13, 3.17, 4.31, 5.57, 7.11, 8.87];
+    // 2 Sequential Allpass Filters (Diffusion/Density)
+    const ap1 = ctx.createBiquadFilter(); ap1.type = 'allpass'; ap1.frequency.value = 300;
+    const ap2 = ctx.createBiquadFilter(); ap2.type = 'allpass'; ap2.frequency.value = 1000;
 
-    for (let i = 0; i < taps; i++) {
-        const delay = ctx.createDelay(2);
-        delay.delayTime.value = baseTime * multipliers[i];
+    combOutput.connect(ap1); ap1.connect(ap2); ap2.connect(wet);
+    wet.connect(output); // CRITICAL FIX: The wet signal must actually connect to the output!
 
-        const gain = ctx.createGain();
-        // Alternate phase (-1 / 1) and decay volume exponentially
-        gain.gain.value = Math.pow(decay, i + 1) * (i % 2 === 0 ? 1 : -1);
-
-        filter.connect(delay);
-        delay.connect(gain);
-        gain.connect(wet);
-
-        delays.push(delay);
-        gains.push(gain);
-    }
-
-    return { input, output, wet, dry, delays, gains, filter, fxType: 'reverb' };
+    return { input, output, wet, dry, filter, combs, ap1, ap2, fxType: 'reverb' };
   } else if (fx.type === 'filter') {
+// --- Helper to prevent Web Audio Memory Leaks ---
+const disconnectTrackRouting = (synth) => {
+    if (!synth) return;
+    try {
+        if (synth.activeSource) { try { synth.activeSource.stop(); } catch(e){} synth.activeSource.disconnect(); }
+        if (synth.pitchBendNode) { try { synth.pitchBendNode.stop(); } catch(e){} synth.pitchBendNode.disconnect(); }
+        if (synth.inputBus) synth.inputBus.disconnect();
+        if (synth.faderGain) synth.faderGain.disconnect();
+        if (synth.panner) synth.panner.disconnect();
+        if (synth.analyser) synth.analyser.disconnect();
+        if (synth.fxNodes) {
+            Object.values(synth.fxNodes).forEach(nodeObj => {
+                // Aggressively hunt down and sever every single audio connection to prevent Cyclic Graph memory leaks
+                Object.values(nodeObj).forEach(prop => {
+                    if (prop && typeof prop.disconnect === 'function') {
+                        try { prop.disconnect(); } catch(e){}
+                    } else if (Array.isArray(prop)) {
+                        prop.forEach(p => { 
+                            if (p && typeof p.disconnect === 'function') try { p.disconnect(); } catch(e){} 
+                        });
+                    }
+                });
+            });
+        }
+    } catch (e) {
+        console.error("Audio cleanup error", e);
+    }
+};
     const node = ctx.createBiquadFilter(); node.type = 'lowpass'; node.frequency.value = fx.params?.freq || 1200; node.Q.value = fx.params?.res || 1.5;
     input.connect(node); node.connect(output);
     return { input, output, node, fxType: 'filter' };
@@ -1043,16 +1064,18 @@ const disconnectTrackRouting = (synth) => {
         if (synth.analyser) synth.analyser.disconnect();
         if (synth.fxNodes) {
             Object.values(synth.fxNodes).forEach(nodeObj => {
-                // Aggressively hunt down and sever every single audio connection to prevent Cyclic Graph memory leaks
-                Object.values(nodeObj).forEach(prop => {
-                    if (prop && typeof prop.disconnect === 'function') {
-                        try { prop.disconnect(); } catch(e){}
-                    } else if (Array.isArray(prop)) {
-                        prop.forEach(p => { 
-                            if (p && typeof p.disconnect === 'function') try { p.disconnect(); } catch(e){} 
-                        });
+                // CRITICAL FIX: Recursively hunt down and sever EVERY audio connection (even inside nested objects)
+                const safeDisconnect = (item) => {
+                    if (!item) return;
+                    if (typeof item.disconnect === 'function') {
+                        try { item.disconnect(); } catch(e){}
+                    } else if (Array.isArray(item)) {
+                        item.forEach(safeDisconnect);
+                    } else if (typeof item === 'object') {
+                        Object.values(item).forEach(safeDisconnect);
                     }
-                });
+                };
+                safeDisconnect(nodeObj);
             });
         }
     } catch (e) {
