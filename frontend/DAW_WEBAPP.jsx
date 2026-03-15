@@ -2831,6 +2831,7 @@ function DAWStudio() {
 
       // Toggle Automation View (Ctrl/Cmd + Shift + A)
       if (cmd && shift && key === 'a') {
+          // (Make sure to delete your old "coming soon" hotkey if it's still there!)
           setIsAutomationMode(prev => {
               const next = !prev;
               showToast(next ? "Automation Mode ON" : "Automation Mode OFF", "info");
@@ -4055,6 +4056,7 @@ function DAWStudio() {
                     <div className="h-8 bg-neutral-950 border-b border-neutral-800 flex items-center justify-between px-2 shrink-0">
                         <span className="text-[10px] font-bold text-neutral-500">TRACKS</span>
                         <div className="flex gap-1">
+                            {/* Auto Tracks Toggle Button */}
                             <button onClick={() => setIsAutomationMode(!isAutomationMode)} className={`text-[9px] uppercase font-bold flex items-center gap-1 px-1.5 py-0.5 rounded transition-colors ${isAutomationMode ? 'bg-blue-500 text-white shadow-[0_0_8px_rgba(59,130,246,0.5)]' : 'bg-neutral-800 text-neutral-400 hover:text-white hover:bg-neutral-700'}`} title="Toggle Automation Lanes (Ctrl+Shift+A)"><Activity size={10}/> Auto Tracks</button>
                             <button onClick={() => dispatchDawAction({ type: 'ADD_TRACK', payload: { id: Date.now(), name: 'New MIDI', type: 'midi', instrument: 'inst-subtractive', instrumentParams: {cutoff:2000, res:1}, color: 'bg-pink-500', volume: 80, pan: 0, automation: {}, activeAutomationParam: 'volume', clips: [], effects: [] }})} className="text-[9px] uppercase text-neutral-400 hover:text-white font-bold flex items-center gap-1 bg-neutral-800 hover:bg-neutral-700 px-1.5 py-0.5 rounded transition-colors"><Plus size={10}/> MIDI</button>
                             <button onClick={() => dispatchDawAction({ type: 'ADD_TRACK', payload: { id: Date.now(), name: 'New Audio', type: 'audio', color: 'bg-emerald-500', volume: 80, pan: 0, automation: {}, activeAutomationParam: 'volume', clips: [], effects: [] }})} className="text-[9px] uppercase text-neutral-400 hover:text-white font-bold flex items-center gap-1 bg-neutral-800 hover:bg-neutral-700 px-1.5 py-0.5 rounded transition-colors"><Plus size={10}/> Audio</button>
@@ -4099,6 +4101,7 @@ function DAWStudio() {
                                     </div>
                                 </div>
                             </div>
+                            {/* Automation Lane Header Labels */}
                             {autoKeys.map(paramKey => (
                                 <div key={paramKey} className="h-16 border-b border-neutral-800/50 bg-neutral-900/60 pl-6 pr-2 py-2 flex items-center shadow-inner relative border-l-2 border-l-blue-500/50">
                                      <span className="text-[10px] text-neutral-400 font-bold uppercase tracking-wider truncate w-full" title={formatAutoName(t, paramKey)}>
@@ -4223,6 +4226,7 @@ function DAWStudio() {
                                        </div>
                                     )}
                                 </div>
+                                {/* Automation Lane Timeline Backgrounds */}
                                 {autoKeys.map(paramKey => (
                                     <div key={paramKey} className="h-16 border-b border-neutral-800/50 bg-neutral-900/30 relative pointer-events-auto cursor-crosshair overflow-hidden" onMouseDown={(e) => {
                                         e.stopPropagation();
