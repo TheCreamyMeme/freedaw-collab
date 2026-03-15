@@ -464,9 +464,12 @@ const formatAutoName = (track, paramKey) => {
 // FULL DSP & WEB AUDIO ENGINE
 // ==========================================
 
+const bitcrusherCurveCache = {};
 const getBitcrusherCurve = (bitDepth) => {
+  if (bitcrusherCurveCache[bitDepth]) return bitcrusherCurveCache[bitDepth];
   const steps = Math.pow(2, bitDepth); const curve = new Float32Array(44100);
   for (let i = 0; i < 44100; i++) { const x = (i * 2) / 44100 - 1; curve[i] = Math.round(x * steps) / steps; }
+  bitcrusherCurveCache[bitDepth] = curve;
   return curve;
 };
 
@@ -786,8 +789,9 @@ const ParametricEqVisualizer = ({ trackId, fxId, params, onParamChange, synthsRe
 
     useEffect(() => {
         try {
-            // CRITICAL FIX: Use OfflineAudioContext for safe math operations if main context isn't started yet to prevent Hardware Exhaustion crashing
-            const ctx = audioCtxRef.current || new (window.OfflineAudioContext || window.webkitOfflineAudioContext)(1, 44100, 44100);
+            // CRITICAL FIX: ALWAYS use a disposable OfflineAudioContext for visualizer math.
+            // Using the main audioCtxRef here causes a massive memory leak of BiquadFilters every time the component re-renders!
+            const ctx = new (window.OfflineAudioContext || window.webkitOfflineAudioContext)(1, 44100, 44100);
             const low = ctx.createBiquadFilter(); low.type = 'lowshelf'; low.frequency.value = params?.lowFreq || 100; low.gain.value = params?.lowGain || 0;
             const mid1 = ctx.createBiquadFilter(); mid1.type = 'peaking'; mid1.frequency.value = params?.mid1Freq || 500; mid1.Q.value = params?.mid1Q || 1.0; mid1.gain.value = params?.mid1Gain || 0;
             const mid2 = ctx.createBiquadFilter(); mid2.type = 'peaking'; mid2.frequency.value = params?.mid2Freq || 2000; mid2.Q.value = params?.mid2Q || 1.0; mid2.gain.value = params?.mid2Gain || 0;
