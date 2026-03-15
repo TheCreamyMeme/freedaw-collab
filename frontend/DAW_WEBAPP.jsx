@@ -2157,8 +2157,6 @@ function DAWStudio() {
           const currentTracks = tracksRef.current;
           const anySolo = currentTracks.some(t => t.solo);
 
-          const automatedUpdates = [];
-
           currentTracks.forEach(track => {
             if (track.automation) {
                 Object.entries(track.automation).forEach(([paramKey, points]) => {
@@ -2166,21 +2164,16 @@ function DAWStudio() {
                         const val = getInterpolatedValue(points, newTime);
                         if (val !== null) {
                             const synth = synthsRef.current[track.id];
+                            // Apply parameters smoothly to Web Audio engine without choking React with setStates
                             if (paramKey === 'volume' && synth) {
                                 if (Math.abs(synth.faderGain.gain.value - val/100) > 0.01) synth.faderGain.gain.setTargetAtTime(val/100, now, 0.05);
-                                automatedUpdates.push({ type: 'UPDATE_TRACK_VOL', payload: { id: track.id, volume: val } });
                             } else if (paramKey === 'pan' && synth?.panner?.pan) {
                                 synth.panner.pan.setTargetAtTime(val/50, now, 0.05);
-                                automatedUpdates.push({ type: 'UPDATE_TRACK_PAN', payload: { id: track.id, pan: val } });
                             } else if (paramKey.startsWith('fx_param_')) {
                                 const parts = paramKey.split('_');
                                 const fxId = parts[2];
                                 const pName = parts.slice(3).join('_');
                                 applyAudioEffectParam(track.id, fxId, pName, val, now);
-                                automatedUpdates.push({ type: 'UPDATE_EFFECT_PARAM', payload: { trackId: track.id, fxId, param: pName, value: val } });
-                            } else if (paramKey.startsWith('inst_param_')) {
-                                const pName = paramKey.split('_').slice(2).join('_');
-                                automatedUpdates.push({ type: 'UPDATE_INSTRUMENT_PARAM', payload: { trackId: track.id, param: pName, value: val } });
                             }
                         }
                     }
@@ -2245,11 +2238,6 @@ function DAWStudio() {
             }
         }
       });
-
-      if (automatedUpdates.length > 0 && performance.now() - lastAutoUiUpdateRef.current > 100) {
-          automatedUpdates.forEach(act => dispatchDawAction(act));
-          lastAutoUiUpdateRef.current = performance.now();
-      }
 
       reqId = requestAnimationFrame(update);
     };
@@ -2831,7 +2819,6 @@ function DAWStudio() {
 
       // Toggle Automation View (Ctrl/Cmd + Shift + A)
       if (cmd && shift && key === 'a') {
-          // (Make sure to delete your old "coming soon" hotkey if it's still there!)
           setIsAutomationMode(prev => {
               const next = !prev;
               showToast(next ? "Automation Mode ON" : "Automation Mode OFF", "info");
