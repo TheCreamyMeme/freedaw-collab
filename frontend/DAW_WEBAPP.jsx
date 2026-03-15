@@ -1352,7 +1352,6 @@ function DAWStudio() {
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [cropImageSrc, setCropImageSrc] = useState(null);
   const [showShareModal, setShowShareModal] = useState(false);
-  const [shareUsername, setShareUsername] = useState('');
   const [sharedWith, setSharedWith] = useState([]);
   const [viewProfileUser, setViewProfileUser] = useState(null);
   
@@ -1669,18 +1668,6 @@ function DAWStudio() {
           showToast("Redo", "info");
       }
   }, [broadcastLivePreview, showToast]);
-
-  const handleShareProject = async () => {
-      if (!shareUsername.trim() || sharedWith.includes(shareUsername.trim())) return;
-      const nextShared = [...sharedWith, shareUsername.trim()];
-      setSharedWith(nextShared);
-      setShareUsername('');
-      showToast(`Shared with ${shareUsername.trim()}`, 'success');
-      await saveProject(nextShared); 
-      if (socketRef.current) {
-          socketRef.current.emit('daw-action', { type: 'PROJECT_SHARED' });
-      }
-  };
 
   const saveProject = useCallback(async (currentShared = sharedWith, currentPublic = isPublic, isAuto = false, overrideId = null, overrideName = null) => {
       const finalId = overrideId || currentProjectIdRef.current || `proj_${Date.now()}`;
@@ -2644,19 +2631,6 @@ function DAWStudio() {
         }
     };
 }, []);
-
-  const toggleLocalMedia = (type) => {
-    if (!localStreamRef.current) return;
-    if (type === 'video') {
-        const enabled = !isVideoEnabled;
-        localStreamRef.current.getVideoTracks().forEach(t => t.enabled = enabled);
-        setIsVideoEnabled(enabled);
-    } else {
-        const enabled = !isAudioEnabled;
-        localStreamRef.current.getAudioTracks().forEach(t => t.enabled = enabled);
-        setIsAudioEnabled(enabled);
-    }
-  };
 
   useEffect(() => {
     const handleKeyDown = (e) => {
@@ -4174,7 +4148,7 @@ function DAWStudio() {
                                                   setDraggingClip({ trackId: t.id, initialTrackId: t.id, clipId: c.id, startX: e.clientX, initialStart: c.start }); 
                                               } 
                                           }}
-                                          onDoubleClick={(e) => { e.stopPropagation(); setBottomDock({ type: t.type === 'audio' ? 'audio-editor' : 'piano-roll', trackId: t.id, clipId: c.id }); }}
+                                          onDoubleClick={(e) => { e.stopPropagation(); setBottomDock({ type: t.type === 'audio' ? 'devices' : 'piano-roll', trackId: t.id, clipId: c.id }); }}
                                           onContextMenu={(e) => {
                                               const rect = timelineRef.current.getBoundingClientRect();
                                               const x = e.clientX - rect.left + timelineRef.current.scrollLeft;
