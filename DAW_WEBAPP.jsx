@@ -6,7 +6,7 @@ import {
   Folder, Sliders, Piano,
   MousePointer2, Pencil, Eraser, X, Grid, Trash2, Activity,
   Settings2, Plug, Power, LogOut, FileAudio, FileCode, Cpu,
-  Repeat, Home, Save, Download, Upload, FileJson, Info, AlertTriangle, CheckCircle2, Network, Video, VideoOff, MicOff, Lock, Copy, MoreHorizontal, Scissors
+  Repeat, Home, Save, Download, Upload, FileJson, Info, AlertTriangle, CheckCircle2, Network, Video, VideoOff, MicOff, Lock, Copy, MoreHorizontal, Scissors, Mail, Globe, Instagram, Twitter
 } from 'lucide-react';
 import { io } from 'socket.io-client';
 
@@ -78,6 +78,101 @@ const formatTime = (currentTime, bpm) => {
     return `${mins}:${secs}.${ms}`;
 };
 
+// --- Dynamic Library Loader ---
+const loadJSZip = () => {
+    return new Promise((resolve, reject) => {
+        if (window.JSZip) return resolve(window.JSZip);
+        const script = document.createElement('script');
+        script.src = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
+        script.onload = () => resolve(window.JSZip);
+        script.onerror = reject;
+        document.head.appendChild(script);
+    });
+};
+
+// --- Zero-Dependency Native MIDI Writer ---
+const writeMidiFile = (clips, trackName = 'MIDI Track', bpm = 120) => {
+    let events = [];
+    clips.forEach(clip => {
+        if(!clip.notes) return;
+        clip.notes.forEach(n => {
+            const absStart = clip.start + n.start;
+            const absEnd = absStart + n.duration;
+            const pitch = Math.min(127, Math.max(0, Math.round(n.pitch)));
+            const vel = Math.min(127, Math.max(1, Math.round(n.velocity || 100)));
+            events.push({ time: absStart, type: 'on', pitch, vel });
+            events.push({ time: absEnd, type: 'off', pitch, vel: 0 });
+        });
+    });
+    if (events.length === 0) return new Uint8Array();
+    
+    events.sort((a, b) => {
+        if (a.time === b.time) return a.type === 'off' ? -1 : 1;
+        return a.time - b.time;
+    });
+    
+    const ppq = 96; 
+    let bytes = [];
+    const write8 = (v) => bytes.push(v & 0xFF);
+    const write16 = (v) => { write8(v >> 8); write8(v); };
+    const write32 = (v) => { write8(v >> 24); write8(v >> 16); write8(v >> 8); write8(v); };
+    const writeStr = (s) => { for(let i=0; i<s.length; i++) write8(s.charCodeAt(i)); };
+    
+    // MThd
+    writeStr('MThd');
+    write32(6);
+    write16(1); // Format 1
+    write16(2); // 2 Tracks
+    write16(ppq);
+    
+    const createTrack = (builderFunc) => {
+        let trackBytes = [];
+        const t8 = (v) => trackBytes.push(v & 0xFF);
+        const tStr = (s) => { for(let i=0; i<s.length; i++) t8(s.charCodeAt(i)); };
+        const tVar = (v) => {
+            let buf = [v & 0x7F];
+            while ((v >>= 7)) buf.push((v & 0x7F) | 0x80);
+            while (buf.length) t8(buf.pop()); // Pops in reverse order cleanly
+        };
+        builderFunc(t8, tStr, tVar);
+        
+        writeStr('MTrk');
+        write32(trackBytes.length);
+        trackBytes.forEach(b => write8(b));
+    };
+
+    // Track 0: Tempo Map
+    createTrack((t8, tStr, tVar) => {
+        tVar(0); t8(0xFF); t8(0x58); t8(0x04); t8(0x04); t8(0x02); t8(0x18); t8(0x08);
+        const microSecs = Math.round(60000000 / (bpm || 120));
+        tVar(0); t8(0xFF); t8(0x51); t8(0x03); 
+        t8(microSecs >> 16); t8(microSecs >> 8); t8(microSecs);
+        const sName = 'FreeDaw Project';
+        tVar(0); t8(0xFF); t8(0x03); tVar(sName.length); tStr(sName);
+        tVar(0); t8(0xFF); t8(0x2F); t8(0x00);
+    });
+
+    // Track 1: Notes
+    createTrack((t8, tStr, tVar) => {
+        const safeName = (trackName || 'MIDI Track').substring(0, 32);
+        tVar(0); t8(0xFF); t8(0x03); tVar(safeName.length); tStr(safeName);
+        tVar(0); t8(0xC0); t8(0x00); // Program Change
+        
+        let lastTick = 0;
+        events.forEach(ev => {
+            const tick = Math.max(lastTick, Math.round(ev.time * ppq));
+            const delta = tick - lastTick;
+            lastTick = tick;
+            tVar(delta);
+            t8(ev.type === 'on' ? 0x90 : 0x80);
+            t8(ev.pitch);
+            t8(ev.type === 'on' ? ev.vel : 0); // Strict 0 velocity for standard Note-Off
+        });
+        tVar(0); t8(0xFF); t8(0x2F); t8(0x00);
+    });
+
+    return new Uint8Array(bytes);
+};
 // --- WAV Audio Encoder ---
 const audioBufferToWav = (buffer) => {
     const numChannels = buffer.numberOfChannels;
@@ -719,11 +814,12 @@ const ParametricEqVisualizer = ({ trackId, fxId, params, onParamChange, synthsRe
     );
 };
 
-// ... Synth Triggers ...
-const triggerSubtractive = (ctx, bus, pitch, time, vol, dur, p={}, vel=100) => {
+// --- Synth Triggers ---
+const triggerSubtractive = (ctx, bus, pitch, time, vol, dur, p={}, vel=100, pbNode) => {
   const osc = ctx.createOscillator(), filter = ctx.createBiquadFilter(), env = ctx.createGain();
   const realVol = vol * (vel / 127);
   osc.type = p.oscType || 'sawtooth'; osc.frequency.setValueAtTime(440 * Math.pow(2, (pitch - 69) / 12), time);
+  if (pbNode) pbNode.connect(osc.detune);
   filter.type = 'lowpass'; filter.frequency.setValueAtTime(p.cutoff || 2000, time); filter.Q.value = p.res || 1.5;
   filter.frequency.exponentialRampToValueAtTime(100, time + dur);
   env.gain.setValueAtTime(0, time); env.gain.linearRampToValueAtTime(realVol, time + (p.attack||0.01));
@@ -732,7 +828,7 @@ const triggerSubtractive = (ctx, bus, pitch, time, vol, dur, p={}, vel=100) => {
   osc.start(time); osc.stop(time + dur + (p.release||0.1));
 };
 
-const triggerSupersaw = (ctx, bus, pitch, time, vol, dur, p={}, vel=100) => {
+const triggerSupersaw = (ctx, bus, pitch, time, vol, dur, p={}, vel=100, pbNode) => {
   const env = ctx.createGain(); const safeVol = vol * 0.3 * (vel / 127);
   env.gain.setValueAtTime(0, time); env.gain.linearRampToValueAtTime(safeVol, time + (p.attack||0.05));
   env.gain.setValueAtTime(safeVol, time + dur); env.gain.exponentialRampToValueAtTime(0.001, time + dur + (p.release||0.5));
@@ -740,16 +836,18 @@ const triggerSupersaw = (ctx, bus, pitch, time, vol, dur, p={}, vel=100) => {
   for(let i=0; i<count; i++) {
       const osc = ctx.createOscillator(); osc.type = 'sawtooth';
       osc.frequency.setValueAtTime(baseFreq, time); osc.detune.setValueAtTime((p.detune||25) * ((i/(count-1))*2-1), time);
+      if (pbNode) pbNode.connect(osc.detune);
       osc.connect(env); osc.start(time); osc.stop(time + dur + (p.release||0.5));
   }
   env.connect(bus);
 };
 
-const triggerFMSynth = (ctx, bus, pitch, time, vol, dur, p={}, vel=100) => {
+const triggerFMSynth = (ctx, bus, pitch, time, vol, dur, p={}, vel=100, pbNode) => {
   const carrier = ctx.createOscillator(), mod = ctx.createOscillator(), modGain = ctx.createGain(), env = ctx.createGain();
   const freq = 440 * Math.pow(2, (pitch - 69) / 12); const realVol = vol * (vel / 127);
   carrier.type = 'sine'; carrier.frequency.setValueAtTime(freq, time);
   mod.type = 'sine'; mod.frequency.setValueAtTime(freq * (p.ratio||2), time);
+  if (pbNode) { pbNode.connect(carrier.detune); pbNode.connect(mod.detune); }
   modGain.gain.setValueAtTime(freq * (p.modIndex||5) * (vel/100), time);
   env.gain.setValueAtTime(0, time); env.gain.linearRampToValueAtTime(realVol, time + (p.attack||0.01));
   env.gain.setValueAtTime(realVol, time + dur); env.gain.exponentialRampToValueAtTime(0.001, time + dur + (p.release||0.2));
@@ -757,7 +855,7 @@ const triggerFMSynth = (ctx, bus, pitch, time, vol, dur, p={}, vel=100) => {
   carrier.start(time); mod.start(time); carrier.stop(time + dur + 0.5); mod.stop(time + dur + 0.5);
 };
 
-const triggerPluck = (ctx, bus, pitch, time, vol, dur, p={}, vel=100) => {
+const triggerPluck = (ctx, bus, pitch, time, vol, dur, p={}, vel=100, pbNode) => {
   const freq = 440 * Math.pow(2, (pitch - 69) / 12); const realVol = vol * (vel / 127);
   const noiseBuf = ctx.createBuffer(1, ctx.sampleRate * 0.02, ctx.sampleRate);
   for(let i=0; i < noiseBuf.getChannelData(0).length; i++) noiseBuf.getChannelData(0)[i] = Math.random() * 2 - 1;
@@ -770,9 +868,10 @@ const triggerPluck = (ctx, bus, pitch, time, vol, dur, p={}, vel=100) => {
   delay.connect(fb); fb.connect(delay); delay.connect(out); out.connect(bus); noise.start(time);
 };
 
-const triggerAcid = (ctx, bus, pitch, time, vol, dur, p={}, vel=100) => {
+const triggerAcid = (ctx, bus, pitch, time, vol, dur, p={}, vel=100, pbNode) => {
   const osc = ctx.createOscillator(); const realVol = vol * (vel / 127);
   osc.type = p.oscType || 'square'; osc.frequency.setValueAtTime(440 * Math.pow(2, (pitch - 69) / 12), time);
+  if (pbNode) pbNode.connect(osc.detune);
   const filter = ctx.createBiquadFilter(); filter.type = 'lowpass'; filter.Q.value = p.res || 5; 
   const baseCut = p.cutoff || 150; const envMod = (p.envMod || 2500) * (vel / 100);
   filter.frequency.setValueAtTime(baseCut + envMod, time); filter.frequency.setTargetAtTime(baseCut, time, (p.decay||0.3) / 3); 
@@ -780,13 +879,14 @@ const triggerAcid = (ctx, bus, pitch, time, vol, dur, p={}, vel=100) => {
   osc.connect(filter); filter.connect(amp); amp.connect(bus); osc.start(time); osc.stop(time + dur + 0.5);
 };
 
-const triggerOrgan = (ctx, bus, pitch, time, vol, dur, p={}, vel=100) => {
+const triggerOrgan = (ctx, bus, pitch, time, vol, dur, p={}, vel=100, pbNode) => {
   const freq = 440 * Math.pow(2, (pitch - 69) / 12); const amp = ctx.createGain(); const realVol = vol * (vel / 127);
   amp.gain.setValueAtTime(0, time); amp.gain.linearRampToValueAtTime(realVol, time + 0.02);
   amp.gain.setValueAtTime(realVol, time + dur); amp.gain.linearRampToValueAtTime(0, time + dur + 0.1);
   const ratios = [0.5, 1, 1.5, 2]; const levels = [p.sub||0.8, p.fund||1.0, p.fifth||0.5, p.oct||0.5];
   ratios.forEach((ratio, i) => {
       const osc = ctx.createOscillator(); osc.type = 'sine'; osc.frequency.value = freq * ratio;
+      if (pbNode) pbNode.connect(osc.detune);
       const g = ctx.createGain(); g.gain.value = levels[i] / ratios.length;
       osc.connect(g); g.connect(amp); osc.start(time); osc.stop(time + dur + 0.2);
   });
@@ -827,6 +927,10 @@ const initTrackRouting = async (track, ctx, masterGain) => {
   if (panner.pan) panner.pan.value = (track.pan || 0) / 50; 
   faderGain.gain.value = track.volume / 100;
   
+  const pitchBendNode = ctx.createConstantSource();
+  pitchBendNode.offset.value = 0;
+  pitchBendNode.start();
+  
   let currentOutput = inputBus;
   const fxNodes = {};
   if (track.effects) {
@@ -841,7 +945,7 @@ const initTrackRouting = async (track, ctx, masterGain) => {
   analyser.fftSize = 256;
   faderGain.connect(analyser);
 
-  return { inputBus, faderGain, panner, fxNodes, activeNoteIds: new Set(), activeSource: null, analyser };
+  return { inputBus, faderGain, panner, fxNodes, activeNoteIds: new Set(), activeSource: null, analyser, pitchBendNode };
 };
 
 // --- VU Meter Component ---
@@ -933,6 +1037,119 @@ const VuMeter = ({ trackId, synthsRef, isMaster, masterAnalyserRef, isVertical =
         </div>
     );
 };
+// --- Profile Picture Cropper Component ---
+const ImageCropper = ({ src, onComplete, onCancel }) => {
+    const CROP_SIZE = 200;
+    const [zoom, setZoom] = useState(1);
+    const [offset, setOffset] = useState({ x: 0, y: 0 });
+    const [imgDims, setImgDims] = useState({ w: 0, h: 0 });
+    const imgRef = useRef(null);
+    const dragRef = useRef({ isDragging: false, startX: 0, startY: 0, initialOffsetX: 0, initialOffsetY: 0 });
+
+    const handleImageLoad = (e) => setImgDims({ w: e.target.naturalWidth, h: e.target.naturalHeight });
+
+    const minScale = imgDims.w ? Math.max(CROP_SIZE / imgDims.w, CROP_SIZE / imgDims.h) : 1;
+    const currentScale = minScale * zoom;
+    const scaledW = imgDims.w * currentScale;
+    const scaledH = imgDims.h * currentScale;
+    
+    // Calculate strict bounding limits so the image can't be dragged outside the crop circle
+    const maxX = Math.max(0, (scaledW - CROP_SIZE) / 2);
+    const maxY = Math.max(0, (scaledH - CROP_SIZE) / 2);
+
+    const clampedX = Math.min(Math.max(offset.x, -maxX), maxX);
+    const clampedY = Math.min(Math.max(offset.y, -maxY), maxY);
+
+    // Auto-recenter if zooming out pulls the image out of bounds
+    useEffect(() => {
+        if (offset.x !== clampedX || offset.y !== clampedY) setOffset({ x: clampedX, y: clampedY });
+    }, [zoom, maxX, maxY, clampedX, clampedY, offset.x, offset.y]);
+
+    const handlePointerDown = (e) => {
+        dragRef.current = { isDragging: true, startX: e.clientX, startY: e.clientY, initialOffsetX: clampedX, initialOffsetY: clampedY };
+        e.target.setPointerCapture(e.pointerId);
+    };
+
+    const handlePointerMove = (e) => {
+        if (!dragRef.current.isDragging) return;
+        const dx = e.clientX - dragRef.current.startX;
+        const dy = e.clientY - dragRef.current.startY;
+        let newX = dragRef.current.initialOffsetX + dx;
+        let newY = dragRef.current.initialOffsetY + dy;
+        
+        newX = Math.min(Math.max(newX, -maxX), maxX);
+        newY = Math.min(Math.max(newY, -maxY), maxY);
+        setOffset({ x: newX, y: newY });
+    };
+
+    const handlePointerUp = (e) => {
+        dragRef.current.isDragging = false;
+        e.target.releasePointerCapture(e.pointerId);
+    };
+
+    const handleWheel = (e) => {
+        const delta = e.deltaY < 0 ? 0.1 : -0.1;
+        setZoom(z => Math.max(1, Math.min(4, z + delta)));
+    };
+
+    const handleSave = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = CROP_SIZE; canvas.height = CROP_SIZE;
+        const ctx = canvas.getContext('2d');
+        
+        // Draw the transformed image offset onto the final canvas bounds
+        const drawX = (CROP_SIZE / 2) + clampedX - (scaledW / 2);
+        const drawY = (CROP_SIZE / 2) + clampedY - (scaledH / 2);
+        
+        ctx.drawImage(imgRef.current, drawX, drawY, scaledW, scaledH);
+        onComplete(canvas.toDataURL('image/jpeg', 0.9));
+    };
+
+    return (
+        <div className="flex flex-col items-center gap-6 w-full py-4">
+            <img ref={imgRef} src={src} onLoad={handleImageLoad} className="hidden" alt="source-hidden" />
+            
+            <div 
+                className="relative overflow-hidden rounded-full border-[3px] border-blue-500 shadow-[0_0_20px_rgba(59,130,246,0.3)] bg-neutral-950 touch-none cursor-move group"
+                style={{ width: CROP_SIZE, height: CROP_SIZE }}
+                onPointerDown={handlePointerDown}
+                onPointerMove={handlePointerMove}
+                onPointerUp={handlePointerUp}
+                onWheel={handleWheel}
+            >
+                <div className="absolute inset-0 bg-white/5 opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10" />
+                {imgDims.w > 0 && (
+                    <div 
+                        className="absolute pointer-events-none transition-transform duration-75"
+                        style={{
+                            width: scaledW, height: scaledH,
+                            left: (CROP_SIZE - scaledW) / 2 + clampedX,
+                            top: (CROP_SIZE - scaledH) / 2 + clampedY,
+                            backgroundImage: `url(${src})`,
+                            backgroundSize: '100% 100%',
+                            backgroundRepeat: 'no-repeat'
+                        }}
+                    />
+                )}
+            </div>
+
+            <div className="flex items-center gap-4 w-full max-w-[240px] bg-neutral-950 p-3 rounded-xl border border-neutral-800">
+                <span className="text-[10px] text-neutral-500 font-bold uppercase tracking-wider">Zoom</span>
+                <input 
+                    type="range" min="1" max="4" step="0.05" 
+                    value={zoom} onChange={e => setZoom(Number(e.target.value))} 
+                    className="flex-1 h-1.5 bg-neutral-800 rounded-full appearance-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:bg-blue-400 [&::-webkit-slider-thumb]:rounded-full cursor-pointer hover:[&::-webkit-slider-thumb]:bg-blue-300"
+                />
+            </div>
+
+            <div className="flex justify-between w-full mt-2 gap-4">
+                <button onClick={onCancel} className="flex-1 py-2.5 text-sm font-bold text-neutral-400 bg-neutral-800 hover:bg-neutral-700 rounded-lg transition-colors">Cancel</button>
+                <button onClick={handleSave} className="flex-1 py-2.5 text-sm font-bold text-white bg-blue-600 hover:bg-blue-500 rounded-lg shadow-lg transition-colors flex items-center justify-center gap-2"><CheckCircle2 size={16}/> Apply Crop</button>
+            </div>
+        </div>
+    );
+};
+
 // --- Custom Audio Waveform Preview Component ---
 const WaveformDisplay = ({ buffer, bpm, beatWidth, sampleOffset = 0 }) => {
     const canvasRef = useRef(null);
@@ -1031,16 +1248,15 @@ function DAWStudio() {
   const [authToken, setAuthToken] = useState(null);
   const [authName, setAuthName] = useState('');
   const [showSettings, setShowSettings] = useState(false);
+  const [showProfileMenu, setShowProfileMenu] = useState(false);
+  const [cropImageSrc, setCropImageSrc] = useState(null);
   const [showShareModal, setShowShareModal] = useState(false);
   const [shareUsername, setShareUsername] = useState('');
   const [sharedWith, setSharedWith] = useState([]);
+  const [viewProfileUser, setViewProfileUser] = useState(null);
   
   const socketRef = useRef(null);
   const [peers, setPeers] = useState({});
-  const localStreamRef = useRef(null);
-  const peerConnectionsRef = useRef({});
-  const [isVideoEnabled, setIsVideoEnabled] = useState(true);
-  const [isAudioEnabled, setIsAudioEnabled] = useState(true);
 
   const [localProjects, setLocalProjects] = useState([]);
   const [serverProjects, setServerProjects] = useState([]); 
@@ -1055,6 +1271,11 @@ function DAWStudio() {
   const [draggingPlayhead, setDraggingPlayhead] = useState(false);
   const [dockHeight, setDockHeight] = useState(260);
   const [draggingDockHeight, setDraggingDockHeight] = useState(false);
+  const [draggedFxIndex, setDraggedFxIndex] = useState(null);
+  const [dragOverFxIndex, setDragOverFxIndex] = useState(null);
+  const [selectedTrackId, setSelectedTrackId] = useState(null);
+  const [selectedClipIds, setSelectedClipIds] = useState([]);
+  const [dragHoverHome, setDragHoverHome] = useState(false);
 
   const audioCtxRef = useRef(null);
   const masterGainRef = useRef(null);
@@ -1090,6 +1311,16 @@ function DAWStudio() {
   const isInitialMount = useRef(true);
   const lastEmitRef = useRef(0);
   
+  // Missing Refs for Hotkeys, State, and Undo/Redo Engine
+  const projectNameRef = useRef(projectName);
+  const selectedTrackIdRef = useRef(selectedTrackId);
+  const selectedClipIdsRef = useRef(selectedClipIds);
+  const clipboardRef = useRef(null);
+  const historyRef = useRef([]);
+  const historyPtrRef = useRef(-1);
+  const isUndoRedoRef = useRef(false);
+  const transportActionsRef = useRef({});
+
   // NEW: A throttled network emitter for butter-smooth visual dragging across clients
   const broadcastLivePreview = useCallback((action) => {
       const now = Date.now();
@@ -1100,6 +1331,22 @@ function DAWStudio() {
   }, []);
 
   useEffect(() => { tracksRef.current = tracks; }, [tracks]);
+  useEffect(() => { projectNameRef.current = projectName; }, [projectName]);
+  useEffect(() => { selectedTrackIdRef.current = selectedTrackId; }, [selectedTrackId]);
+  useEffect(() => { selectedClipIdsRef.current = selectedClipIds; }, [selectedClipIds]);
+
+  // Global Undo/Redo History Tracker
+  useEffect(() => {
+      if (isUndoRedoRef.current) {
+          isUndoRedoRef.current = false;
+          return;
+      }
+      const hist = historyRef.current;
+      hist.splice(historyPtrRef.current + 1);
+      hist.push(JSON.parse(JSON.stringify(tracks)));
+      if (hist.length > 50) hist.shift(); // Limit history to last 50 actions to save memory
+      historyPtrRef.current = hist.length - 1;
+  }, [tracks]);
 
   // Auto-fetch missing audio clips on project load/sync
   useEffect(() => {
@@ -1228,13 +1475,14 @@ function DAWStudio() {
       const dur = 0.2; 
       if (audioCtxRef.current.state === 'suspended') audioCtxRef.current.resume();
 
+      const pbNode = synth.pitchBendNode;
       if (track.instrument === 'inst-drum') triggerDrum(audioCtxRef.current, synth.inputBus, pitch, now, 1, track.instrumentParams, velocity);
-      else if (track.instrument === 'inst-fm') triggerFMSynth(audioCtxRef.current, synth.inputBus, pitch, now, 1, dur, track.instrumentParams, velocity);
-      else if (track.instrument === 'inst-supersaw') triggerSupersaw(audioCtxRef.current, synth.inputBus, pitch, now, 1, dur, track.instrumentParams, velocity);
-      else if (track.instrument === 'inst-pluck') triggerPluck(audioCtxRef.current, synth.inputBus, pitch, now, 1, dur, track.instrumentParams, velocity);
-      else if (track.instrument === 'inst-acid') triggerAcid(audioCtxRef.current, synth.inputBus, pitch, now, 1, dur, track.instrumentParams, velocity);
-      else if (track.instrument === 'inst-organ') triggerOrgan(audioCtxRef.current, synth.inputBus, pitch, now, 1, dur, track.instrumentParams, velocity);
-      else triggerSubtractive(audioCtxRef.current, synth.inputBus, pitch, now, 1, dur, track.instrumentParams, velocity);
+      else if (track.instrument === 'inst-fm') triggerFMSynth(audioCtxRef.current, synth.inputBus, pitch, now, 1, dur, track.instrumentParams, velocity, pbNode);
+      else if (track.instrument === 'inst-supersaw') triggerSupersaw(audioCtxRef.current, synth.inputBus, pitch, now, 1, dur, track.instrumentParams, velocity, pbNode);
+      else if (track.instrument === 'inst-pluck') triggerPluck(audioCtxRef.current, synth.inputBus, pitch, now, 1, dur, track.instrumentParams, velocity, pbNode);
+      else if (track.instrument === 'inst-acid') triggerAcid(audioCtxRef.current, synth.inputBus, pitch, now, 1, dur, track.instrumentParams, velocity, pbNode);
+      else if (track.instrument === 'inst-organ') triggerOrgan(audioCtxRef.current, synth.inputBus, pitch, now, 1, dur, track.instrumentParams, velocity, pbNode);
+      else triggerSubtractive(audioCtxRef.current, synth.inputBus, pitch, now, 1, dur, track.instrumentParams, velocity, pbNode);
   }, []);
 
   const handleAvatarUpload = (e) => {
@@ -1242,14 +1490,78 @@ function DAWStudio() {
       if (file) {
           const reader = new FileReader();
           reader.onloadend = () => {
-              const next = { ...currentUser, avatar: reader.result };
-              setCurrentUser(next);
-              localStorage.setItem('freedaw_user', JSON.stringify(next));
-              if (socketRef.current) socketRef.current.emit('presence-update', { username: next.username, avatar: reader.result, color: next.color });
+              setCropImageSrc(reader.result);
+              setShowProfileMenu(false);
           };
           reader.readAsDataURL(file);
       }
   };
+
+  const handleCropComplete = async (croppedDataUrl) => {
+      const next = { ...currentUser, avatar: croppedDataUrl };
+      setCurrentUser(next);
+      localStorage.setItem('freedaw_user', JSON.stringify(next));
+      if (socketRef.current) socketRef.current.emit('presence-update', { 
+          username: next.username, avatar: croppedDataUrl, color: next.color, 
+          bio: next.bio, email: next.email, website: next.website, instagram: next.instagram, twitter: next.twitter 
+      });
+      setCropImageSrc(null);
+      showToast("Profile picture updated", "success");
+      
+      if (authTokenRef.current) {
+          try {
+              await fetch(`${API_BASE_URL}/api/users/profile`, {
+                  method: 'PUT',
+                  headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authTokenRef.current}` },
+                  body: JSON.stringify({ avatar: croppedDataUrl })
+              });
+          } catch(e) {}
+      }
+  };
+
+  const handleProfileUpdate = async (field, value) => {
+      if (currentUser?.[field] === value) return;
+      const next = { ...currentUser, [field]: value };
+      setCurrentUser(next);
+      localStorage.setItem('freedaw_user', JSON.stringify(next));
+      if (socketRef.current) socketRef.current.emit('presence-update', { 
+          username: next.username, avatar: next.avatar, color: next.color, 
+          bio: next.bio, email: next.email, website: next.website, instagram: next.instagram, twitter: next.twitter 
+      });
+      showToast(`${field.charAt(0).toUpperCase() + field.slice(1)} updated`, "success");
+      
+      if (authTokenRef.current) {
+          try {
+              await fetch(`${API_BASE_URL}/api/users/profile`, {
+                  method: 'PUT',
+                  headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authTokenRef.current}` },
+                  body: JSON.stringify({ [field]: value })
+              });
+          } catch(e) {}
+      }
+  };
+
+  const handleUndo = useCallback(() => {
+      if (historyPtrRef.current > 0) {
+          isUndoRedoRef.current = true;
+          historyPtrRef.current -= 1;
+          const prev = historyRef.current[historyPtrRef.current];
+          setTracks(prev);
+          broadcastLivePreview({ type: 'SYNC_STATE', payload: { tracks: prev, bpm: stateRefs.current.bpm } });
+          showToast("Undo", "info");
+      }
+  }, [broadcastLivePreview, showToast]);
+
+  const handleRedo = useCallback(() => {
+      if (historyPtrRef.current < historyRef.current.length - 1) {
+          isUndoRedoRef.current = true;
+          historyPtrRef.current += 1;
+          const next = historyRef.current[historyPtrRef.current];
+          setTracks(next);
+          broadcastLivePreview({ type: 'SYNC_STATE', payload: { tracks: next, bpm: stateRefs.current.bpm } });
+          showToast("Redo", "info");
+      }
+  }, [broadcastLivePreview, showToast]);
 
   const handleShareProject = async () => {
       if (!shareUsername.trim() || sharedWith.includes(shareUsername.trim())) return;
@@ -1263,12 +1575,14 @@ function DAWStudio() {
       }
   };
 
-  const saveProject = async (currentShared = sharedWith, currentPublic = isPublic, isAuto = false) => {
+  const saveProject = useCallback(async (currentShared = sharedWith, currentPublic = isPublic, isAuto = false, overrideId = null, overrideName = null) => {
+      const finalId = overrideId || currentProjectIdRef.current || `proj_${Date.now()}`;
+      const finalName = overrideName || projectNameRef.current;
       const p = { 
-          id: projectId || `proj_${Date.now()}`, 
-          name: projectName, 
-          tracks, 
-          bpm, 
+          id: finalId, 
+          name: finalName, 
+          tracks: tracksRef.current, 
+          bpm: stateRefs.current.bpm, 
           lastModified: Date.now(),
           ownerId: projectOwnerId || currentUser?.id,
           ownerName: projectOwnerName || currentUser?.username,
@@ -1277,13 +1591,13 @@ function DAWStudio() {
       };
       await idb.set('projects', p); 
       if (!isAuto) showToast("Saved locally.", "info");
-      if (authToken) {
+      if (authTokenRef.current) {
           try { 
-              await fetch(`${API_BASE_URL}/api/projects`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` }, body: JSON.stringify(p) }); 
+              await fetch(`${API_BASE_URL}/api/projects`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authTokenRef.current}` }, body: JSON.stringify(p) }); 
               if (!isAuto) showToast("Synced to Server.", "success"); 
           } catch(e) {}
       }
-  };
+  }, [sharedWith, isPublic, projectOwnerId, projectOwnerName, currentUser, showToast]);
 
   const loadProjectToDaw = (p) => {
       setProjectId(p.id); setProjectName(p.name); setProjectOwnerId(p.ownerId || null); setProjectOwnerName(p.ownerName || ''); setTracks(p.tracks || []); setBpm(p.bpm || 120); setSharedWith(p.sharedWith || []); setIsPublic(p.isPublic || false); setAppView('daw');
@@ -1381,6 +1695,176 @@ function DAWStudio() {
       pendingMidiClipsRef.current = {};
   };
 
+  const handleExportMultitrack = async () => {
+      setIsExporting(true);
+      showToast("Generating Multitrack ZIP Stems...", "info");
+      try {
+          const JSZip = await loadJSZip();
+          const zip = new JSZip();
+
+          let maxBeat = 0;
+          tracksRef.current.forEach(t => t.clips.forEach(c => {
+              if (c.start + c.duration > maxBeat) maxBeat = c.start + c.duration;
+          }));
+          if (maxBeat === 0) maxBeat = 4;
+
+          let trackIndex = 1;
+          for (const track of tracksRef.current) {
+              const safeName = `track_${String(trackIndex).padStart(2, '0')}_${track.name.replace(/[^a-z0-9]/gi, '_').toLowerCase()}`;
+              
+              if (track.type === 'midi') {
+                  const midiBytes = writeMidiFile(track.clips, track.name, stateRefs.current.bpm);
+                  // JSZip perfectly handles Uint8Array internally, {binary: true} can incorrectly invoke string parsers
+                  if (midiBytes.length > 0) zip.file(`${safeName}.mid`, midiBytes);
+              } else if (track.type === 'audio' && track.clips.length > 0) {
+                  const durationSec = (maxBeat * (60 / stateRefs.current.bpm)) + 4.0;
+                  const sampleRate = 44100;
+                  const offlineCtx = new (window.OfflineAudioContext || window.webkitOfflineAudioContext)(2, sampleRate * durationSec, sampleRate);
+                  const trackGain = offlineCtx.createGain();
+                  trackGain.gain.value = 1.0; 
+                  trackGain.connect(offlineCtx.destination);
+
+                  const synth = await initTrackRouting(track, offlineCtx, trackGain);
+
+                  track.clips.forEach(clip => {
+                      const startTimeSec = clip.start * (60 / stateRefs.current.bpm);
+                      if (clip.sampleId && globalAudioBufferCache.has(clip.sampleId)) {
+                          const sampleData = globalAudioBufferCache.get(clip.sampleId);
+                          const source = offlineCtx.createBufferSource();
+                          source.buffer = sampleData.buffer;
+                          source.connect(synth.inputBus);
+                          const secOffset = (clip.sampleOffset || 0) * (60 / stateRefs.current.bpm);
+                          const secDuration = clip.duration * (60 / stateRefs.current.bpm);
+                          source.start(startTimeSec, Math.max(0, secOffset), Math.max(0, secDuration));
+                      }
+                  });
+
+                  const renderedBuffer = await offlineCtx.startRendering();
+                  const wavBlob = audioBufferToWav(renderedBuffer);
+                  zip.file(`${safeName}.wav`, wavBlob);
+              }
+              trackIndex++;
+          }
+
+          const content = await zip.generateAsync({ type: 'blob' });
+          const url = URL.createObjectURL(content);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `${projectNameRef.current.replace(/[^a-z0-9]/gi, '_').toLowerCase()}_stems.zip`;
+          document.body.appendChild(a);
+          a.click();
+          window.URL.revokeObjectURL(url);
+          document.body.removeChild(a);
+          showToast("Multitrack ZIP Exported!", "success");
+
+      } catch (err) {
+          console.error(err);
+          showToast("ZIP Export failed: " + err.message, "error");
+      } finally {
+          setIsExporting(false);
+      }
+  };
+
+  const handleHomeDrop = async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setDragHoverHome(false);
+
+      const files = Array.from(e.dataTransfer.files);
+      if (files.length === 0) return;
+
+      const zipFile = files.find(f => f.name.toLowerCase().endsWith('.zip'));
+      if (!zipFile) {
+          showToast("Please drop a valid .zip multitrack file.", "error");
+          return;
+      }
+
+      showToast("Parsing Multitrack ZIP...", "info");
+      try {
+          const JSZip = await loadJSZip();
+          const zip = await JSZip.loadAsync(zipFile);
+          
+          const newTracks = [];
+          if (!audioCtxRef.current) audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
+
+          for (const [filename, zipEntry] of Object.entries(zip.files)) {
+              if (zipEntry.dir) continue;
+              const ext = filename.split('.').pop().toLowerCase();
+              const nameWithoutExt = filename.split('/').pop().replace(`.${ext}`, '');
+              
+              if (['mid', 'midi'].includes(ext)) {
+                  const arrayBuffer = await zipEntry.async("arraybuffer");
+                  const fileObj = new File([arrayBuffer], filename, { type: 'audio/midi' });
+                  const notes = await parseMidiFile(fileObj);
+                  
+                  if (notes && notes.length > 0) {
+                      let maxBeat = 0; notes.forEach(n => { if (n.start + n.duration > maxBeat) maxBeat = n.start + n.duration; });
+                      newTracks.push({
+                          id: Date.now() + Math.floor(Math.random() * 10000),
+                          name: nameWithoutExt.substring(0, 16),
+                          type: 'midi',
+                          instrument: 'inst-subtractive',
+                          instrumentParams: {cutoff:2000, res:1},
+                          color: 'bg-pink-500',
+                          volume: 80, pan: 0, muted: false, solo: false, armed: false, effects: [],
+                          clips: [{ id: Date.now() + Math.random(), start: 0, duration: Math.max(4, maxBeat), notes }]
+                      });
+                  }
+              } else if (['wav', 'mp3', 'ogg', 'flac'].includes(ext)) {
+                  const blob = await zipEntry.async("blob");
+                  const sampleId = `import_${Date.now()}_${Math.floor(Math.random()*1000)}`;
+                  const formData = new FormData(); 
+                  formData.append('audio', new File([blob], filename));
+                  
+                  if (authTokenRef.current) {
+                      fetch(`${API_BASE_URL}/api/samples/upload/${sampleId}`, { 
+                          method: 'POST', headers: { 'Authorization': `Bearer ${authTokenRef.current}` }, body: formData 
+                      }).catch(() => {});
+                  }
+
+                  const arrayBuffer = await blob.arrayBuffer();
+                  const audioBuffer = await audioCtxRef.current.decodeAudioData(arrayBuffer);
+                  globalAudioBufferCache.set(sampleId, { buffer: audioBuffer, duration: audioBuffer.duration });
+                  
+                  const durBeats = audioBuffer.duration * (120 / 60); 
+                  
+                  newTracks.push({
+                      id: Date.now() + Math.floor(Math.random() * 10000),
+                      name: nameWithoutExt.substring(0, 16),
+                      type: 'audio',
+                      audioInputId: '',
+                      color: 'bg-emerald-500',
+                      volume: 80, pan: 0, muted: false, solo: false, armed: false, effects: [],
+                      clips: [{ id: Date.now() + Math.random(), start: 0, duration: Math.max(1, durBeats), sampleId, sampleOffset: 0 }]
+                  });
+              }
+          }
+
+          if (newTracks.length > 0) {
+              const newProject = {
+                  id: `proj_${Date.now()}`,
+                  name: zipFile.name.replace('.zip', '').substring(0, 30),
+                  tracks: newTracks,
+                  bpm: 120,
+                  lastModified: Date.now(),
+                  ownerId: currentUser?.id,
+                  ownerName: currentUser?.username,
+                  sharedWith: [],
+                  isPublic: false
+              };
+              
+              await idb.set('projects', newProject); 
+              loadProjectToDaw(newProject);
+              showToast(`Imported ${newTracks.length} tracks successfully!`, "success");
+          } else {
+              showToast("No readable audio/MIDI files found in ZIP.", "error");
+          }
+      } catch (error) {
+          console.error(error);
+          showToast("Failed to import ZIP: " + error.message, "error");
+      }
+  };
+
   const handleExportBounce = async () => {
       setIsExporting(true);
       showToast("Rendering Mixdown (WAV)...", "info");
@@ -1425,13 +1909,14 @@ function DAWStudio() {
                           const noteDurSec = note.duration * (60 / stateRefs.current.bpm);
                           const vel = note.velocity || 100;
                           
+                          const pbNode = synth.pitchBendNode;
                           if (track.instrument === 'inst-drum') triggerDrum(offlineCtx, synth.inputBus, note.pitch, noteStartSec, 1, track.instrumentParams, vel);
-                          else if (track.instrument === 'inst-fm') triggerFMSynth(offlineCtx, synth.inputBus, note.pitch, noteStartSec, 1, noteDurSec, track.instrumentParams, vel);
-                          else if (track.instrument === 'inst-supersaw') triggerSupersaw(offlineCtx, synth.inputBus, note.pitch, noteStartSec, 1, noteDurSec, track.instrumentParams, vel);
-                          else if (track.instrument === 'inst-pluck') triggerPluck(offlineCtx, synth.inputBus, note.pitch, noteStartSec, 1, noteDurSec, track.instrumentParams, vel);
-                          else if (track.instrument === 'inst-acid') triggerAcid(offlineCtx, synth.inputBus, note.pitch, noteStartSec, 1, noteDurSec, track.instrumentParams, vel);
-                          else if (track.instrument === 'inst-organ') triggerOrgan(offlineCtx, synth.inputBus, note.pitch, noteStartSec, 1, noteDurSec, track.instrumentParams, vel);
-                          else triggerSubtractive(offlineCtx, synth.inputBus, note.pitch, noteStartSec, 1, noteDurSec, track.instrumentParams, vel);
+                          else if (track.instrument === 'inst-fm') triggerFMSynth(offlineCtx, synth.inputBus, note.pitch, noteStartSec, 1, noteDurSec, track.instrumentParams, vel, pbNode);
+                          else if (track.instrument === 'inst-supersaw') triggerSupersaw(offlineCtx, synth.inputBus, note.pitch, noteStartSec, 1, noteDurSec, track.instrumentParams, vel, pbNode);
+                          else if (track.instrument === 'inst-pluck') triggerPluck(offlineCtx, synth.inputBus, note.pitch, noteStartSec, 1, noteDurSec, track.instrumentParams, vel, pbNode);
+                          else if (track.instrument === 'inst-acid') triggerAcid(offlineCtx, synth.inputBus, note.pitch, noteStartSec, 1, noteDurSec, track.instrumentParams, vel, pbNode);
+                          else if (track.instrument === 'inst-organ') triggerOrgan(offlineCtx, synth.inputBus, note.pitch, noteStartSec, 1, noteDurSec, track.instrumentParams, vel, pbNode);
+                          else triggerSubtractive(offlineCtx, synth.inputBus, note.pitch, noteStartSec, 1, noteDurSec, track.instrumentParams, vel, pbNode);
                       });
                   } else if (track.type === 'audio' && clip.sampleId && globalAudioBufferCache.has(clip.sampleId)) {
                       const sampleData = globalAudioBufferCache.get(clip.sampleId);
@@ -1576,13 +2061,14 @@ function DAWStudio() {
             if (!synth.activeNoteIds.has(note.id)) {
               synth.activeNoteIds.add(note.id);
               const durSeconds = note.duration * (60/bpm);
+              const pbNode = synth.pitchBendNode;
               if (track.instrument === 'inst-drum') triggerDrum(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, track.instrumentParams, note.velocity);
-              else if (track.instrument === 'inst-fm') triggerFMSynth(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, track.instrumentParams, note.velocity);
-              else if (track.instrument === 'inst-supersaw') triggerSupersaw(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, track.instrumentParams, note.velocity);
-              else if (track.instrument === 'inst-pluck') triggerPluck(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, track.instrumentParams, note.velocity);
-              else if (track.instrument === 'inst-acid') triggerAcid(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, track.instrumentParams, note.velocity);
-              else if (track.instrument === 'inst-organ') triggerOrgan(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, track.instrumentParams, note.velocity);
-              else triggerSubtractive(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, track.instrumentParams, note.velocity);
+              else if (track.instrument === 'inst-fm') triggerFMSynth(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, track.instrumentParams, note.velocity, pbNode);
+              else if (track.instrument === 'inst-supersaw') triggerSupersaw(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, track.instrumentParams, note.velocity, pbNode);
+              else if (track.instrument === 'inst-pluck') triggerPluck(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, track.instrumentParams, note.velocity, pbNode);
+              else if (track.instrument === 'inst-acid') triggerAcid(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, track.instrumentParams, note.velocity, pbNode);
+              else if (track.instrument === 'inst-organ') triggerOrgan(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, track.instrumentParams, note.velocity, pbNode);
+              else triggerSubtractive(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, track.instrumentParams, note.velocity, pbNode);
             }
           });
           const activeIds = activeNotes.map(n => n.id);
@@ -1729,6 +2215,21 @@ function DAWStudio() {
     }
   };
 
+  const reorderEffects = async (trackId, startIndex, endIndex) => {
+    if (startIndex === endIndex) return;
+    dispatchDawAction({ type: 'REORDER_EFFECTS', payload: { trackId, startIndex, endIndex } });
+    const updatedTrack = { ...tracksRef.current.find(t => t.id === trackId) };
+    if (updatedTrack && updatedTrack.effects) {
+        const effects = [...updatedTrack.effects];
+        const [moved] = effects.splice(startIndex, 1);
+        effects.splice(endIndex, 0, moved);
+        updatedTrack.effects = effects;
+        if (audioCtxRef.current) {
+            synthsRef.current[trackId] = await initTrackRouting(updatedTrack, audioCtxRef.current, masterGainRef.current);
+        }
+    }
+  };
+
   const refreshDevices = async () => {
     try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -1761,45 +2262,142 @@ function DAWStudio() {
           const isNoteOn = type === 0x90 && velocityOrVal > 0;
           const isNoteOff = type === 0x80 || (type === 0x90 && velocityOrVal === 0);
           const isCC = type === 0xB0;
+          const isPitchBend = type === 0xE0;
+          const isSysex = command === 0xF0;
+
+          if (isPitchBend) {
+              const lsb = noteOrCC;
+              const msb = velocityOrVal;
+              const pbValue = (msb << 7) | lsb;
+              const normalizedPb = (pbValue - 8192) / 8192;
+              const pbCents = normalizedPb * 200; 
+
+              const armedTrack = tracksRef.current.find(t => t.armed);
+              if (armedTrack && armedTrack.type === 'midi') {
+                  const synth = synthsRef.current[armedTrack.id];
+                  if (synth && synth.pitchBendNode && audioCtxRef.current) {
+                      synth.pitchBendNode.offset.setTargetAtTime(pbCents, audioCtxRef.current.currentTime, 0.01);
+                  }
+              }
+              return;
+          }
+
+          let transportCmd = null;
+          
+          // Mackie Control Universal (MCU) Notes
+          if (isNoteOn) {
+              if (noteOrCC === 91) transportCmd = 'rewind';
+              if (noteOrCC === 92) transportCmd = 'forward';
+              if (noteOrCC === 93) transportCmd = 'stop';
+              if (noteOrCC === 94) transportCmd = 'play';
+              if (noteOrCC === 95) transportCmd = 'record';
+          } 
+          // Generic MIDI Transport CCs (114-119)
+          else if (isCC && velocityOrVal > 0) {
+              if (noteOrCC === 114) transportCmd = 'rewind';
+              if (noteOrCC === 115) transportCmd = 'forward';
+              if (noteOrCC === 116) transportCmd = 'stop';
+              if (noteOrCC === 117) transportCmd = 'play';
+              if (noteOrCC === 118) transportCmd = 'record';
+              if (noteOrCC === 119) transportCmd = 'loop';
+          } 
+          // MIDI Machine Control (MMC) SysEx
+          else if (isSysex) {
+              if (msg.data.length >= 6 && msg.data[1] === 0x7F && msg.data[3] === 0x06) {
+                  const mmcCmd = msg.data[4];
+                  if (mmcCmd === 0x01) transportCmd = 'stop';
+                  if (mmcCmd === 0x02) transportCmd = 'play';
+                  if (mmcCmd === 0x04) transportCmd = 'forward';
+                  if (mmcCmd === 0x05) transportCmd = 'rewind';
+                  if (mmcCmd === 0x06) transportCmd = 'record';
+                  if (mmcCmd === 0x09) transportCmd = 'pause';
+              }
+          }
+
+          if (transportCmd) {
+              const actions = transportActionsRef.current;
+              if (transportCmd === 'play' || transportCmd === 'pause') actions.togglePlay?.();
+              if (transportCmd === 'stop') actions.stopPlayback?.();
+              if (transportCmd === 'record') actions.toggleRecord?.();
+              if (transportCmd === 'forward') actions.forward?.();
+              if (transportCmd === 'rewind') actions.rewind?.();
+              if (transportCmd === 'loop') actions.loop?.();
+              return; 
+          }
 
           if (isCC || isNoteOn) {
+              const mappingKey = `${inputId}-${noteOrCC}`;
+
               if (midiLearnTargetRef.current) {
-                  const newMapping = { ...midiLearnTargetRef.current };
-                  setMidiMappings(prev => ({
-                      ...prev,
-                      [`${inputId}-${noteOrCC}`]: newMapping
-                  }));
+                  const newMapping = { ...midiLearnTargetRef.current, id: `map_${Date.now()}_${Math.random()}`, rangeMin: 0, rangeMax: 1, reverse: false };
+                  setMidiMappings(prev => {
+                      const existing = prev[mappingKey];
+                      const existingArray = Array.isArray(existing) ? existing : (existing ? [existing] : []);
+                      
+                      // Check for exact duplicates to prevent doubling up
+                      if (existingArray.some(m => m.type === newMapping.type && m.trackId === newMapping.trackId && m.param === newMapping.param && m.fxId === newMapping.fxId)) {
+                          return prev;
+                      }
+                      return { ...prev, [mappingKey]: [...existingArray, newMapping] };
+                  });
                   showToast(`Mapped MIDI CC/Note ${noteOrCC} to ${newMapping.param || newMapping.type.replace('_', ' ')}`, 'success');
                   setMidiLearnTarget(null);
                   return;
               }
 
-              const mappingKey = `${inputId}-${noteOrCC}`;
-              const mapping = midiMappingsRef.current[mappingKey];
-              if (mapping) {
-                  const normalizedVal = velocityOrVal / 127;
-                  if (mapping.type === 'mixer_vol') {
-                      dispatchDawAction({ type: 'UPDATE_TRACK_VOL', payload: { id: mapping.trackId, volume: Math.round(normalizedVal * 100) } });
-                  } else if (mapping.type === 'mixer_pan') {
-                      dispatchDawAction({ type: 'UPDATE_TRACK_PAN', payload: { id: mapping.trackId, pan: Math.round(normalizedVal * 100 - 50) } });
-                  } else if (mapping.type === 'master_vol') {
-                      handleMasterVolumeChange(Math.round(normalizedVal * 100));
-                  } else if (mapping.type === 'fx_param') {
-                      const constraints = getParamConstraints(mapping.param);
-                      let mappedVal;
-                      if (constraints.isLog) {
-                          const minLog = Math.log(Math.max(0.001, constraints.min));
-                          const maxLog = Math.log(constraints.max);
-                          mappedVal = Math.exp(minLog + normalizedVal * (maxLog - minLog));
-                      } else {
-                          mappedVal = constraints.min + normalizedVal * (constraints.max - constraints.min);
+              const rawMappings = midiMappingsRef.current[mappingKey];
+              if (rawMappings) {
+                  const mappings = Array.isArray(rawMappings) ? rawMappings : [rawMappings];
+                  mappings.forEach(mapping => {
+                      let normalizedVal = velocityOrVal / 127;
+                      if (mapping.reverse) normalizedVal = 1 - normalizedVal;
+                      
+                      const rMin = mapping.rangeMin !== undefined ? mapping.rangeMin : 0;
+                      const rMax = mapping.rangeMax !== undefined ? mapping.rangeMax : 1;
+                      normalizedVal = rMin + (normalizedVal * (rMax - rMin));
+                      normalizedVal = Math.max(0, Math.min(1, normalizedVal));
+
+                      if (mapping.type === 'mixer_vol') {
+                          dispatchDawAction({ type: 'UPDATE_TRACK_VOL', payload: { id: mapping.trackId, volume: Math.round(normalizedVal * 100) } });
+                      } else if (mapping.type === 'mixer_pan') {
+                          dispatchDawAction({ type: 'UPDATE_TRACK_PAN', payload: { id: mapping.trackId, pan: Math.round(normalizedVal * 100 - 50) } });
+                      } else if (mapping.type === 'master_vol') {
+                          handleMasterVolumeChange(Math.round(normalizedVal * 100));
+                      } else if (mapping.type === 'fx_param' || mapping.type === 'inst_param') {
+                          const constraints = getParamConstraints(mapping.param);
+                          let mappedVal;
+                          if (constraints.isLog) {
+                              const minLog = Math.log(Math.max(0.001, constraints.min));
+                              const maxLog = Math.log(constraints.max);
+                              mappedVal = Math.exp(minLog + normalizedVal * (maxLog - minLog));
+                          } else {
+                              mappedVal = constraints.min + normalizedVal * (constraints.max - constraints.min);
+                          }
+                          if (constraints.step && !constraints.isLog) {
+                              mappedVal = Math.round(mappedVal / constraints.step) * constraints.step;
+                          }
+                          
+                          if (mapping.type === 'fx_param') {
+                              handleEffectParamChange(mapping.trackId, mapping.fxId, mapping.param, mappedVal);
+                          } else if (mapping.type === 'inst_param') {
+                              handleInstrumentParamChange(mapping.trackId, mapping.param, mappedVal);
+                          }
                       }
-                      if (constraints.step && !constraints.isLog) {
-                          mappedVal = Math.round(mappedVal / constraints.step) * constraints.step;
-                      }
-                      handleEffectParamChange(mapping.trackId, mapping.fxId, mapping.param, mappedVal);
-                  }
+                  });
                   return; 
+              }
+              
+              // Default CC 1 (Mod Wheel) to Cutoff if no custom mapping exists
+              if (noteOrCC === 1) {
+                  const armedTrack = tracksRef.current.find(t => t.armed);
+                  if (armedTrack && armedTrack.type === 'midi' && armedTrack.instrumentParams && armedTrack.instrumentParams.cutoff !== undefined) {
+                      const normalizedVal = velocityOrVal / 127;
+                      const constraints = getParamConstraints('cutoff');
+                      const minLog = Math.log(Math.max(0.001, constraints.min));
+                      const maxLog = Math.log(constraints.max);
+                      const mappedVal = Math.exp(minLog + normalizedVal * (maxLog - minLog));
+                      handleInstrumentParamChange(armedTrack.id, 'cutoff', mappedVal);
+                  }
               }
           }
 
@@ -1830,46 +2428,72 @@ function DAWStudio() {
               const now = audioCtxRef.current.currentTime;
 
               if (isNoteOn) {
+                  const pbNode = synth.pitchBendNode;
                   if (isDrum) triggerDrum(audioCtxRef.current, synth.inputBus, noteOrCC, now, 1, armedTrack.instrumentParams, velocityOrVal);
-                  else if (armedTrack.instrument === 'inst-fm') triggerFMSynth(audioCtxRef.current, synth.inputBus, noteOrCC, now, 1, 0.25, armedTrack.instrumentParams, velocityOrVal);
-                  else if (armedTrack.instrument === 'inst-supersaw') triggerSupersaw(audioCtxRef.current, synth.inputBus, noteOrCC, now, 1, 0.25, armedTrack.instrumentParams, velocityOrVal);
-                  else if (armedTrack.instrument === 'inst-pluck') triggerPluck(audioCtxRef.current, synth.inputBus, noteOrCC, now, 1, 0.25, armedTrack.instrumentParams, velocityOrVal);
-                  else if (armedTrack.instrument === 'inst-acid') triggerAcid(audioCtxRef.current, synth.inputBus, noteOrCC, now, 1, 0.25, armedTrack.instrumentParams, velocityOrVal);
-                  else if (armedTrack.instrument === 'inst-organ') triggerOrgan(audioCtxRef.current, synth.inputBus, noteOrCC, now, 1, 0.25, armedTrack.instrumentParams, velocityOrVal);
-                  else triggerSubtractive(audioCtxRef.current, synth.inputBus, noteOrCC, now, 1, 0.25, armedTrack.instrumentParams, velocityOrVal);
+                  else if (armedTrack.instrument === 'inst-fm') triggerFMSynth(audioCtxRef.current, synth.inputBus, noteOrCC, now, 1, 0.25, armedTrack.instrumentParams, velocityOrVal, pbNode);
+                  else if (armedTrack.instrument === 'inst-supersaw') triggerSupersaw(audioCtxRef.current, synth.inputBus, noteOrCC, now, 1, 0.25, armedTrack.instrumentParams, velocityOrVal, pbNode);
+                  else if (armedTrack.instrument === 'inst-pluck') triggerPluck(audioCtxRef.current, synth.inputBus, noteOrCC, now, 1, 0.25, armedTrack.instrumentParams, velocityOrVal, pbNode);
+                  else if (armedTrack.instrument === 'inst-acid') triggerAcid(audioCtxRef.current, synth.inputBus, noteOrCC, now, 1, 0.25, armedTrack.instrumentParams, velocityOrVal, pbNode);
+                  else if (armedTrack.instrument === 'inst-organ') triggerOrgan(audioCtxRef.current, synth.inputBus, noteOrCC, now, 1, 0.25, armedTrack.instrumentParams, velocityOrVal, pbNode);
+                  else triggerSubtractive(audioCtxRef.current, synth.inputBus, noteOrCC, now, 1, 0.25, armedTrack.instrumentParams, velocityOrVal, pbNode);
 
                   if (state.isRecording && state.isPlaying) {
                       activeLiveMidiNotesRef.current[noteOrCC] = { start: state.currentTime, velocity: velocityOrVal };
                   }
               } else if (isNoteOff) {
-                  if (state.isRecording && state.isPlaying && activeLiveMidiNotesRef.current[noteOrCC]) {
-                      const startBeat = activeLiveMidiNotesRef.current[noteOrCC].start;
-                      const recordedVelocity = activeLiveMidiNotesRef.current[noteOrCC].velocity;
-                      const durBeat = state.currentTime - startBeat;
-                      
-                      if (!pendingMidiClipsRef.current[armedTrack.id]) pendingMidiClipsRef.current[armedTrack.id] = [];
-                      pendingMidiClipsRef.current[armedTrack.id].push({
-                         id: `n_${Date.now()}_${noteOrCC}`,
-                         pitch: noteOrCC,
-                         start: startBeat - recordingStartTimeRef.current, 
-                         duration: Math.max(0.1, durBeat),
-                         velocity: recordedVelocity
-                      });
-                      delete activeLiveMidiNotesRef.current[noteOrCC];
-                  }
-              }
-          }
-      };
+                if (state.isRecording && state.isPlaying && activeLiveMidiNotesRef.current[noteOrCC]) {
+                    const startBeat = activeLiveMidiNotesRef.current[noteOrCC].start;
+                    const recordedVelocity = activeLiveMidiNotesRef.current[noteOrCC].velocity;
+                    const durBeat = state.currentTime - startBeat;
+                    
+                    if (!pendingMidiClipsRef.current[armedTrack.id]) pendingMidiClipsRef.current[armedTrack.id] = [];
+                    pendingMidiClipsRef.current[armedTrack.id].push({
+                       id: `n_${Date.now()}_${noteOrCC}`,
+                       pitch: noteOrCC,
+                       start: startBeat - recordingStartTimeRef.current, 
+                       duration: Math.max(0.1, durBeat),
+                       velocity: recordedVelocity
+                    });
+                    delete activeLiveMidiNotesRef.current[noteOrCC];
+                }
+            }
+        }
+    };
 
-      navigator.requestMIDIAccess().then(access => {
-          currentAccess = access;
-          access.inputs.forEach(input => { input.onmidimessage = onMidiMessage; });
-      }).catch(err => { console.warn("MIDI Access Denied."); });
+    const initMidi = async () => {
+        let access;
+        try {
+            // Request SysEx access for MIDI Machine Control (MMC) first
+            access = await navigator.requestMIDIAccess({ sysex: true });
+        } catch (e) {
+            try {
+                // Fallback to generic access if SysEx is denied by the browser
+                access = await navigator.requestMIDIAccess();
+            } catch (err) {
+                console.warn("MIDI Access Denied.");
+                return;
+            }
+        }
+        currentAccess = access;
+        access.inputs.forEach(input => { input.onmidimessage = onMidiMessage; });
+        
+        // Handle hot-plugging of new MIDI controllers seamlessly
+        access.onstatechange = (e) => {
+            if (e.port.state === 'connected' && e.port.type === 'input') {
+                e.port.onmidimessage = onMidiMessage;
+            }
+        };
+    };
 
-      return () => {
-          if (currentAccess) currentAccess.inputs.forEach(input => input.onmidimessage = null);
-      };
-  }, []);
+    initMidi();
+
+    return () => {
+        if (currentAccess) {
+            currentAccess.inputs.forEach(input => input.onmidimessage = null);
+            currentAccess.onstatechange = null;
+        }
+    };
+}, []);
 
   const toggleLocalMedia = (type) => {
     if (!localStreamRef.current) return;
@@ -1886,15 +2510,244 @@ function DAWStudio() {
 
   useEffect(() => {
     const handleKeyDown = (e) => {
-      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
-      if (e.code === 'Space') { 
-          e.preventDefault(); 
-          togglePlay();
+      // Check if we are inside an actual text field (ignore sliders/checkboxes)
+      const isTextInput = ['TEXTAREA', 'SELECT'].includes(e.target.tagName) || (e.target.tagName === 'INPUT' && ['text', 'number', 'password'].includes(e.target.type));
+      
+      const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+      const cmd = isMac ? e.metaKey : e.ctrlKey;
+      const shift = e.shiftKey;
+      const key = e.key.toLowerCase();
+      const code = e.code;
+      
+      // 1. GLOBAL OVERRIDE: Always prevent default browser actions for these keys (Save, Undo, Select All, Duplicate, etc.)
+      if (cmd && ['s', 'z', 'y', 'd', 'e', 'l', 'a', '=', '-', '+'].includes(key)) {
+          e.preventDefault();
       }
+
+      // 2. TEXT FIELD EXCEPTION: If typing, allow space, arrows, delete, and copy/paste to work normally
+      if (isTextInput) {
+          if (code === 'Space' || code === 'ArrowLeft' || code === 'ArrowRight' || code === 'Backspace' || code === 'Delete' || (!cmd && key.length === 1) || (cmd && ['c', 'v', 'x'].includes(key))) {
+              return; 
+          }
+      } else {
+          // 3. DAW FOCUS: Prevent space and arrows from scrolling the page
+          if (code === 'Space' || code === 'ArrowLeft' || code === 'ArrowRight' || code === 'Backspace' || code === 'Delete') {
+              e.preventDefault();
+          }
+          // Prevent default for cut/copy/paste so it targets our DAW engine, not the browser text clipboard
+          if (cmd && ['c', 'v', 'x'].includes(key)) {
+              e.preventDefault();
+          }
+      }
+
+      if (code === 'Space') { 
+          togglePlay();
+          return;
+      } 
+
+      // Save / Save As
+      if (cmd && key === 's') {
+          if (shift) {
+              const newName = prompt("Save Project As:", projectNameRef.current + " Copy");
+              if (newName) {
+                  setProjectName(newName);
+                  const newId = `proj_${Date.now()}`;
+                  setProjectId(newId);
+                  saveProject(sharedWith, isPublic, false, newId, newName);
+              }
+          } else {
+              saveProject();
+          }
+          return;
+      }
+
+      // Undo / Redo
+      if (cmd && shift && key === 'z') { handleRedo(); return; }
+      if (cmd && key === 'y') { handleRedo(); return; } // Standard windows Redo fallback
+      if (cmd && key === 'z') { handleUndo(); return; }
+
+      // Copy
+      if (cmd && key === 'c') {
+          if (selectedClipIdsRef.current.length > 0) {
+              const copied = [];
+              tracksRef.current.forEach(t => t.clips.forEach(c => {
+                  if (selectedClipIdsRef.current.includes(c.id)) copied.push({ ...c, originalTrackId: t.id });
+              }));
+              clipboardRef.current = { type: 'clips', data: JSON.parse(JSON.stringify(copied)) };
+              showToast(`Copied ${copied.length} clip(s)`, 'info');
+          }
+          return;
+      }
+
+      // Paste
+      if (cmd && key === 'v') {
+          if (clipboardRef.current?.type === 'clips') {
+              const clips = clipboardRef.current.data;
+              let targetTrackId = selectedTrackIdRef.current || clips[0].originalTrackId;
+              const newIds = [];
+              const earliestStart = Math.min(...clips.map(c => c.start));
+              
+              clips.forEach(c => {
+                  const newClip = { ...c, id: Date.now() + Math.random() };
+                  newClip.start = stateRefs.current.currentTime + (c.start - earliestStart);
+                  delete newClip.originalTrackId;
+                  newIds.push(newClip.id);
+                  dispatchDawAction({ type: 'ADD_CLIP', payload: { trackId: targetTrackId, clip: newClip } });
+              });
+              setSelectedClipIds(newIds);
+              showToast(`Pasted ${clips.length} clip(s)`, 'success');
+          }
+          return;
+      }
+
+      // Duplicate
+      if (cmd && key === 'd') {
+          if (selectedClipIdsRef.current.length > 0) {
+              const newIds = [];
+              tracksRef.current.forEach(t => t.clips.forEach(c => {
+                  if (selectedClipIdsRef.current.includes(c.id)) {
+                      const newClip = JSON.parse(JSON.stringify(c));
+                      newClip.id = Date.now() + Math.random();
+                      newClip.start = c.start + c.duration;
+                      newIds.push(newClip.id);
+                      dispatchDawAction({ type: 'ADD_CLIP', payload: { trackId: t.id, clip: newClip } });
+                  }
+              }));
+              setSelectedClipIds(newIds);
+              showToast(`Duplicated clip(s)`, 'success');
+          }
+          return;
+      }
+
+      // Cut
+      if (cmd && key === 'x') {
+          if (selectedClipIdsRef.current.length > 0) {
+              const copied = [];
+              tracksRef.current.forEach(t => t.clips.forEach(c => {
+                  if (selectedClipIdsRef.current.includes(c.id)) {
+                      copied.push({ ...c, originalTrackId: t.id });
+                      dispatchDawAction({ type: 'DELETE_CLIP', payload: { trackId: t.id, clipId: c.id } });
+                  }
+              }));
+              clipboardRef.current = { type: 'clips', data: JSON.parse(JSON.stringify(copied)) };
+              setSelectedClipIds([]);
+              showToast(`Cut ${copied.length} clip(s)`, 'info');
+          }
+          return;
+      }
+
+      // Delete
+      if (code === 'Delete' || code === 'Backspace') {
+          if (selectedClipIdsRef.current.length > 0) {
+              tracksRef.current.forEach(t => t.clips.forEach(c => {
+                  if (selectedClipIdsRef.current.includes(c.id)) {
+                      dispatchDawAction({ type: 'DELETE_CLIP', payload: { trackId: t.id, clipId: c.id } });
+                  }
+              }));
+              setSelectedClipIds([]);
+          }
+          return;
+      }
+
+      // Select All
+      if (cmd && key === 'a') {
+          const allIds = [];
+          tracksRef.current.forEach(t => {
+              if (!selectedTrackIdRef.current || t.id === selectedTrackIdRef.current) {
+                  t.clips.forEach(c => allIds.push(c.id));
+              }
+          });
+          setSelectedClipIds(allIds);
+          return;
+      }
+
+      // Zoom
+      if (cmd && (key === '=' || key === '+' || key === '-')) {
+          setZoom(prev => Math.min(Math.max(0.1, prev * (key === '-' ? 0.85 : 1.15)), 8));
+          return;
+      }
+
+      // Playhead Nav
+      if (code === 'ArrowLeft' || code === 'ArrowRight') {
+          const sg = shift ? (snapGridRef.current || 1) : 4; // Shift = Beat/Snap, Normal = 1 Bar
+          let newTime = stateRefs.current.currentTime + (code === 'ArrowRight' ? sg : -sg);
+          newTime = Math.max(0, Math.round(newTime / sg) * sg);
+          setCurrentTime(newTime);
+          stateRefs.current.currentTime = newTime;
+          broadcastLivePreview({ type: 'UPDATE_TIME', payload: { currentTime: newTime } });
+          return;
+      }
+
+      // Mute / Solo
+      if (!cmd && !shift && key === 'm') {
+          if (selectedTrackIdRef.current) {
+              dispatchDawAction({ type: 'TOGGLE_MUTE', payload: { trackId: selectedTrackIdRef.current } });
+          }
+          return;
+      }
+
+      if (!cmd && !shift && key === 's') {
+          if (selectedTrackIdRef.current) {
+              dispatchDawAction({ type: 'TOGGLE_SOLO', payload: { trackId: selectedTrackIdRef.current } });
+          }
+          return;
+      }
+
+      // Automation View (Placeholder)
+      if (!cmd && !shift && key === 'a') {
+          showToast("Automation lanes coming soon!", "info");
+          return;
+      }
+
+      // Slice at Playhead
+      if ((cmd && key === 'e') || (cmd && key === 't')) {
+          let sliced = 0;
+          tracksRef.current.forEach(t => {
+              t.clips.forEach(c => {
+                  const isSelected = selectedClipIdsRef.current.includes(c.id);
+                  const intersects = stateRefs.current.currentTime > c.start && stateRefs.current.currentTime < c.start + c.duration;
+                  if (intersects && (isSelected || (!selectedClipIdsRef.current.length && t.id === selectedTrackIdRef.current))) {
+                      dispatchDawAction({ type: 'SPLIT_CLIP', payload: { trackId: t.id, clipId: c.id, sliceBeat: stateRefs.current.currentTime } });
+                      sliced++;
+                  }
+              });
+          });
+          if (sliced > 0) {
+              showToast(`Sliced ${sliced} clip(s)`, 'success');
+              setSelectedClipIds([]); 
+          }
+          return;
+      }
+
+      // Loop Selection
+      if (cmd && key === 'l') {
+          let minStart = Infinity, maxEnd = -Infinity;
+          tracksRef.current.forEach(t => {
+              t.clips.forEach(c => {
+                  if (selectedClipIdsRef.current.includes(c.id)) {
+                      if (c.start < minStart) minStart = c.start;
+                      if (c.start + c.duration > maxEnd) maxEnd = c.start + c.duration;
+                  }
+              });
+          });
+
+          if (minStart !== Infinity) {
+              const newLoop = { start: minStart, end: maxEnd, enabled: true };
+              setLoopRegion(newLoop);
+              dispatchDawAction({ type: 'UPDATE_LOOP_REGION', payload: newLoop });
+              showToast("Looped selection", "success");
+          } else {
+              const nextEnabled = !loopRegionRef.current.enabled;
+              setLoopRegion(prev => ({...prev, enabled: nextEnabled}));
+              dispatchDawAction({ type: 'UPDATE_LOOP_REGION', payload: { ...loopRegionRef.current, enabled: nextEnabled } });
+          }
+          return;
+      }
+
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isPlaying, isRecording]);
+  }, [isPlaying, isRecording, togglePlay, handleUndo, handleRedo, saveProject, showToast, broadcastLivePreview, sharedWith, isPublic]);
 
   useEffect(() => {
     const handleWheel = (e) => {
@@ -1976,6 +2829,29 @@ function DAWStudio() {
       }
   };
 
+  const handleDeleteProject = async (e, projectId) => {
+      e.stopPropagation();
+      
+      // 1. Delete from local offline database
+      await idb.delete('projects', projectId);
+      
+      // 2. Delete from remote cloud database
+      if (authTokenRef.current) {
+          try {
+              await fetch(`${API_BASE_URL}/api/projects/${projectId}`, {
+                  method: 'DELETE',
+                  headers: { 'Authorization': `Bearer ${authTokenRef.current}` }
+              });
+          } catch (err) {
+              console.warn("Could not delete from server", err);
+          }
+      }
+      
+      // 3. Refresh the UI
+      loadProjects(authTokenRef.current);
+      showToast("Project deleted.", "info");
+  };
+
   const connectSocket = async (token, user) => {
       if (socketRef.current) return;
       try {
@@ -1994,38 +2870,24 @@ function DAWStudio() {
           const socket = ioClient(API_BASE_URL); 
           socketRef.current = socket;
 
-          try { localStreamRef.current = await navigator.mediaDevices.getUserMedia({ video: true, audio: true }); } catch (e) {}
-
           const joinCurrentRoom = () => socket.emit('join-room', 'global-studio', user);
           if (socket.connected) joinCurrentRoom();
           socket.on('connect', joinCurrentRoom);
 
           socket.on('user-connected', async (peerId, peerProfile) => {
               showToast(`${peerProfile.username} joined`, 'info');
-              setPeers(prev => ({ ...prev, [peerId]: { ...peerProfile, stream: null } }));
+              setPeers(prev => ({ ...prev, [peerId]: { ...peerProfile } }));
               
               // CRITICAL FIX: Broadcast my profile back so the new user knows I'm online!
-              socket.emit('presence-update', { username: user.username, avatar: user.avatar, color: user.color });
-
-              const pc = createPeerConnection(peerId, socket); peerConnectionsRef.current[peerId] = pc;
-              const offer = await pc.createOffer(); await pc.setLocalDescription(offer);
-              socket.emit('webrtc-offer', peerId, offer);
+              socket.emit('presence-update', { 
+                  username: user.username, avatar: user.avatar, color: user.color, 
+                  bio: user.bio, email: user.email, website: user.website, 
+                  instagram: user.instagram, twitter: user.twitter 
+              });
           });
-          socket.on('webrtc-offer', async (peerId, offer) => {
-              const pc = createPeerConnection(peerId, socket); peerConnectionsRef.current[peerId] = pc;
-              await pc.setRemoteDescription(new RTCSessionDescription(offer));
-              const answer = await pc.createAnswer(); await pc.setLocalDescription(answer);
-              socket.emit('webrtc-answer', peerId, answer);
-          });
-          socket.on('webrtc-answer', async (peerId, answer) => {
-              const pc = peerConnectionsRef.current[peerId]; if (pc) await pc.setRemoteDescription(new RTCSessionDescription(answer));
-          });
-          socket.on('webrtc-ice-candidate', async (peerId, candidate) => {
-              const pc = peerConnectionsRef.current[peerId]; if (pc) await pc.addIceCandidate(new RTCIceCandidate(candidate));
-          });
+          
           socket.on('user-disconnected', (peerId) => {
               setPeers(prev => { const next = { ...prev }; delete next[peerId]; return next; });
-              if (peerConnectionsRef.current[peerId]) { peerConnectionsRef.current[peerId].close(); delete peerConnectionsRef.current[peerId]; }
           });
           socket.on('presence-update', (peerId, presence) => {
               setPeers(prev => ({ ...prev, [peerId]: { ...prev[peerId], ...presence } }));
@@ -2037,25 +2899,12 @@ function DAWStudio() {
       }
   };
 
-  const createPeerConnection = (peerId, socket) => {
-      const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
-      if (localStreamRef.current) localStreamRef.current.getTracks().forEach(track => pc.addTrack(track, localStreamRef.current));
-      pc.onicecandidate = (e) => { if (e.candidate) socket.emit('webrtc-ice-candidate', peerId, e.candidate); };
-      pc.ontrack = (e) => setPeers(prev => ({ ...prev, [peerId]: { ...prev[peerId], stream: e.streams[0] } }));
-      return pc;
-  };
-
   const dispatchPresence = (trackId) => {
       if (currentUser) {
           const next = { ...currentUser, activeTrack: trackId };
           setCurrentUser(next);
           if (socketRef.current) socketRef.current.emit('presence-update', { activeTrack: trackId, color: next.color });
       }
-  };
-
-  const dispatchDawAction = (action) => {
-      applyDawAction(action, true);
-      if (socketRef.current) socketRef.current.emit('daw-action', { ...action, projectId: currentProjectIdRef.current });
   };
 
   const applyDawAction = useCallback((action, isLocal) => {
@@ -2222,6 +3071,29 @@ function DAWStudio() {
               setTracks(prev => prev.map(t => t.id === action.payload.trackId ? { ...t, effects: t.effects.map(fx => fx.id === action.payload.fxId ? { ...fx, params: { ...fx.params, [action.payload.param]: action.payload.value } } : fx) } : t)); 
               applyAudioEffectParam(action.payload.trackId, action.payload.fxId, action.payload.param, action.payload.value);
               break;
+          case 'REORDER_EFFECTS': {
+              const { trackId, startIndex, endIndex } = action.payload;
+              setTracks(prev => prev.map(t => {
+                  if (t.id !== trackId) return t;
+                  const newEffects = [...t.effects];
+                  const temp = newEffects[startIndex];
+                  newEffects[startIndex] = newEffects[endIndex];
+                  newEffects[endIndex] = temp;
+                  return { ...t, effects: newEffects };
+              }));
+              if (!isLocal && audioCtxRef.current) {
+                  const updatedTrack = { ...tracksRef.current.find(t => t.id === trackId) };
+                  if (updatedTrack && updatedTrack.effects) {
+                      const newEffects = [...updatedTrack.effects];
+                      const temp = newEffects[startIndex];
+                      newEffects[startIndex] = newEffects[endIndex];
+                      newEffects[endIndex] = temp;
+                      updatedTrack.effects = newEffects;
+                      initTrackRouting(updatedTrack, audioCtxRef.current, masterGainRef.current).then(synth => { synthsRef.current[trackId] = synth; });
+                  }
+              }
+              break;
+          }
           case 'CHANGE_INSTRUMENT': 
               setTracks(prev => prev.map(t => t.id === action.payload.trackId ? { ...t, instrument: action.payload.instrumentId, instrumentParams: action.payload.instrumentParams } : t)); 
               break;
@@ -2232,6 +3104,40 @@ function DAWStudio() {
           default: break;
       }
   }, []);
+
+  const dispatchDawAction = useCallback((action) => {
+      applyDawAction(action, true);
+      if (socketRef.current) socketRef.current.emit('daw-action', { ...action, projectId: currentProjectIdRef.current });
+  }, [applyDawAction]);
+
+  useEffect(() => {
+      transportActionsRef.current = {
+          togglePlay,
+          stopPlayback,
+          toggleRecord,
+          forward: () => {
+              const sg = snapGridRef.current || 4;
+              let newTime = stateRefs.current.currentTime + sg;
+              newTime = Math.max(0, Math.round(newTime / sg) * sg);
+              setCurrentTime(newTime);
+              stateRefs.current.currentTime = newTime;
+              broadcastLivePreview({ type: 'UPDATE_TIME', payload: { currentTime: newTime } });
+          },
+          rewind: () => {
+              const sg = snapGridRef.current || 4;
+              let newTime = stateRefs.current.currentTime - sg;
+              newTime = Math.max(0, Math.round(newTime / sg) * sg);
+              setCurrentTime(newTime);
+              stateRefs.current.currentTime = newTime;
+              broadcastLivePreview({ type: 'UPDATE_TIME', payload: { currentTime: newTime } });
+          },
+          loop: () => {
+              const nextEnabled = !loopRegionRef.current.enabled;
+              setLoopRegion(prev => ({...prev, enabled: nextEnabled}));
+              dispatchDawAction({ type: 'UPDATE_LOOP_REGION', payload: { ...loopRegionRef.current, enabled: nextEnabled } });
+          }
+      };
+  }, [togglePlay, stopPlayback, toggleRecord, setCurrentTime, broadcastLivePreview, dispatchDawAction]);
 
   const handleMouseMove = useCallback((e) => {
       const sg = snapGridRef.current;
@@ -2468,6 +3374,7 @@ function DAWStudio() {
 
   const handleTimelineMouseDown = (e) => {
       if (e.target.closest('.clip-element') || draggingClip || draggingNote || draggingNoteEdge || draggingLoop) return;
+      setSelectedClipIds([]); // Deselect all clips when clicking empty space
       setDraggingPlayhead(true);
       const rect = e.currentTarget.getBoundingClientRect();
       const scrollLeft = e.currentTarget.scrollLeft || 0;
@@ -2657,7 +3564,7 @@ function DAWStudio() {
                     <div key={proj.id} className="bg-neutral-900 border border-neutral-800 rounded-xl p-6 group hover:border-neutral-600 shadow-lg transition-colors">
                         <div className="flex justify-between items-start mb-4">
                             <div className="w-10 h-10 bg-neutral-800 rounded flex items-center justify-center text-blue-400"><FileJson size={20}/></div>
-                            <button onClick={() => idb.delete('projects', proj.id)} className="text-neutral-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"><Trash2 size={16}/></button>
+                            <button onClick={(e) => handleDeleteProject(e, proj.id)} className="text-neutral-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"><Trash2 size={16}/></button>
                         </div>
                         <h3 className="text-lg font-bold text-white mb-1 cursor-pointer hover:text-blue-400 transition-colors" onClick={() => loadProjectToDaw(proj)}>{proj.name}</h3>
                         <p className="text-xs text-neutral-500">{new Date(proj.lastModified).toLocaleString()}</p>
@@ -2716,8 +3623,10 @@ function DAWStudio() {
             </div>
             <button onClick={() => saveProject()} className="text-neutral-400 hover:text-blue-400 transition-colors" title="Save Project"><Save size={16}/></button>
             <button onClick={() => setShowShareModal(true)} className="text-neutral-400 hover:text-purple-400 ml-2 transition-colors" title="Share Project"><Users size={16}/></button>
-            <button onClick={handleExportBounce} disabled={isExporting} className={`ml-2 transition-colors ${isExporting ? 'text-green-400 animate-pulse' : 'text-neutral-400 hover:text-green-400'}`} title="Export to WAV"><Download size={16}/></button>
+            <button onClick={handleExportBounce} disabled={isExporting} className={`ml-2 transition-colors ${isExporting ? 'text-green-400 animate-pulse' : 'text-neutral-400 hover:text-green-400'}`} title="Export Mixdown to WAV"><Download size={16}/></button>
+            <button onClick={handleExportMultitrack} disabled={isExporting} className={`ml-2 transition-colors ${isExporting ? 'text-blue-400 animate-pulse' : 'text-neutral-400 hover:text-blue-400'}`} title="Export Multitrack ZIP (Stems)"><Folder size={16}/></button>
         </div>
+
         
         <div className="flex items-center justify-center gap-1.5 bg-neutral-900 px-3 py-1.5 rounded-xl border border-neutral-800 shrink-0 shadow-inner">
             <button onClick={stopPlayback} className="p-1.5 text-neutral-400 hover:text-white transition-colors"><SkipBack size={16} /></button>
@@ -2762,26 +3671,60 @@ function DAWStudio() {
             </div>
 
             <div className="flex -space-x-2 mr-2">
-                <div className="w-8 h-8 bg-neutral-800 rounded-full border-2 border-neutral-900 overflow-hidden relative group">
-                    {localStreamRef.current && isVideoEnabled ? (
-                        <video ref={v => { if (v && localStreamRef.current) v.srcObject = localStreamRef.current; }} autoPlay muted playsInline className="w-full h-full object-cover" />
-                    ) : currentUser?.avatar ? (
-                        <img src={currentUser.avatar} alt="Me" className="w-full h-full object-cover" />
-                    ) : (
-                        <div className={`w-full h-full flex items-center justify-center text-xs font-bold text-white ${currentUser?.color || 'bg-emerald-500'}`}>
-                            {currentUser?.username?.charAt(0).toUpperCase() || '?'}
+                <div className="relative z-50">
+                    <div onClick={() => setShowProfileMenu(p => !p)} className="w-8 h-8 bg-neutral-800 rounded-full border-2 border-neutral-900 overflow-hidden relative group cursor-pointer shadow-sm">
+                        {currentUser?.avatar ? (
+                            <img src={currentUser.avatar} alt="Me" className="w-full h-full object-cover" />
+                        ) : (
+                            <div className={`w-full h-full flex items-center justify-center text-xs font-bold text-white ${currentUser?.color || 'bg-emerald-500'}`}>
+                                {currentUser?.username?.charAt(0).toUpperCase() || '?'}
+                            </div>
+                        )}
+                    </div>
+                    {showProfileMenu && (
+                        <div className="absolute top-10 right-0 w-72 bg-neutral-900 border border-neutral-700 rounded-xl shadow-2xl p-4 flex flex-col gap-4 z-[150] max-h-[80vh] overflow-y-auto custom-scrollbar">
+                            <div className="flex flex-col gap-2">
+                                <label className="text-[10px] text-neutral-400 font-bold uppercase tracking-wider">Profile Picture</label>
+                                <label className="bg-neutral-800 hover:bg-neutral-700 text-white px-3 py-2 rounded-lg text-xs font-bold cursor-pointer transition-colors border border-neutral-700 text-center">
+                                    Upload Image
+                                    <input type="file" accept="image/*" onChange={handleAvatarUpload} className="hidden" />
+                                </label>
+                            </div>
+                            <div className="mt-1">
+                                <label className="text-[10px] text-neutral-400 font-bold mb-2 block uppercase tracking-wider">User Bio</label>
+                                <textarea 
+                                    defaultValue={currentUser?.bio || ''} 
+                                    onBlur={(e) => handleProfileUpdate('bio', e.target.value)}
+                                    placeholder="Tell collaborators about your style..." 
+                                    className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-blue-500 custom-scrollbar resize-none"
+                                    rows="3"
+                                />
+                            </div>
+                            <div className="flex flex-col gap-2">
+                                <label className="text-[10px] text-neutral-400 font-bold block uppercase tracking-wider">Contact & Socials</label>
+                                <div className="flex items-center bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-1.5 focus-within:border-blue-500 transition-colors">
+                                    <Mail size={14} className="text-neutral-500 mr-2 shrink-0" />
+                                    <input type="email" placeholder="Email Address" defaultValue={currentUser?.email || ''} onBlur={(e) => handleProfileUpdate('email', e.target.value)} className="bg-transparent text-sm text-white w-full outline-none" />
+                                </div>
+                                <div className="flex items-center bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-1.5 focus-within:border-blue-500 transition-colors">
+                                    <Globe size={14} className="text-neutral-500 mr-2 shrink-0" />
+                                    <input type="url" placeholder="Website" defaultValue={currentUser?.website || ''} onBlur={(e) => handleProfileUpdate('website', e.target.value)} className="bg-transparent text-sm text-white w-full outline-none" />
+                                </div>
+                                <div className="flex items-center bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-1.5 focus-within:border-blue-500 transition-colors">
+                                    <Instagram size={14} className="text-neutral-500 mr-2 shrink-0" />
+                                    <input type="text" placeholder="Instagram Handle" defaultValue={currentUser?.instagram || ''} onBlur={(e) => handleProfileUpdate('instagram', e.target.value)} className="bg-transparent text-sm text-white w-full outline-none" />
+                                </div>
+                                <div className="flex items-center bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-1.5 focus-within:border-blue-500 transition-colors">
+                                    <Twitter size={14} className="text-neutral-500 mr-2 shrink-0" />
+                                    <input type="text" placeholder="X/Twitter Handle" defaultValue={currentUser?.twitter || ''} onBlur={(e) => handleProfileUpdate('twitter', e.target.value)} className="bg-transparent text-sm text-white w-full outline-none" />
+                                </div>
+                            </div>
                         </div>
                     )}
-                    <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center gap-1 transition-opacity">
-                        <button onClick={() => toggleLocalMedia('audio')} className="text-white hover:text-blue-400">{isAudioEnabled ? <Mic size={10}/> : <MicOff size={10}/>}</button>
-                        <button onClick={() => toggleLocalMedia('video')} className="text-white hover:text-blue-400">{isVideoEnabled ? <Video size={10}/> : <VideoOff size={10}/>}</button>
-                    </div>
                 </div>
                 {Object.values(peers).map((peer, idx) => (
-                    <div key={idx} className={`w-8 h-8 ${peer.avatar ? '' : (peer.color || 'bg-blue-600')} rounded-full border-2 border-neutral-900 overflow-hidden flex items-center justify-center text-xs font-bold text-white relative group shadow-sm`} title={peer.username}>
-                        {peer.stream ? (
-                            <video ref={v => { if (v) v.srcObject = peer.stream; }} autoPlay playsInline className="w-full h-full object-cover" />
-                        ) : peer.avatar ? (
+                    <div key={idx} onClick={() => setViewProfileUser(peer)} className={`w-8 h-8 ${peer.avatar ? '' : (peer.color || 'bg-blue-600')} rounded-full border-2 border-neutral-900 overflow-hidden flex items-center justify-center text-xs font-bold text-white relative group shadow-sm cursor-pointer hover:ring-2 hover:ring-neutral-700 transition-all`} title={peer.username}>
+                        {peer.avatar ? (
                             <img src={peer.avatar} alt={peer.username} className="w-full h-full object-cover" />
                         ) : (
                             peer.username?.charAt(0).toUpperCase()
@@ -2986,7 +3929,19 @@ function DAWStudio() {
                                     {t.clips.map(c => (
                                         <div 
                                           key={c.id} 
-                                          onMouseDown={(e) => { if(!e.target.dataset.edge) { e.stopPropagation(); dispatchPresence(t.id); setDraggingClip({ trackId: t.id, initialTrackId: t.id, clipId: c.id, startX: e.clientX, initialStart: c.start }); } }}
+                                          onMouseDown={(e) => { 
+                                              if(!e.target.dataset.edge) { 
+                                                  e.stopPropagation(); 
+                                                  dispatchPresence(t.id); 
+                                                  setSelectedTrackId(t.id);
+                                                  if (e.shiftKey) {
+                                                      setSelectedClipIds(prev => prev.includes(c.id) ? prev.filter(id => id !== c.id) : [...prev, c.id]);
+                                                  } else {
+                                                      if (!selectedClipIds.includes(c.id)) setSelectedClipIds([c.id]);
+                                                  }
+                                                  setDraggingClip({ trackId: t.id, initialTrackId: t.id, clipId: c.id, startX: e.clientX, initialStart: c.start }); 
+                                              } 
+                                          }}
                                           onDoubleClick={(e) => { e.stopPropagation(); setBottomDock({ type: t.type === 'audio' ? 'audio-editor' : 'piano-roll', trackId: t.id, clipId: c.id }); }}
                                           onContextMenu={(e) => {
                                               const rect = timelineRef.current.getBoundingClientRect();
@@ -2996,8 +3951,8 @@ function DAWStudio() {
                                               const sliceBeat = snap(x / BEAT_WIDTH);
                                               handleContextMenu(e, 'clip', { trackId: t.id, clipId: c.id, sliceBeat });
                                           }}
-                                          className={`clip-element absolute top-2 bottom-2 rounded border border-white/20 overflow-hidden cursor-grab active:cursor-grabbing bg-gradient-to-br ${t.color.replace('bg-','from-')}/80 ${t.color.replace('bg-','to-')}/40 hover:brightness-110 shadow-lg`} 
-                                          style={{ left: `${c.start * BEAT_WIDTH}px`, width: `${c.duration * BEAT_WIDTH}px`, zIndex: draggingClip?.clipId === c.id ? 50 : 10 }}
+                                          className={`clip-element absolute top-2 bottom-2 rounded border overflow-hidden cursor-grab active:cursor-grabbing bg-gradient-to-br ${t.color.replace('bg-','from-')}/80 ${t.color.replace('bg-','to-')}/40 shadow-lg transition-all ${selectedClipIds.includes(c.id) ? 'border-white ring-2 ring-white/60 brightness-125 z-40' : 'border-white/20 hover:brightness-110 z-10'}`} 
+                                          style={{ left: `${c.start * BEAT_WIDTH}px`, width: `${c.duration * BEAT_WIDTH}px`, zIndex: draggingClip?.clipId === c.id || selectedClipIds.includes(c.id) ? 50 : 10 }}
                                         >
                                             {/* Resize Handles */}
                                             <div className="absolute left-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-white/30 z-10" onMouseDown={(e) => { e.stopPropagation(); setDraggingEdge({ trackId: t.id, clipId: c.id, edge: 'left', startX: e.clientX, initialStart: c.start, initialDuration: c.duration, initialSampleOffset: c.sampleOffset || 0 }); }} data-edge="left" />
@@ -3209,8 +4164,47 @@ function DAWStudio() {
                             </div>
                         )}
 
-                        {track.effects.map(fx => (
-                            <div key={fx.id} onContextMenu={(e) => handleContextMenu(e, 'effect', { trackId: track.id, fxId: fx.id })} className="min-w-[16rem] max-w-lg w-max h-full bg-neutral-950 border border-neutral-800 rounded-xl p-5 flex flex-col shrink-0 relative group shadow-lg">
+                        {track.effects.map((fx, index) => (
+                            <div 
+                                key={fx.id} 
+                                draggable
+                                onDragStart={(e) => { 
+                                    e.dataTransfer.effectAllowed = 'move'; 
+                                    e.dataTransfer.setData('text/plain', index.toString());
+                                    // Using the safely initialized dragValuesRef to prevent ReferenceErrors
+                                    dragValuesRef.current.draggedFxIndex = index;
+                                    setDraggedFxIndex(index); 
+                                }}
+                                onDragEnter={(e) => { e.preventDefault(); setDragOverFxIndex(index); }}
+                                onDragOver={(e) => { 
+                                    e.preventDefault(); 
+                                    e.stopPropagation(); 
+                                    // Continuously assert over-index to defeat dragLeave bubbling issues
+                                    if (dragOverFxIndex !== index) setDragOverFxIndex(index); 
+                                }}
+                                onDragLeave={(e) => { e.preventDefault(); }}
+                                onDrop={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    
+                                    const srcIdx = dragValuesRef.current.draggedFxIndex;
+                                    if (srcIdx !== undefined && srcIdx !== null && srcIdx !== index) {
+                                        reorderEffects(track.id, srcIdx, index);
+                                    }
+                                    
+                                    dragValuesRef.current.draggedFxIndex = null;
+                                    setDraggedFxIndex(null);
+                                    setDragOverFxIndex(null);
+                                }}
+                                onDragEnd={() => { 
+                                    dragValuesRef.current.draggedFxIndex = null;
+                                    setDraggedFxIndex(null); 
+                                    setDragOverFxIndex(null); 
+                                }}
+                                onContextMenu={(e) => handleContextMenu(e, 'effect', { trackId: track.id, fxId: fx.id })} 
+                                // Added [&_*]:pointer-events-none to prevent child knobs from stealing drag events!
+                                className={`min-w-[16rem] max-w-lg w-max h-full bg-neutral-950 border rounded-xl p-5 flex flex-col shrink-0 relative group shadow-lg transition-all duration-200 cursor-grab active:cursor-grabbing ${draggedFxIndex === index ? 'opacity-40 scale-95 border-neutral-700' : dragOverFxIndex === index && draggedFxIndex !== null ? 'border-blue-500 scale-[1.02] bg-neutral-900 z-10' : 'border-neutral-800'} ${draggedFxIndex !== null ? '[&_*]:pointer-events-none' : ''}`}
+                            >
                                 <div className="flex justify-between items-center mb-2 border-b border-neutral-800 pb-3 shrink-0">
                                    <div className="flex items-center gap-2">
                                       <div className="w-2 h-2 rounded-full bg-green-500 shadow-[0_0_5px_#22c55e]" />
@@ -3307,6 +4301,40 @@ function DAWStudio() {
                     <button onClick={() => { setMidiLearnTarget(contextMenu.payload); setContextMenu(null); }} className="w-full text-left px-4 py-2 text-sm text-neutral-300 hover:bg-neutral-800 hover:text-blue-400 flex items-center gap-2">
                         <Radio size={14}/> Assign to MIDI Controller
                     </button>
+                    {(() => {
+                        const activeMappings = [];
+                        Object.entries(midiMappings).forEach(([ccKey, maps]) => {
+                            const arr = Array.isArray(maps) ? maps : [maps];
+                            arr.forEach(m => {
+                                if (m.type === contextMenu.payload.type && m.trackId === contextMenu.payload.trackId && m.param === contextMenu.payload.param && m.fxId === contextMenu.payload.fxId) {
+                                    activeMappings.push({ ccKey, id: m.id || 'legacy' });
+                                }
+                            });
+                        });
+                        if (activeMappings.length > 0) {
+                            return (
+                                <>
+                                    <div className="h-px bg-neutral-800 my-1"/>
+                                    {activeMappings.map(m => (
+                                         <button key={`${m.ccKey}_${m.id}`} onClick={() => {
+                                             setMidiMappings(prev => {
+                                                 const arr = Array.isArray(prev[m.ccKey]) ? prev[m.ccKey] : [prev[m.ccKey]];
+                                                 const nextMaps = arr.filter(x => (x.id || 'legacy') !== m.id);
+                                                 if (nextMaps.length === 0) {
+                                                     const nextPrev = {...prev}; delete nextPrev[m.ccKey]; return nextPrev;
+                                                 }
+                                                 return {...prev, [m.ccKey]: nextMaps};
+                                             });
+                                             setContextMenu(null);
+                                             showToast(`Mapping removed from ${m.ccKey}`, "info");
+                                         }} className="w-full text-left px-4 py-2 text-sm text-red-400 hover:bg-neutral-800 hover:text-red-300 flex items-center gap-2">
+                                             <X size={14}/> Unmap Controller ({m.ccKey.split('-').pop()})
+                                         </button>
+                                    ))}
+                                </>
+                            );
+                        }
+                    })()}
                   </>
                 )}
               </div>
@@ -3322,65 +4350,188 @@ function DAWStudio() {
                ))}
             </div>
 
+            {/* Cropper Modal */}
+            {cropImageSrc && (
+                <div className="fixed inset-0 z-[300] bg-black/80 backdrop-blur-sm flex items-center justify-center">
+                    <div className="bg-neutral-900 border border-neutral-700 rounded-2xl w-full max-w-md p-6 shadow-2xl animate-in zoom-in-95 duration-200">
+                        <div className="flex justify-between items-center mb-6">
+                            <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                                <Users size={18}/> Adjust Profile Picture
+                            </h2>
+                            <button onClick={() => setCropImageSrc(null)} className="text-neutral-500 hover:text-white transition-colors"><X size={18}/></button>
+                        </div>
+                        <ImageCropper 
+                            src={cropImageSrc} 
+                            onComplete={handleCropComplete} 
+                            onCancel={() => setCropImageSrc(null)} 
+                        />
+                    </div>
+                </div>
+            )}
+
             {/* Settings Modal */}
             {showSettings && (
                 <div className="fixed inset-0 z-[200] bg-black/80 backdrop-blur-sm flex items-center justify-center">
                     <div className="bg-neutral-900 border border-neutral-700 rounded-2xl w-full max-w-md p-6 shadow-2xl animate-in zoom-in-95 duration-200">
                         <div className="flex justify-between items-center mb-6">
-                            <h2 className="text-lg font-bold text-white flex items-center gap-2"><Settings size={18}/> Studio Settings</h2>
+                            <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                                <Settings size={18}/> Studio Settings
+                            </h2>
                             <button onClick={() => setShowSettings(false)} className="text-neutral-500 hover:text-white transition-colors"><X size={18}/></button>
                         </div>
+                        
                         <div className="flex flex-col gap-4">
-                            <div>
-                                <label className="text-[10px] text-neutral-400 font-bold mb-2 block uppercase tracking-wider">Profile Picture</label>
-                                <div className="flex items-center gap-4">
-                                    {currentUser?.avatar ? (
-                                        <img src={currentUser.avatar} alt="Profile" className="w-12 h-12 rounded-full object-cover border border-neutral-700" />
-                                    ) : (
-                                        <div className={`w-12 h-12 rounded-full flex items-center justify-center text-lg font-bold text-white ${currentUser?.color || 'bg-emerald-500'}`}>
-                                            {currentUser?.username?.charAt(0).toUpperCase()}
-                                        </div>
-                                    )}
-                                    <label className="bg-neutral-800 hover:bg-neutral-700 text-white px-3 py-1.5 rounded text-xs cursor-pointer transition-colors border border-neutral-700">
-                                        Upload Image
-                                        <input type="file" accept="image/*" onChange={handleAvatarUpload} className="hidden" />
-                                    </label>
-                                </div>
-                            </div>
-                            <div className="h-px bg-neutral-800 w-full my-2" />
-                            
                             <div>
                                 <label className="text-[10px] text-neutral-400 font-bold mb-1 flex items-center gap-1.5 uppercase tracking-wider"><Piano size={12}/> Keyboard Controller</label>
                                 <select value={midiConfig.keyboard} onChange={e => setMidiConfig(p => ({...p, keyboard: e.target.value}))} className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-blue-500">
-                                    <option value="">All Web MIDI Inputs (Default)</option>
-                                    {midiInputsList.map(m => <option key={m.id} value={m.id}>{m.name || 'Unknown Device'}</option>)}
-                                </select>
-                                <p className="text-[9px] text-neutral-500 mt-1">Routes specifically to Synths and Instruments.</p>
-                            </div>
-                            
-                            <div>
-                                <label className="text-[10px] text-neutral-400 font-bold mb-1 flex items-center gap-1.5 uppercase tracking-wider"><Radio size={12}/> Pad Controller</label>
-                                <select value={midiConfig.pad} onChange={e => setMidiConfig(p => ({...p, pad: e.target.value}))} className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-blue-500">
-                                    <option value="">All Web MIDI Inputs (Default)</option>
-                                    {midiInputsList.map(m => <option key={m.id} value={m.id}>{m.name || 'Unknown Device'}</option>)}
-                                </select>
-                                <p className="text-[9px] text-neutral-500 mt-1">Routes to Drum Machines and Samplers exclusively.</p>
-                            </div>
-                            
-                            <div>
-                                <label className="text-[10px] text-neutral-400 font-bold mb-1 flex items-center gap-1.5 uppercase tracking-wider"><Sliders size={12}/> Mixer Controller</label>
-                                <select value={midiConfig.mixer} onChange={e => setMidiConfig(p => ({...p, mixer: e.target.value}))} className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-blue-500">
-                                    <option value="">None Selected</option>
-                                    {midiInputsList.map(m => <option key={m.id} value={m.id}>{m.name || 'Unknown Device'}</option>)}
-                                </select>
-                                <p className="text-[9px] text-neutral-500 mt-1">Auto-assigns faders using CC7 (Volume) and CC10 (Pan) across MIDI channels.</p>
-                            </div>
+                                        <option value="">All Web MIDI Inputs (Default)</option>
+                                        {midiInputsList.map(m => <option key={m.id} value={m.id}>{m.name || 'Unknown Device'}</option>)}
+                                    </select>
+                                    <p className="text-[9px] text-neutral-500 mt-1">Routes specifically to Synths and Instruments.</p>
+                                </div>
+                                
+                                <div>
+                                    <label className="text-[10px] text-neutral-400 font-bold mb-1 flex items-center gap-1.5 uppercase tracking-wider"><Radio size={12}/> Pad Controller</label>
+                                    <select value={midiConfig.pad} onChange={e => setMidiConfig(p => ({...p, pad: e.target.value}))} className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-blue-500">
+                                        <option value="">All Web MIDI Inputs (Default)</option>
+                                        {midiInputsList.map(m => <option key={m.id} value={m.id}>{m.name || 'Unknown Device'}</option>)}
+                                    </select>
+                                    <p className="text-[9px] text-neutral-500 mt-1">Routes to Drum Machines and Samplers exclusively.</p>
+                                </div>
+                                
+                                <div>
+                                    <label className="text-[10px] text-neutral-400 font-bold mb-1 flex items-center gap-1.5 uppercase tracking-wider"><Sliders size={12}/> Mixer Controller</label>
+                                    <select value={midiConfig.mixer} onChange={e => setMidiConfig(p => ({...p, mixer: e.target.value}))} className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-blue-500">
+                                        <option value="">None Selected</option>
+                                        {midiInputsList.map(m => <option key={m.id} value={m.id}>{m.name || 'Unknown Device'}</option>)}
+                                    </select>
+                                    <p className="text-[9px] text-neutral-500 mt-1">Auto-assigns faders using CC7 (Volume) and CC10 (Pan) across MIDI channels.</p>
+                                </div>
 
-                            <div className="bg-blue-500/10 border border-blue-500/20 rounded-xl p-4 mt-2">
-                                <h3 className="text-xs font-bold text-blue-400 mb-1 flex items-center gap-1.5"><Network size={12}/> Network Status</h3>
-                                <p className="text-[10px] text-neutral-300 font-mono">WebRTC State: {Object.keys(peers).length} Peer(s) connected.</p>
-                                <p className="text-[10px] text-neutral-300 font-mono">Signaling API: {socketRef.current?.connected ? 'Connected' : 'Disconnected'}</p>
+                                <div className="bg-blue-500/10 border border-blue-500/20 rounded-xl p-4 mt-2">
+                                    <h3 className="text-xs font-bold text-blue-400 mb-1 flex items-center gap-1.5"><Network size={12}/> Network Status</h3>
+                                    <p className="text-[10px] text-neutral-300 font-mono">WebRTC State: {Object.keys(peers).length} Peer(s) connected.</p>
+                                    <p className="text-[10px] text-neutral-300 font-mono">Signaling API: {socketRef.current?.connected ? 'Connected' : 'Disconnected'}</p>
+                                </div>
+
+                                <div className="mt-4 border-t border-neutral-800 pt-4 pb-2">
+                                    <h3 className="text-xs font-bold text-white mb-2 flex items-center gap-1.5"><Sliders size={12}/> Custom MIDI Mappings</h3>
+                                    {Object.keys(midiMappings).length === 0 ? (
+                                        <p className="text-[10px] text-neutral-500 italic bg-neutral-950 p-3 rounded-lg border border-neutral-800">No custom mappings yet. Right click a knob to assign your controller.</p>
+                                    ) : (
+                                        <div className="flex flex-col gap-2 max-h-48 overflow-y-auto custom-scrollbar pr-2">
+                                            {Object.entries(midiMappings).flatMap(([ccKey, maps]) => {
+                                                const arr = Array.isArray(maps) ? maps : [maps];
+                                                return arr.map((m, idx) => (
+                                                <div key={m.id || `${ccKey}_${idx}`} className="bg-neutral-950 border border-neutral-800 rounded-lg p-3 flex flex-col gap-2 shadow-inner">
+                                                    <div className="flex justify-between items-center">
+                                                        <span className="text-[10px] font-bold text-blue-400 flex items-center gap-1"><Radio size={10} className="text-neutral-500"/> CC {ccKey.split('-')[1]} &rarr; {m.param || m.type.replace('_',' ')}</span>
+                                                        <button onClick={() => setMidiMappings(prev => {
+                                                            const pArr = Array.isArray(prev[ccKey]) ? prev[ccKey] : [prev[ccKey]];
+                                                            const nextMaps = pArr.filter(x => (x.id || 'legacy') !== (m.id || 'legacy'));
+                                                            if (nextMaps.length === 0) {
+                                                                const nextPrev = {...prev}; delete nextPrev[ccKey]; return nextPrev;
+                                                            }
+                                                            return {...prev, [ccKey]: nextMaps};
+                                                        })} className="text-neutral-500 hover:text-red-400 transition-colors" title="Remove Mapping"><Trash2 size={12}/></button>
+                                                    </div>
+                                                    <div className="flex items-center justify-between text-[9px] text-neutral-400 mt-1 gap-2 bg-neutral-900 p-2 rounded border border-neutral-800/50">
+                                                        <label className="flex items-center gap-1.5 cursor-pointer hover:text-white transition-colors">
+                                                            <input type="checkbox" checked={m.reverse || false} onChange={e => {
+                                                                const val = e.target.checked;
+                                                                setMidiMappings(prev => ({
+                                                                    ...prev, [ccKey]: (Array.isArray(prev[ccKey]) ? prev[ccKey] : [prev[ccKey]]).map(x => (x.id||'legacy') === (m.id||'legacy') ? {...x, reverse: val} : x)
+                                                                }));
+                                                            }} className="accent-blue-500 cursor-pointer" /> Reverse Input
+                                                        </label>
+                                                        <div className="flex items-center gap-3">
+                                                            <div className="flex items-center gap-1.5" title="Start Limit">
+                                                                <span>Min:</span>
+                                                                <input type="range" min="0" max="100" value={Math.round((m.rangeMin !== undefined ? m.rangeMin : 0)*100)} onChange={e => {
+                                                                    const val = Number(e.target.value)/100;
+                                                                    setMidiMappings(prev => ({
+                                                                        ...prev, [ccKey]: (Array.isArray(prev[ccKey]) ? prev[ccKey] : [prev[ccKey]]).map(x => (x.id||'legacy') === (m.id||'legacy') ? {...x, rangeMin: val} : x)
+                                                                    }));
+                                                                }} className="w-12 h-1 bg-neutral-800 rounded-full appearance-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-2.5 [&::-webkit-slider-thumb]:h-2.5 [&::-webkit-slider-thumb]:bg-blue-400 [&::-webkit-slider-thumb]:rounded-full cursor-pointer" />
+                                                            </div>
+                                                            <div className="flex items-center gap-1.5" title="End Limit">
+                                                                <span>Max:</span>
+                                                                <input type="range" min="0" max="100" value={Math.round((m.rangeMax !== undefined ? m.rangeMax : 1)*100)} onChange={e => {
+                                                                    const val = Number(e.target.value)/100;
+                                                                    setMidiMappings(prev => ({
+                                                                        ...prev, [ccKey]: (Array.isArray(prev[ccKey]) ? prev[ccKey] : [prev[ccKey]]).map(x => (x.id||'legacy') === (m.id||'legacy') ? {...x, rangeMax: val} : x)
+                                                                    }));
+                                                                }} className="w-12 h-1 bg-neutral-800 rounded-full appearance-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-2.5 [&::-webkit-slider-thumb]:h-2.5 [&::-webkit-slider-thumb]:bg-blue-400 [&::-webkit-slider-thumb]:rounded-full cursor-pointer" />
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            ))})}
+                                        </div>
+                                    )}
+                                </div>
                             </div>
+                    </div>
+                </div>
+            )}
+
+            {/* User Profile Modal */}
+            {viewProfileUser && (
+                <div className="fixed inset-0 z-[200] bg-black/80 backdrop-blur-sm flex items-center justify-center">
+                    <div className="bg-neutral-900 border border-neutral-700 rounded-2xl w-full max-w-sm p-6 shadow-2xl animate-in zoom-in-95 duration-200">
+                        <div className="flex justify-between items-start mb-4">
+                            <div className="flex items-center gap-4">
+                                <div className={`w-16 h-16 rounded-full border-4 border-neutral-800 overflow-hidden flex items-center justify-center text-2xl font-bold text-white shadow-lg shrink-0 ${viewProfileUser.color || 'bg-blue-600'}`}>
+                                    {viewProfileUser.avatar ? (
+                                        <img src={viewProfileUser.avatar} alt={viewProfileUser.username} className="w-full h-full object-cover" />
+                                    ) : (
+                                        viewProfileUser.username?.charAt(0).toUpperCase()
+                                    )}
+                                </div>
+                                <div>
+                                    <h2 className="text-xl font-bold text-white break-all">{viewProfileUser.username}</h2>
+                                    <span className="text-xs text-green-400 flex items-center gap-1.5 mt-1 font-medium">
+                                        <div className="w-2 h-2 rounded-full bg-green-500 shadow-[0_0_5px_#22c55e]"></div> Online
+                                    </span>
+                                </div>
+                            </div>
+                            <button onClick={() => setViewProfileUser(null)} className="text-neutral-500 hover:text-white transition-colors mt-1 shrink-0"><X size={18}/></button>
+                        </div>
+                        
+                        <div className="bg-neutral-950 border border-neutral-800 rounded-xl p-4 mt-6 shadow-inner">
+                            <h3 className="text-[10px] text-neutral-500 font-bold uppercase tracking-wider mb-2">User Bio</h3>
+                            <p className="text-sm text-neutral-300 whitespace-pre-wrap leading-relaxed">
+                                {viewProfileUser.bio ? viewProfileUser.bio : <span className="text-neutral-600 italic">No bio provided.</span>}
+                            </p>
+                            
+                            {(viewProfileUser.email || viewProfileUser.website || viewProfileUser.instagram || viewProfileUser.twitter) && (
+                                <>
+                                    <div className="h-px bg-neutral-800 my-4" />
+                                    <h3 className="text-[10px] text-neutral-500 font-bold uppercase tracking-wider mb-3">Contact & Links</h3>
+                                    <div className="flex flex-col gap-2.5">
+                                        {viewProfileUser.email && (
+                                            <a href={`mailto:${viewProfileUser.email}`} className="flex items-center gap-2.5 text-sm text-neutral-400 hover:text-blue-400 transition-colors w-fit">
+                                                <Mail size={14} /> {viewProfileUser.email}
+                                            </a>
+                                        )}
+                                        {viewProfileUser.website && (
+                                            <a href={viewProfileUser.website.startsWith('http') ? viewProfileUser.website : `https://${viewProfileUser.website}`} target="_blank" rel="noreferrer" className="flex items-center gap-2.5 text-sm text-neutral-400 hover:text-blue-400 transition-colors w-fit">
+                                                <Globe size={14} /> {viewProfileUser.website.replace(/^https?:\/\//, '')}
+                                            </a>
+                                        )}
+                                        {viewProfileUser.instagram && (
+                                            <a href={`https://instagram.com/${viewProfileUser.instagram.replace('@', '')}`} target="_blank" rel="noreferrer" className="flex items-center gap-2.5 text-sm text-neutral-400 hover:text-pink-400 transition-colors w-fit">
+                                                <Instagram size={14} /> {viewProfileUser.instagram}
+                                            </a>
+                                        )}
+                                        {viewProfileUser.twitter && (
+                                            <a href={`https://twitter.com/${viewProfileUser.twitter.replace('@', '')}`} target="_blank" rel="noreferrer" className="flex items-center gap-2.5 text-sm text-neutral-400 hover:text-sky-400 transition-colors w-fit">
+                                                <Twitter size={14} /> {viewProfileUser.twitter}
+                                            </a>
+                                        )}
+                                    </div>
+                                </>
+                            )}
                         </div>
                     </div>
                 </div>
@@ -3391,15 +4542,17 @@ function DAWStudio() {
                 <div className="fixed inset-0 z-[200] bg-black/80 backdrop-blur-sm flex items-center justify-center">
                     <div className="bg-neutral-900 border border-neutral-700 rounded-2xl w-full max-w-md p-6 shadow-2xl animate-in zoom-in-95 duration-200">
                         <div className="flex justify-between items-center mb-6">
-                            <h2 className="text-lg font-bold text-white flex items-center gap-2"><Users size={18} className="text-purple-400"/> Share Project</h2>
+                            <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                                <Users size={18}/> Share Project
+                            </h2>
                             <button onClick={() => setShowShareModal(false)} className="text-neutral-500 hover:text-white transition-colors"><X size={18}/></button>
                         </div>
                         
                         <div className="flex flex-col gap-4">
-                            <div className="flex items-center justify-between bg-neutral-950 border border-neutral-800 p-3 rounded-xl">
-                                <div className="flex flex-col">
-                                    <span className="text-sm font-bold text-white">Public Project</span>
-                                    <span className="text-[10px] text-neutral-400 mt-0.5">Anyone logged in can see and copy this project.</span>
+                            <div className="flex items-center justify-between bg-neutral-950 border border-neutral-800 p-4 rounded-xl">
+                                <div>
+                                    <h3 className="text-sm font-bold text-white">Public Project</h3>
+                                    <p className="text-[10px] text-neutral-500">Anyone can view and collaborate.</p>
                                 </div>
                                 <button 
                                     onClick={async () => {
@@ -3415,63 +4568,66 @@ function DAWStudio() {
                                 </button>
                             </div>
 
-                            <h3 className="text-xs font-bold text-neutral-500 uppercase tracking-wider mt-2">Registered Users</h3>
-                            <div className="flex flex-col gap-2 max-h-[40vh] overflow-y-auto custom-scrollbar pr-2">
-                                {(() => {
-                                    // Merge registered users with currently active peers to guarantee online users always show up
-                                    const unifiedUsers = new Map();
-                                    
-                                    registeredUsers.forEach(u => {
-                                        if (u.username && u.username !== currentUser?.username) {
-                                            unifiedUsers.set(u.username, { ...u, isOnline: false });
-                                        }
-                                    });
-                                    
-                                    Object.values(peers).forEach(p => {
-                                        if (p.username && p.username !== currentUser?.username) {
-                                            if (unifiedUsers.has(p.username)) {
-                                                unifiedUsers.get(p.username).isOnline = true;
-                                            } else {
-                                                unifiedUsers.set(p.username, { id: `peer_${p.username}`, username: p.username, isOnline: true });
-                                            }
-                                        }
-                                    });
+                            {!isPublic && (
+                                <>
+                                    <h3 className="text-xs font-bold text-neutral-500 uppercase tracking-wider mt-2">Registered Users</h3>
+                                    <div className="flex flex-col gap-2 max-h-[40vh] overflow-y-auto custom-scrollbar pr-2">
+                                        {(() => {
+                                            const unifiedUsers = new Map();
+                                            
+                                            registeredUsers.forEach(u => {
+                                                if (u.username && u.username !== currentUser?.username) {
+                                                    unifiedUsers.set(u.username, { ...u, isOnline: false });
+                                                }
+                                            });
+                                            
+                                            Object.values(peers).forEach(p => {
+                                                if (p.username && p.username !== currentUser?.username) {
+                                                    if (unifiedUsers.has(p.username)) {
+                                                        unifiedUsers.get(p.username).isOnline = true;
+                                                    } else {
+                                                        unifiedUsers.set(p.username, { id: `peer_${p.username}`, username: p.username, isOnline: true });
+                                                    }
+                                                }
+                                            });
 
-                                    const sortedUsers = Array.from(unifiedUsers.values()).sort((a, b) => {
-                                        if (a.isOnline && !b.isOnline) return -1;
-                                        if (!a.isOnline && b.isOnline) return 1;
-                                        return a.username.localeCompare(b.username);
-                                    });
+                                            const sortedUsers = Array.from(unifiedUsers.values()).sort((a, b) => {
+                                                if (a.isOnline && !b.isOnline) return -1;
+                                                if (!a.isOnline && b.isOnline) return 1;
+                                                return a.username.localeCompare(b.username);
+                                            });
 
-                                    if (sortedUsers.length === 0) return <p className="text-xs text-neutral-500 text-center py-4">No other users found.</p>;
+                                            if (sortedUsers.length === 0) return <p className="text-xs text-neutral-500 text-center py-4">No other users found.</p>;
 
-                                    return sortedUsers.map(u => {
-                                        const isShared = sharedWith.includes(u.username);
-                                        return (
-                                            <div key={u.id} className="flex justify-between items-center bg-neutral-950 border border-neutral-800 p-2 rounded-lg group hover:border-neutral-700 transition-colors">
-                                                <div className="flex items-center gap-3">
-                                                    <div className="relative">
-                                                        <div className="w-8 h-8 rounded-full bg-neutral-800 flex items-center justify-center text-xs font-bold text-white shadow-inner">{u.username.charAt(0).toUpperCase()}</div>
-                                                        {u.isOnline && <div className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-green-500 rounded-full border-2 border-neutral-950 shadow-[0_0_5px_#22c55e]" title="Online" />}
+                                            return sortedUsers.map(u => {
+                                                const isShared = sharedWith.includes(u.username);
+                                                return (
+                                                    <div key={u.id} className="flex justify-between items-center bg-neutral-950 border border-neutral-800 p-2 rounded-lg group hover:border-neutral-700 transition-colors">
+                                                        <div className="flex items-center gap-3">
+                                                            <div className="relative">
+                                                                <div className="w-8 h-8 rounded-full bg-neutral-800 flex items-center justify-center text-xs font-bold text-white shadow-inner">{u.username.charAt(0).toUpperCase()}</div>
+                                                                {u.isOnline && <div className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-green-500 rounded-full border-2 border-neutral-950 shadow-[0_0_5px_#22c55e]" title="Online" />}
+                                                            </div>
+                                                            <span className="text-sm text-neutral-300 font-medium">{u.username}</span>
+                                                        </div>
+                                                        <button 
+                                                            onClick={async () => {
+                                                                const nextShared = isShared ? sharedWith.filter(n => n !== u.username) : [...sharedWith, u.username];
+                                                                setSharedWith(nextShared);
+                                                                await saveProject(nextShared, isPublic);
+                                                                if (socketRef.current) socketRef.current.emit('daw-action', { type: 'PROJECT_SHARED' });
+                                                            }} 
+                                                            className={`px-3 py-1.5 text-[10px] uppercase tracking-wider font-bold rounded transition-colors ${isShared ? 'bg-red-500/10 text-red-400 hover:bg-red-500/20 border border-red-500/20' : 'bg-neutral-800 text-neutral-400 hover:bg-blue-600 hover:text-white border border-transparent'}`}
+                                                        >
+                                                            {isShared ? 'Revoke' : 'Share'}
+                                                        </button>
                                                     </div>
-                                                    <span className="text-sm text-neutral-300 font-medium">{u.username}</span>
-                                                </div>
-                                                <button 
-                                                    onClick={async () => {
-                                                        const nextShared = isShared ? sharedWith.filter(n => n !== u.username) : [...sharedWith, u.username];
-                                                        setSharedWith(nextShared);
-                                                        await saveProject(nextShared, isPublic);
-                                                        if (socketRef.current) socketRef.current.emit('daw-action', { type: 'PROJECT_SHARED' });
-                                                    }} 
-                                                    className={`px-3 py-1.5 text-[10px] uppercase tracking-wider font-bold rounded transition-colors ${isShared ? 'bg-red-500/10 text-red-400 hover:bg-red-500/20 border border-red-500/20' : 'bg-neutral-800 text-neutral-400 hover:bg-blue-600 hover:text-white border border-transparent'}`}
-                                                >
-                                                    {isShared ? 'Revoke' : 'Share'}
-                                                </button>
-                                            </div>
-                                        );
-                                    });
-                                })()}
-                            </div>
+                                                );
+                                            });
+                                        })()}
+                                    </div>
+                                </>
+                            )}
                         </div>
                     </div>
                 </div>

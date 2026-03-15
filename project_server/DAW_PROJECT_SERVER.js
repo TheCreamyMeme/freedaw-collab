@@ -87,7 +87,20 @@ app.delete('/api/samples/:sampleId', authenticateToken, (req, res) => {
 // User Lookup API
 app.get('/api/users', authenticateToken, (req, res) => {
     // Strip sensitive info if you had any; send just what client needs
-    res.json(allRegisteredUsers.map(u => ({ id: u.id, username: u.username })));
+    res.json(allRegisteredUsers.map(u => ({ id: u.id, username: u.username, avatar: u.avatar, bio: u.bio })));
+});
+
+app.put('/api/users/profile', authenticateToken, (req, res) => {
+    const { avatar, bio } = req.body;
+    let user = allRegisteredUsers.find(u => u.id === req.user.id);
+    if (user) {
+        if (avatar !== undefined) user.avatar = avatar;
+        if (bio !== undefined) user.bio = bio;
+        fs.writeFileSync(USERS_FILE, JSON.stringify(allRegisteredUsers, null, 2));
+        res.json({ status: 'success', user });
+    } else {
+        res.status(404).json({ error: 'User not found' });
+    }
 });
 
 // --- 3. PROJECTS API (Protected Upload/Delete) ---
