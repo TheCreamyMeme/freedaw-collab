@@ -1238,29 +1238,34 @@ const WaveformDisplay = ({ buffer, bpm, beatWidth, sampleOffset = 0 }) => {
         canvas.height = height;
 
         const data = buffer.getChannelData(0);
-        const step = Math.max(1, Math.ceil(data.length / renderWidth));
+        const step = Math.max(1, Math.floor(data.length / renderWidth));
         const amp = height / 2;
 
         ctx.clearRect(0, 0, renderWidth, height);
         ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
         
-        ctx.beginPath();
+        // PERFORMANCE FIX: 
+        // 1. Avoid ctx.rect() inside massive loops (thousands of subpaths destroys canvas rendering performance)
+        // 2. Bound the number of samples read per pixel to prevent main-thread lockups on long audio files.
+        const maxSamplesPerPixel = 100;
+        const skip = Math.max(1, Math.floor(step / maxSamplesPerPixel));
+
         for (let i = 0; i < renderWidth; i++) {
             let min = 0;
             let max = 0;
-            for (let j = 0; j < step; j++) {
-                const idx = (i * step) + j;
-                if (idx < data.length) {
-                    const val = data[idx];
-                    if (val < min) min = val;
-                    if (val > max) max = val;
-                }
+            const startIdx = i * step;
+            const endIdx = Math.min(startIdx + step, data.length);
+            
+            for (let j = startIdx; j < endIdx; j += skip) {
+                const val = data[j];
+                if (val < min) min = val;
+                if (val > max) max = val;
             }
+            
             const y = (1 - max) * amp;
             const h = Math.max(1, (max - min) * amp);
-            ctx.rect(i, y, 1, h);
+            ctx.fillRect(i, y, 1, h);
         }
-        ctx.fill();
     }, [buffer, widthPx]); // Added widthPx to redraw in high-res when zoomed
 
     return (
