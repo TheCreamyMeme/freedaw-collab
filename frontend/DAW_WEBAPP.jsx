@@ -1020,6 +1020,29 @@ const triggerDrum = (ctx, bus, pitch, time, vol, p={}, vel=100) => {
   }
 };
 
+// --- Helper to prevent Web Audio Memory Leaks ---
+const disconnectTrackRouting = (synth) => {
+    if (!synth) return;
+    try {
+        if (synth.activeSource) { try { synth.activeSource.stop(); } catch(e){} synth.activeSource.disconnect(); }
+        if (synth.pitchBendNode) { try { synth.pitchBendNode.stop(); } catch(e){} synth.pitchBendNode.disconnect(); }
+        if (synth.inputBus) synth.inputBus.disconnect();
+        if (synth.faderGain) synth.faderGain.disconnect();
+        if (synth.panner) synth.panner.disconnect();
+        if (synth.analyser) synth.analyser.disconnect();
+        if (synth.fxNodes) {
+            Object.values(synth.fxNodes).forEach(nodeObj => {
+                if (nodeObj.input) nodeObj.input.disconnect();
+                if (nodeObj.output) nodeObj.output.disconnect();
+                if (nodeObj.wet) nodeObj.wet.disconnect();
+                if (nodeObj.dry) nodeObj.dry.disconnect();
+            });
+        }
+    } catch (e) {
+        console.error("Audio cleanup error", e);
+    }
+};
+
 const initTrackRouting = async (track, ctx, masterGain) => {
   const inputBus = ctx.createGain(), faderGain = ctx.createGain(), panner = ctx.createStereoPanner ? ctx.createStereoPanner() : ctx.createPanner();
   if (panner.pan) panner.pan.value = (track.pan || 0) / 50; 
@@ -1686,27 +1709,45 @@ function DAWStudio() {
       }
   };
 
-  const handleUndo = useCallback(() => {
-      if (historyPtrRef.current > 0) {
-          isUndoRedoRef.current = true;
-          historyPtrRef.current -= 1;
-          const prev = historyRef.current[historyPtrRef.current];
-          setTracks(prev);
-          broadcastLivePreview({ type: 'SYNC_STATE', payload: { tracks: prev, bpm: stateRefs.current.bpm } });
-          showToast("Undo", "info");
-      }
-  }, [broadcastLivePreview, showToast]);
+    const rebuildAllSynths = useCallback(async (newTracks) => {
+        if (!audioCtxRef.current) return;
+        const newTrackIds = new Set(newTracks.map(t => t.id));
+        Object.keys(synthsRef.current).forEach(id => {
+            if (!newTrackIds.has(Number(id))) {
+                disconnectTrackRouting(synthsRef.current[id]);
+                delete synthsRef.current[id];
+            }
+        });
+        for (const track of newTracks) {
+            disconnectTrackRouting(synthsRef.current[track.id]);
+            synthsRef.current[track.id] = await initTrackRouting(track, audioCtxRef.current, masterGainRef.current);
+        }
+    }, []);
 
-  const handleRedo = useCallback(() => {
-      if (historyPtrRef.current < historyRef.current.length - 1) {
-          isUndoRedoRef.current = true;
-          historyPtrRef.current += 1;
-          const next = historyRef.current[historyPtrRef.current];
-          setTracks(next);
-          broadcastLivePreview({ type: 'SYNC_STATE', payload: { tracks: next, bpm: stateRefs.current.bpm } });
-          showToast("Redo", "info");
-      }
-  }, [broadcastLivePreview, showToast]);
+    const handleUndo = useCallback(() => {
+        if (historyPtrRef.current > 0) {
+            isUndoRedoRef.current = true;
+            historyPtrRef.current -= 1;
+            const prev = historyRef.current[historyPtrRef.current];
+            setTracks(prev);
+            rebuildAllSynths(prev);
+            broadcastLivePreview({ type: 'SYNC_STATE', payload: { tracks: prev, bpm: stateRefs.current.bpm } });
+            showToast("Undo", "info");
+        }
+    }, [broadcastLivePreview, showToast, rebuildAllSynths]);
+
+    const handleRedo = useCallback(() => {
+        if (historyPtrRef.current < historyRef.current.length - 1) {
+            isUndoRedoRef.current = true;
+            historyPtrRef.current += 1;
+            const next = historyRef.current[historyPtrRef.current];
+            setTracks(next);
+            rebuildAllSynths(next);
+            broadcastLivePreview({ type: 'SYNC_STATE', payload: { tracks: next, bpm: stateRefs.current.bpm } });
+            showToast("Redo", "info");
+        }
+    }, [broadcastLivePreview, showToast, rebuildAllSynths]);
+
 
   const saveProject = useCallback(async (currentShared = sharedWith, currentPublic = isPublic, isAuto = false, overrideId = null, overrideName = null) => {
       const finalId = overrideId || currentProjectIdRef.current || `proj_${Date.now()}`;
@@ -2374,7 +2415,10 @@ function DAWStudio() {
     const updatedTrack = { ...tracksRef.current.find(t => t.id === trackId) };
     if (updatedTrack) {
         updatedTrack.effects = [...(updatedTrack.effects || []), newFx];
-        if (audioCtxRef.current) synthsRef.current[trackId] = await initTrackRouting(updatedTrack, audioCtxRef.current, masterGainRef.current);
+        if (audioCtxRef.current) {
+            disconnectTrackRouting(synthsRef.current[trackId]);
+            synthsRef.current[trackId] = await initTrackRouting(updatedTrack, audioCtxRef.current, masterGainRef.current);
+        }
     }
   };
 
@@ -2383,7 +2427,10 @@ function DAWStudio() {
     const updatedTrack = { ...tracksRef.current.find(t => t.id === trackId) };
     if (updatedTrack) {
         updatedTrack.effects = updatedTrack.effects.filter(fx => fx.id !== fxId);
-        if (audioCtxRef.current) synthsRef.current[trackId] = await initTrackRouting(updatedTrack, audioCtxRef.current, masterGainRef.current);
+        if (audioCtxRef.current) {
+            disconnectTrackRouting(synthsRef.current[trackId]);
+            synthsRef.current[trackId] = await initTrackRouting(updatedTrack, audioCtxRef.current, masterGainRef.current);
+        }
     }
   };
 
@@ -2397,6 +2444,7 @@ function DAWStudio() {
         effects.splice(endIndex, 0, moved);
         updatedTrack.effects = effects;
         if (audioCtxRef.current) {
+            disconnectTrackRouting(synthsRef.current[trackId]);
             synthsRef.current[trackId] = await initTrackRouting(updatedTrack, audioCtxRef.current, masterGainRef.current);
         }
     }
@@ -3143,7 +3191,11 @@ function DAWStudio() {
                   return { ...t, automation: { ...auto, [action.payload.paramKey]: pts } };
               }));
               break;
-          case 'DELETE_TRACK': setTracks(prev => prev.filter(t => t.id !== action.payload.id)); break;
+          case 'DELETE_TRACK': 
+              setTracks(prev => prev.filter(t => t.id !== action.payload.id)); 
+              disconnectTrackRouting(synthsRef.current[action.payload.id]);
+              delete synthsRef.current[action.payload.id];
+              break;
           case 'RENAME_TRACK': setTracks(prev => prev.map(t => t.id === action.payload.id ? { ...t, name: action.payload.name } : t)); break;
           case 'UPDATE_TRACK_VOL': 
               setTracks(prev => prev.map(t => t.id === action.payload.id ? { ...t, volume: action.payload.volume } : t)); 
@@ -3299,6 +3351,7 @@ function DAWStudio() {
                       newEffects[startIndex] = newEffects[endIndex];
                       newEffects[endIndex] = temp;
                       updatedTrack.effects = newEffects;
+                      disconnectTrackRouting(synthsRef.current[trackId]);
                       initTrackRouting(updatedTrack, audioCtxRef.current, masterGainRef.current).then(synth => { synthsRef.current[trackId] = synth; });
                   }
               }
