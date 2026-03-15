@@ -347,6 +347,22 @@ const getGridStyle = (snap, beatWidth, isPianoRoll = false) => {
     };
 };
 
+const getInterpolatedValue = (points, time) => {
+    if (!points || points.length === 0) return null;
+    if (points.length === 1) return points[0].value;
+    const sorted = [...points].sort((a,b) => a.time - b.time);
+    if (time <= sorted[0].time) return sorted[0].value;
+    if (time >= sorted[sorted.length - 1].time) return sorted[sorted.length - 1].value;
+    for (let i = 0; i < sorted.length - 1; i++) {
+        if (time >= sorted[i].time && time < sorted[i+1].time) {
+            const p1 = sorted[i]; const p2 = sorted[i+1];
+            const t = (time - p1.time) / (p2.time - p1.time);
+            return p1.value + t * (p2.value - p1.value);
+        }
+    }
+    return sorted[sorted.length - 1].value;
+};
+
 const getParamConstraints = (param) => {
     const p = param.toLowerCase();
     if (p.includes('freq') || p === 'cutoff' || p === 'damping') return { min: 20, max: 20000, step: 1, isLog: true };
@@ -364,6 +380,20 @@ const getParamConstraints = (param) => {
     if (p === 'detune') return { min: 0, max: 100, step: 1 };
     if (p === 'envmod') return { min: 0, max: 10000, step: 10 };
     return { min: 0, max: 1, step: 0.01 }; 
+};
+
+const getAutomationConstraints = (paramKey) => {
+    if (paramKey === 'volume') return { min: 0, max: 100 };
+    if (paramKey === 'pan') return { min: -50, max: 50 };
+    if (paramKey.startsWith('fx_param_')) {
+        const pName = paramKey.split('_').slice(3).join('_');
+        return getParamConstraints(pName);
+    }
+    if (paramKey.startsWith('inst_param_')) {
+        const pName = paramKey.split('_').slice(2).join('_');
+        return getParamConstraints(pName);
+    }
+    return { min: 0, max: 100 };
 };
 
 // --- Full Internal Engine Definitions ---
@@ -394,19 +424,19 @@ const INTERNAL_PLUGINS = [
 ];
 
 const INITIAL_TRACKS = [
-  { id: 1, name: 'Drum Kit', type: 'midi', instrument: 'inst-drum', color: 'bg-orange-500', volume: 90, pan: 0, muted: false, solo: false, armed: false, effects: [], clips: [
+  { id: 1, name: 'Drum Kit', type: 'midi', instrument: 'inst-drum', color: 'bg-orange-500', volume: 90, pan: 0, muted: false, solo: false, armed: false, automation: {}, activeAutomationParam: 'volume', effects: [], clips: [
     { id: 101, start: 0, duration: 4, notes: [
       { id: 'n1', pitch: 36, start: 0, duration: 0.25, velocity: 120 }, { id: 'n2', pitch: 42, start: 0.5, duration: 0.25, velocity: 80 },
       { id: 'n3', pitch: 38, start: 1, duration: 0.25, velocity: 110 }, { id: 'n4', pitch: 42, start: 1.5, duration: 0.25, velocity: 80 }
     ]}
   ]},
-  { id: 2, name: 'Lead Synth', type: 'midi', instrument: 'inst-subtractive', instrumentParams: { cutoff: 800, res: 2, attack: 0.05, release: 0.2 }, color: 'bg-purple-500', volume: 75, pan: 0, muted: false, solo: false, armed: false, effects: [{ id: 'fx-dist-1', type: 'distortion', name: 'Tube Distortion', params: { amount: 40, mix: 0.6 } }], clips: [
+  { id: 2, name: 'Lead Synth', type: 'midi', instrument: 'inst-subtractive', instrumentParams: { cutoff: 800, res: 2, attack: 0.05, release: 0.2 }, color: 'bg-purple-500', volume: 75, pan: 0, muted: false, solo: false, armed: false, automation: {}, activeAutomationParam: 'volume', effects: [{ id: 'fx-dist-1', type: 'distortion', name: 'Tube Distortion', params: { amount: 40, mix: 0.6 } }], clips: [
     { id: 201, start: 0, duration: 4, notes: [
       { id: 'n5', pitch: 36, start: 0, duration: 0.5, velocity: 100 }, { id: 'n6', pitch: 36, start: 0.75, duration: 0.25, velocity: 90 },
       { id: 'n7', pitch: 48, start: 1.5, duration: 0.5, velocity: 110 }
     ]}
   ]},
-  { id: 3, name: 'Vocals', type: 'audio', audioInputId: '', color: 'bg-emerald-500', volume: 80, pan: 0, muted: false, solo: false, armed: false, effects: [], clips: [] }
+  { id: 3, name: 'Vocals', type: 'audio', audioInputId: '', color: 'bg-emerald-500', volume: 80, pan: 0, muted: false, solo: false, armed: false, automation: {}, activeAutomationParam: 'volume', effects: [], clips: [] }
 ];
 
 // ==========================================
@@ -1321,6 +1351,8 @@ function DAWStudio() {
   const [draggingEdge, setDraggingEdge] = useState(null);
   const [draggingNote, setDraggingNote] = useState(null);
   const [draggingNoteEdge, setDraggingNoteEdge] = useState(null);
+  const [draggingAutoPoint, setDraggingAutoPoint] = useState(null);
+  const [isAutomationMode, setIsAutomationMode] = useState(false);
   const [draggingPlayhead, setDraggingPlayhead] = useState(false);
   const [dockHeight, setDockHeight] = useState(260);
   const [draggingDockHeight, setDraggingDockHeight] = useState(false);
@@ -1365,6 +1397,7 @@ function DAWStudio() {
   const dragValuesRef = useRef({});
   const isInitialMount = useRef(true);
   const lastEmitRef = useRef(0);
+  const lastAutoUiUpdateRef = useRef(0);
   
   // Missing Refs for Hotkeys, State, and Undo/Redo Engine
   const projectNameRef = useRef(projectName);
@@ -2103,11 +2136,41 @@ function DAWStudio() {
       setCurrentTime(newTime);
       stateRefs.current.currentTime = newTime;
 
-      const currentTracks = tracksRef.current;
-      const anySolo = currentTracks.some(t => t.solo);
+          const currentTracks = tracksRef.current;
+          const anySolo = currentTracks.some(t => t.solo);
 
-      currentTracks.forEach(track => {
-        const synth = synthsRef.current[track.id];
+          const automatedUpdates = [];
+
+          currentTracks.forEach(track => {
+            if (track.automation) {
+                Object.entries(track.automation).forEach(([paramKey, points]) => {
+                    if (points.length > 0) {
+                        const val = getInterpolatedValue(points, newTime);
+                        if (val !== null) {
+                            const synth = synthsRef.current[track.id];
+                            if (paramKey === 'volume' && synth) {
+                                if (Math.abs(synth.faderGain.gain.value - val/100) > 0.01) synth.faderGain.gain.setTargetAtTime(val/100, now, 0.05);
+                                automatedUpdates.push({ type: 'UPDATE_TRACK_VOL', payload: { id: track.id, volume: val } });
+                            } else if (paramKey === 'pan' && synth?.panner?.pan) {
+                                synth.panner.pan.setTargetAtTime(val/50, now, 0.05);
+                                automatedUpdates.push({ type: 'UPDATE_TRACK_PAN', payload: { id: track.id, pan: val } });
+                            } else if (paramKey.startsWith('fx_param_')) {
+                                const parts = paramKey.split('_');
+                                const fxId = parts[2];
+                                const pName = parts.slice(3).join('_');
+                                applyAudioEffectParam(track.id, fxId, pName, val, now);
+                                automatedUpdates.push({ type: 'UPDATE_EFFECT_PARAM', payload: { trackId: track.id, fxId, param: pName, value: val } });
+                            } else if (paramKey.startsWith('inst_param_')) {
+                                const pName = paramKey.split('_').slice(2).join('_');
+                                automatedUpdates.push({ type: 'UPDATE_INSTRUMENT_PARAM', payload: { trackId: track.id, param: pName, value: val } });
+                            }
+                        }
+                    }
+                });
+            }
+
+            const synth = synthsRef.current[track.id];
+
         if (!synth) return;
 
         const activeClip = track.clips.find(c => newTime >= c.start && newTime < c.start + c.duration);
@@ -2165,6 +2228,11 @@ function DAWStudio() {
         }
       });
 
+      if (automatedUpdates.length > 0 && performance.now() - lastAutoUiUpdateRef.current > 100) {
+          automatedUpdates.forEach(act => dispatchDawAction(act));
+          lastAutoUiUpdateRef.current = performance.now();
+      }
+
       reqId = requestAnimationFrame(update);
     };
     lastTimeRef.current = audioCtxRef.current?.currentTime || 0;
@@ -2197,13 +2265,13 @@ function DAWStudio() {
       dispatchDawAction({ type: 'UPDATE_INSTRUMENT_PARAM', payload: { trackId, param, value: finalVal } });
   };
 
-  const applyAudioEffectParam = (trackId, fxId, param, val) => {
+  const applyAudioEffectParam = (trackId, fxId, param, val, time = null) => {
       const numVal = Number(val);
       if (isNaN(numVal)) return; // Protect against NaN crashes mapping to Web Audio
       const synth = synthsRef.current[trackId];
       if (!synth || !synth.fxNodes[fxId]) return;
       const nodeObj = synth.fxNodes[fxId];
-      const now = audioCtxRef.current?.currentTime || 0;
+      const now = time !== null ? time : (audioCtxRef.current?.currentTime || 0);
 
       if (nodeObj.fxType === 'delay') {
           if (param === 'time') nodeObj.delay.delayTime.setTargetAtTime(numVal, now, 0.05);
@@ -2776,9 +2844,13 @@ function DAWStudio() {
           return;
       }
 
-      // Automation View (Placeholder)
+          // Toggle Automation View
       if (!cmd && !shift && key === 'a') {
-          showToast("Automation lanes coming soon!", "info");
+          setIsAutomationMode(prev => {
+              const next = !prev;
+              showToast(next ? "Automation Mode ON" : "Automation Mode OFF", "info");
+              return next;
+          });
           return;
       }
 
@@ -3018,7 +3090,34 @@ function DAWStudio() {
                   }
               } 
               break;
-          case 'ADD_TRACK': setTracks(prev => [...prev, action.payload]); break;
+          case 'ADD_TRACK': setTracks(prev => [...prev, { ...action.payload, automation: {}, activeAutomationParam: 'volume' }]); break;
+          case 'SET_AUTOMATION_PARAM':
+              setTracks(prev => prev.map(t => t.id === action.payload.trackId ? { ...t, activeAutomationParam: action.payload.paramKey } : t));
+              break;
+          case 'ADD_AUTOMATION_POINT':
+              setTracks(prev => prev.map(t => {
+                  if (t.id !== action.payload.trackId) return t;
+                  const auto = t.automation || {};
+                  const pts = auto[action.payload.paramKey] || [];
+                  return { ...t, automation: { ...auto, [action.payload.paramKey]: [...pts, action.payload.point] } };
+              }));
+              break;
+          case 'UPDATE_AUTOMATION_POINT':
+              setTracks(prev => prev.map(t => {
+                  if (t.id !== action.payload.trackId) return t;
+                  const auto = t.automation || {};
+                  const pts = (auto[action.payload.paramKey] || []).map(p => p.id === action.payload.pointId ? { ...p, time: action.payload.time, value: action.payload.value } : p);
+                  return { ...t, automation: { ...auto, [action.payload.paramKey]: pts } };
+              }));
+              break;
+          case 'DELETE_AUTOMATION_POINT':
+              setTracks(prev => prev.map(t => {
+                  if (t.id !== action.payload.trackId) return t;
+                  const auto = t.automation || {};
+                  const pts = (auto[action.payload.paramKey] || []).filter(p => p.id !== action.payload.pointId);
+                  return { ...t, automation: { ...auto, [action.payload.paramKey]: pts } };
+              }));
+              break;
           case 'DELETE_TRACK': setTracks(prev => prev.filter(t => t.id !== action.payload.id)); break;
           case 'RENAME_TRACK': setTracks(prev => prev.map(t => t.id === action.payload.id ? { ...t, name: action.payload.name } : t)); break;
           case 'UPDATE_TRACK_VOL': 
@@ -3405,6 +3504,20 @@ function DAWStudio() {
               broadcastLivePreview({ type: 'UPDATE_LOOP_REGION', payload: newLoop });
               return newLoop;
           });
+        } else if (draggingAutoPoint) {
+            const { trackId, paramKey, pointId, startX, startY, initialTime, initialValue } = draggingAutoPoint;
+            const deltaX = e.clientX - startX;
+            const deltaY = e.clientY - startY;
+            const deltaBeats = snap(deltaX / BEAT_WIDTH);
+            
+            const minMax = getAutomationConstraints(paramKey);
+            const valueRange = minMax.max - minMax.min;
+            const deltaValue = -(deltaY / 96) * valueRange;
+            
+            const newTime = Math.max(0, initialTime + deltaBeats);
+            const newValue = Math.max(minMax.min, Math.min(minMax.max, initialValue + deltaValue));
+            
+            dispatchDawAction({ type: 'UPDATE_AUTOMATION_POINT', payload: { trackId, paramKey, pointId, time: newTime, value: newValue } });
         } else if (draggingPlayhead) {
             if (timelineRef.current) {
                 const rect = timelineRef.current.getBoundingClientRect();
@@ -3448,6 +3561,7 @@ function DAWStudio() {
           setDraggingNoteEdge(null);
       }
       dragValuesRef.current = {};
+      if (draggingAutoPoint) setDraggingAutoPoint(null);
       if (draggingLoop) setDraggingLoop(null);
       if (draggingPlayhead) setDraggingPlayhead(false);
       if (draggingDockHeight) setDraggingDockHeight(false);
@@ -3922,8 +4036,9 @@ function DAWStudio() {
                     <div className="h-8 bg-neutral-950 border-b border-neutral-800 flex items-center justify-between px-2 shrink-0">
                         <span className="text-[10px] font-bold text-neutral-500">TRACKS</span>
                         <div className="flex gap-1">
-                            <button onClick={() => dispatchDawAction({ type: 'ADD_TRACK', payload: { id: Date.now(), name: 'New MIDI', type: 'midi', instrument: 'inst-subtractive', instrumentParams: {cutoff:2000, res:1}, color: 'bg-pink-500', volume: 80, pan: 0, clips: [], effects: [] }})} className="text-[9px] uppercase text-neutral-400 hover:text-white font-bold flex items-center gap-1 bg-neutral-800 hover:bg-neutral-700 px-1.5 py-0.5 rounded transition-colors"><Plus size={10}/> MIDI</button>
-                            <button onClick={() => dispatchDawAction({ type: 'ADD_TRACK', payload: { id: Date.now(), name: 'New Audio', type: 'audio', color: 'bg-emerald-500', volume: 80, pan: 0, clips: [], effects: [] }})} className="text-[9px] uppercase text-neutral-400 hover:text-white font-bold flex items-center gap-1 bg-neutral-800 hover:bg-neutral-700 px-1.5 py-0.5 rounded transition-colors"><Plus size={10}/> Audio</button>
+                            <button onClick={() => setIsAutomationMode(!isAutomationMode)} className={`text-[9px] uppercase font-bold flex items-center gap-1 px-1.5 py-0.5 rounded transition-colors ${isAutomationMode ? 'bg-blue-500 text-white' : 'bg-neutral-800 text-neutral-400 hover:text-white'}`} title="Toggle Automation Lanes (A)"><Activity size={10}/> Auto</button>
+                            <button onClick={() => dispatchDawAction({ type: 'ADD_TRACK', payload: { id: Date.now(), name: 'New MIDI', type: 'midi', instrument: 'inst-subtractive', instrumentParams: {cutoff:2000, res:1}, color: 'bg-pink-500', volume: 80, pan: 0, automation: {}, activeAutomationParam: 'volume', clips: [], effects: [] }})} className="text-[9px] uppercase text-neutral-400 hover:text-white font-bold flex items-center gap-1 bg-neutral-800 hover:bg-neutral-700 px-1.5 py-0.5 rounded transition-colors"><Plus size={10}/> MIDI</button>
+                            <button onClick={() => dispatchDawAction({ type: 'ADD_TRACK', payload: { id: Date.now(), name: 'New Audio', type: 'audio', color: 'bg-emerald-500', volume: 80, pan: 0, automation: {}, activeAutomationParam: 'volume', clips: [], effects: [] }})} className="text-[9px] uppercase text-neutral-400 hover:text-white font-bold flex items-center gap-1 bg-neutral-800 hover:bg-neutral-700 px-1.5 py-0.5 rounded transition-colors"><Plus size={10}/> Audio</button>
                         </div>
                     </div>
                     <div className="flex-1 overflow-y-auto overflow-x-hidden custom-scrollbar pr-1">
@@ -4073,6 +4188,62 @@ function DAWStudio() {
                                        <div className="absolute top-2 bottom-2 rounded bg-red-500/50 border border-red-400 pointer-events-none" style={{ left: `${recordingStartTimeRef.current * BEAT_WIDTH}px`, width: `${Math.max(1, (currentTime - recordingStartTimeRef.current) * BEAT_WIDTH)}px` }}>
                                            <div className="px-2 pt-1 text-[9px] font-bold text-white">RECORDING...</div>
                                        </div>
+                                    )}
+
+                                    {/* Automation Overlay */}
+                                    {isAutomationMode && t.activeAutomationParam && (
+                                        <div className="absolute inset-0 z-50 pointer-events-auto" onMouseDown={(e) => {
+                                            e.stopPropagation();
+                                            if (e.button === 2) return;
+                                            const rect = e.currentTarget.getBoundingClientRect();
+                                            const x = e.clientX - rect.left + timelineRef.current.scrollLeft;
+                                            const y = e.clientY - rect.top;
+                                            const sg = snapGridRef.current;
+                                            const snapVal = (val) => sg === 0 ? val : Math.round(val / sg) * sg;
+                                            const time = Math.max(0, snapVal(x / BEAT_WIDTH));
+                                            const minMax = getAutomationConstraints(t.activeAutomationParam);
+                                            const value = minMax.min + ((96 - y) / 96) * (minMax.max - minMax.min);
+                                            dispatchDawAction({ type: 'ADD_AUTOMATION_POINT', payload: { trackId: t.id, paramKey: t.activeAutomationParam, point: { id: `pt_${Date.now()}`, time, value } }});
+                                        }}>
+                                            <div className="absolute top-1 left-1 bg-blue-500/90 text-white text-[9px] font-bold px-1.5 py-0.5 rounded pointer-events-none shadow">
+                                                {t.activeAutomationParam.replace('fx_param_', '').replace('inst_param_', '').replace(/_/g, ' ').toUpperCase()}
+                                            </div>
+                                            <svg width="100%" height="100%" className="pointer-events-none absolute inset-0">
+                                               {(() => {
+                                                   const pts = [...(t.automation?.[t.activeAutomationParam] || [])].sort((a,b) => a.time - b.time);
+                                                   if (pts.length === 0) return null;
+                                                   let d = "";
+                                                   const minMax = getAutomationConstraints(t.activeAutomationParam);
+                                                   const getY = (val) => 96 - ((val - minMax.min) / (minMax.max - minMax.min)) * 96;
+                                                   pts.forEach((p, i) => {
+                                                       const x = p.time * BEAT_WIDTH;
+                                                       const y = getY(p.value);
+                                                       d += `${i === 0 ? 'M' : 'L'} ${x} ${y} `;
+                                                   });
+                                                   return <path d={d} stroke="#3b82f6" strokeWidth="2" fill="none" />
+                                               })()}
+                                            </svg>
+                                            {(t.automation?.[t.activeAutomationParam] || []).map(p => {
+                                                const minMax = getAutomationConstraints(t.activeAutomationParam);
+                                                const y = 96 - ((p.value - minMax.min) / (minMax.max - minMax.min)) * 96;
+                                                return (
+                                                    <div 
+                                                        key={p.id}
+                                                        className="absolute w-3 h-3 bg-white border-[2.5px] border-blue-500 rounded-full -ml-1.5 -mt-1.5 cursor-pointer pointer-events-auto shadow-md hover:scale-125 transition-transform"
+                                                        style={{ left: `${p.time * BEAT_WIDTH}px`, top: `${y}px` }}
+                                                        onMouseDown={(e) => {
+                                                            e.stopPropagation();
+                                                            if (e.button === 2) {
+                                                                dispatchDawAction({ type: 'DELETE_AUTOMATION_POINT', payload: { trackId: t.id, paramKey: t.activeAutomationParam, pointId: p.id } });
+                                                            } else {
+                                                                setDraggingAutoPoint({ trackId: t.id, paramKey: t.activeAutomationParam, pointId: p.id, startX: e.clientX, startY: e.clientY, initialTime: p.time, initialValue: p.value });
+                                                            }
+                                                        }}
+                                                        onContextMenu={e => { e.preventDefault(); e.stopPropagation(); }}
+                                                    />
+                                                );
+                                            })}
+                                        </div>
                                     )}
                                 </div>
                             ))}
@@ -4391,9 +4562,30 @@ function DAWStudio() {
                 )}
                 {contextMenu.type === 'midi-learn' && (
                   <>
-                    <div className="px-4 py-2 text-[10px] text-neutral-500 font-bold uppercase tracking-wider border-b border-neutral-800">MIDI Mapping</div>
+                    <div className="px-4 py-2 text-[10px] text-neutral-500 font-bold uppercase tracking-wider border-b border-neutral-800">Control & Automation</div>
+                    {(() => {
+                        const autoKey = 
+                          contextMenu.payload.type === 'mixer_vol' ? 'volume' :
+                          contextMenu.payload.type === 'mixer_pan' ? 'pan' :
+                          contextMenu.payload.type === 'fx_param' ? `fx_param_${contextMenu.payload.fxId}_${contextMenu.payload.param}` :
+                          contextMenu.payload.type === 'inst_param' ? `inst_param_${contextMenu.payload.param}` : null;
+                        
+                        if (autoKey) {
+                            return (
+                                <button onClick={() => { 
+                                    dispatchDawAction({ type: 'SET_AUTOMATION_PARAM', payload: { trackId: contextMenu.payload.trackId, paramKey: autoKey }});
+                                    setIsAutomationMode(true);
+                                    setContextMenu(null);
+                                    showToast(`Automation active for ${autoKey.replace(/_/g, ' ')}`, 'success');
+                                }} className="w-full text-left px-4 py-2 text-sm text-neutral-300 hover:bg-neutral-800 hover:text-blue-400 flex items-center gap-2">
+                                    <Activity size={14}/> Automate Parameter
+                                </button>
+                            );
+                        }
+                        return null;
+                    })()}
                     <button onClick={() => { setMidiLearnTarget(contextMenu.payload); setContextMenu(null); }} className="w-full text-left px-4 py-2 text-sm text-neutral-300 hover:bg-neutral-800 hover:text-blue-400 flex items-center gap-2">
-                        <Radio size={14}/> Assign to MIDI Controller
+                        <Radio size={14} /> Assign to MIDI Controller
                     </button>
                     {(() => {
                         const activeMappings = [];
