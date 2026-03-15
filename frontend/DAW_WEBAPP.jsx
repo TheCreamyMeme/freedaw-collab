@@ -760,8 +760,8 @@ const ParametricEqVisualizer = ({ trackId, fxId, params, onParamChange, synthsRe
 
     useEffect(() => {
         try {
-            // CRITICAL FIX: Reuse the global audio context to prevent OfflineAudioContext hardware exhaustion
-            const ctx = audioCtxRef.current || new (window.AudioContext || window.webkitAudioContext)();
+            // CRITICAL FIX: Use OfflineAudioContext for safe math operations if main context isn't started yet to prevent Hardware Exhaustion crashing
+            const ctx = audioCtxRef.current || new (window.OfflineAudioContext || window.webkitOfflineAudioContext)(1, 44100, 44100);
             const low = ctx.createBiquadFilter(); low.type = 'lowshelf'; low.frequency.value = params?.lowFreq || 100; low.gain.value = params?.lowGain || 0;
             const mid1 = ctx.createBiquadFilter(); mid1.type = 'peaking'; mid1.frequency.value = params?.mid1Freq || 500; mid1.Q.value = params?.mid1Q || 1.0; mid1.gain.value = params?.mid1Gain || 0;
             const mid2 = ctx.createBiquadFilter(); mid2.type = 'peaking'; mid2.frequency.value = params?.mid2Freq || 2000; mid2.Q.value = params?.mid2Q || 1.0; mid2.gain.value = params?.mid2Gain || 0;
@@ -1421,6 +1421,11 @@ function DAWStudio() {
   const lastEmitRef = useRef(0);
   const lastAutoUiUpdateRef = useRef(0);
   
+  // NEW REFS FOR PERFORMANCE FIX
+  const playheadRef = useRef(null);
+  const timeDisplayRef = useRef(null);
+  const posDisplayRef = useRef(null);
+
   // Missing Refs for Hotkeys, State, and Undo/Redo Engine
   const projectNameRef = useRef(projectName);
   const selectedTrackIdRef = useRef(selectedTrackId);
@@ -2235,8 +2240,12 @@ function DAWStudio() {
     };
     lastTimeRef.current = audioCtxRef.current?.currentTime || 0;
     reqId = requestAnimationFrame(update);
-    return () => cancelAnimationFrame(reqId);
-  }, [isPlaying, bpm]);
+    return () => {
+        cancelAnimationFrame(reqId);
+        // Sync React state seamlessly when playback stops so the UI doesn't snap back
+        setCurrentTime(stateRefs.current.currentTime);
+    };
+  }, [isPlaying, bpm, zoom, BEAT_WIDTH]);
 
   // --- AUDIO DISPATCH & AUDIO NODE UPDATER ---
   const applyAudioTrackVol = (trackId, vol) => {
@@ -3549,7 +3558,10 @@ function DAWStudio() {
       dragValuesRef.current = {};
       if (draggingAutoPoint) setDraggingAutoPoint(null);
       if (draggingLoop) setDraggingLoop(null);
-      if (draggingPlayhead) setDraggingPlayhead(false);
+      if (draggingPlayhead) {
+          setDraggingPlayhead(false);
+          setCurrentTime(stateRefs.current.currentTime); // Sync react UI state cleanly on release
+      }
       if (draggingDockHeight) setDraggingDockHeight(false);
   }, [draggingClip, draggingEdge, draggingNote, draggingNoteEdge, draggingLoop, draggingPlayhead, draggingDockHeight]);
 
@@ -4129,7 +4141,7 @@ function DAWStudio() {
                             {/* Grid Background */}
                             <div className="absolute inset-0 pointer-events-none" style={getGridStyle(snapGrid, BEAT_WIDTH, false)} />
                             {/* Playhead */}
-                            <div className="absolute top-0 bottom-0 w-px bg-blue-500 z-30 shadow-[0_0_10px_rgba(59,130,246,0.8)] pointer-events-none" style={{ left: `${currentTime * BEAT_WIDTH}px` }}><div className="w-3 h-3 bg-blue-500 rotate-45 absolute -top-1.5 -left-1.5"/></div>
+                            <div ref={playheadRef} className="absolute top-0 bottom-0 w-px bg-blue-500 z-30 shadow-[0_0_10px_rgba(59,130,246,0.8)] pointer-events-none" style={{ left: `${currentTime * BEAT_WIDTH}px` }}><div className="w-3 h-3 bg-blue-500 rotate-45 absolute -top-1.5 -left-1.5"/></div>
 
                             {/* Tracks Lanes */}
                             {tracks.map(t => {
