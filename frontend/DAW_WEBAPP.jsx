@@ -1,12 +1,12 @@
 import React, { useState, useEffect, useRef, useCallback, Component } from 'react';
 import { 
-  Play, Pause, Square, Circle, SkipBack, 
+  Play, Pause, Square, Circle, SkipBack, SkipForward,
   Volume2, Mic, Music, Radio, 
   Settings, Users, Plus, Maximize2, 
   Folder, Sliders, Piano,
   MousePointer2, Pencil, Eraser, X, Grid, Trash2, Activity,
   Settings2, Plug, Power, LogOut, FileAudio, FileCode, Cpu,
-  Repeat, Home, Save, Download, Upload, FileJson, Info, AlertTriangle, CheckCircle2, Network, Video, VideoOff, MicOff, Lock, Copy, MoreHorizontal, Scissors, Mail, Globe, Instagram, Twitter
+  Repeat, Home, Save, Download, Upload, FileJson, Info, AlertTriangle, CheckCircle2, Network, Video, VideoOff, MicOff, Lock, Copy, MoreHorizontal, Scissors, Mail, Globe, Instagram, Twitter, Bell
 } from 'lucide-react';
 import { io } from 'socket.io-client';
 
@@ -560,14 +560,19 @@ const EQNode = ({ id, freq = 1000, gain = 0, color, onParamChange }) => {
             const parent = nodeRef.current?.parentElement;
             if (!parent) return;
             const rect = parent.getBoundingClientRect();
-            const xPercent = Math.max(0, Math.min(100, ((e.clientX - rect.left) / rect.width) * 100));
-            const yPercent = Math.max(0, Math.min(100, ((e.clientY - rect.top) / rect.height) * 100));
+            
+            // CRITICAL FIX: Prevent Division by Zero if element is squished
+            const width = Math.max(1, rect.width);
+            const height = Math.max(1, rect.height);
+            
+            const xPercent = Math.max(0, Math.min(100, ((e.clientX - rect.left) / width) * 100));
+            const yPercent = Math.max(0, Math.min(100, ((e.clientY - rect.top) / height) * 100));
             
             const newFreq = xToFreq(xPercent);
             const newGain = Math.max(-24, Math.min(24, yToGain(yPercent)));
             
-            onChangeRef.current(`${id}Freq`, newFreq);
-            onChangeRef.current(`${id}Gain`, newGain);
+            if (!isNaN(newFreq)) onChangeRef.current(`${id}Freq`, newFreq);
+            if (!isNaN(newGain)) onChangeRef.current(`${id}Gain`, newGain);
         };
         const handlePointerUp = () => setIsDragging(false);
 
@@ -707,7 +712,8 @@ const ParametricEqVisualizer = ({ trackId, fxId, params, onParamChange, synthsRe
 
     useEffect(() => {
         try {
-            const ctx = new (window.OfflineAudioContext || window.webkitOfflineAudioContext)(1, 1, 44100);
+            // CRITICAL FIX: Reuse the global audio context to prevent OfflineAudioContext hardware exhaustion
+            const ctx = audioCtxRef.current || new (window.AudioContext || window.webkitAudioContext)();
             const low = ctx.createBiquadFilter(); low.type = 'lowshelf'; low.frequency.value = params?.lowFreq || 100; low.gain.value = params?.lowGain || 0;
             const mid1 = ctx.createBiquadFilter(); mid1.type = 'peaking'; mid1.frequency.value = params?.mid1Freq || 500; mid1.Q.value = params?.mid1Q || 1.0; mid1.gain.value = params?.mid1Gain || 0;
             const mid2 = ctx.createBiquadFilter(); mid2.type = 'peaking'; mid2.frequency.value = params?.mid2Freq || 2000; mid2.Q.value = params?.mid2Q || 1.0; mid2.gain.value = params?.mid2Gain || 0;
@@ -877,6 +883,21 @@ const triggerAcid = (ctx, bus, pitch, time, vol, dur, p={}, vel=100, pbNode) => 
   filter.frequency.setValueAtTime(baseCut + envMod, time); filter.frequency.setTargetAtTime(baseCut, time, (p.decay||0.3) / 3); 
   const amp = ctx.createGain(); amp.gain.setValueAtTime(realVol, time); amp.gain.setTargetAtTime(0, time + dur, 0.05);
   osc.connect(filter); filter.connect(amp); amp.connect(bus); osc.start(time); osc.stop(time + dur + 0.5);
+};
+
+const triggerMetronome = (ctx, bus, isDownbeat, time) => {
+  const osc = ctx.createOscillator();
+  const env = ctx.createGain();
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(isDownbeat ? 1500 : 1000, time);
+  osc.frequency.exponentialRampToValueAtTime(isDownbeat ? 800 : 500, time + 0.02);
+  env.gain.setValueAtTime(0, time);
+  env.gain.linearRampToValueAtTime(0.5, time + 0.001);
+  env.gain.exponentialRampToValueAtTime(0.001, time + 0.05);
+  osc.connect(env);
+  env.connect(bus);
+  osc.start(time);
+  osc.stop(time + 0.06);
 };
 
 const triggerOrgan = (ctx, bus, pitch, time, vol, dur, p={}, vel=100, pbNode) => {
@@ -1203,7 +1224,38 @@ const WaveformDisplay = ({ buffer, bpm, beatWidth, sampleOffset = 0 }) => {
 export default class App extends Component {
   constructor(props) { super(props); this.state = { hasError: false, error: null }; }
   static getDerivedStateFromError(error) { return { hasError: true, error }; }
-  componentDidCatch(error, errorInfo) { console.error("FreeDaw-Collab Crashed:", error, errorInfo); }
+  
+  componentDidCatch(error, errorInfo) { 
+      console.error("FreeDaw-Collab Crashed:", error, errorInfo); 
+      // Forward the crash to the Node API so it shows up in Docker logs
+      fetch(`${API_BASE_URL}/api/logs/frontend-error`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ 
+              type: 'React Crash', 
+              error: error.toString(), 
+              stack: errorInfo.componentStack,
+              url: window.location.href,
+              userAgent: navigator.userAgent
+          })
+      }).catch(e => console.warn("Could not send crash log to server", e));
+  }
+
+  componentDidMount() {
+      // Catch unhandled global JS errors outside of React
+      window.onerror = (message, source, lineno, colno, err) => {
+          fetch(`${API_BASE_URL}/api/logs/frontend-error`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ 
+                  type: 'Global Runtime Error', 
+                  message, source, lineno, colno, 
+                  error: err?.toString() 
+              })
+          }).catch(() => {});
+      };
+  }
+
   render() {
     if (this.state.hasError) return (
       <div className="flex flex-col h-screen bg-neutral-950 items-center justify-center text-white p-8">
@@ -1229,6 +1281,7 @@ function DAWStudio() {
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
+  const [isMetronomeEnabled, setIsMetronomeEnabled] = useState(false);
   const [bpm, setBpm] = useState(120);
   const [currentTime, setCurrentTime] = useState(0); 
   const [masterVolume, setMasterVolume] = useState(80);
@@ -1298,6 +1351,8 @@ function DAWStudio() {
   const currentProjectIdRef = useRef(projectId);
   const authTokenRef = useRef(authToken);
   const stateRefs = useRef({ currentTime: 0, isPlaying: false, isRecording: false, bpm: 120 });
+  const isMetronomeEnabledRef = useRef(isMetronomeEnabled);
+  const lastMetronomeBeatRef = useRef(-1);
   const tracksRef = useRef(tracks);
   const timelineRef = useRef(null);
   const loopRegionRef = useRef(loopRegion);
@@ -1386,6 +1441,7 @@ function DAWStudio() {
   useEffect(() => { midiMappingsRef.current = midiMappings; }, [midiMappings]);
   useEffect(() => { midiLearnTargetRef.current = midiLearnTarget; }, [midiLearnTarget]);
   useEffect(() => { snapGridRef.current = snapGrid; }, [snapGrid]);
+  useEffect(() => { isMetronomeEnabledRef.current = isMetronomeEnabled; }, [isMetronomeEnabled]);
   useEffect(() => { 
     stateRefs.current.isPlaying = isPlaying; 
     stateRefs.current.isRecording = isRecording;
@@ -1967,6 +2023,7 @@ function DAWStudio() {
     if (!isPlaying) { 
         await initAudioEngine(); 
         setIsPlaying(true); 
+        lastMetronomeBeatRef.current = Math.floor(stateRefs.current.currentTime) - 1;
         if (isRecording) {
             recordingStartTimeRef.current = stateRefs.current.currentTime;
             activeLiveMidiNotesRef.current = {};
@@ -2034,6 +2091,13 @@ function DAWStudio() {
 
       if (wrapped) {
           Object.values(synthsRef.current).forEach(synth => { if (synth.activeNoteIds) synth.activeNoteIds.clear(); });
+          lastMetronomeBeatRef.current = Math.floor(newTime) - 1;
+      }
+
+      if (isMetronomeEnabledRef.current && Math.floor(newTime) > lastMetronomeBeatRef.current) {
+          const beatToPlay = Math.floor(newTime);
+          lastMetronomeBeatRef.current = beatToPlay;
+          triggerMetronome(audioCtxRef.current, masterGainRef.current, beatToPlay % 4 === 0, now);
       }
 
       setCurrentTime(newTime);
@@ -2128,12 +2192,14 @@ function DAWStudio() {
   };
 
   const handleInstrumentParamChange = (trackId, param, val) => {
+      if (param !== 'oscType' && isNaN(Number(val))) return; // Protect against NaN crashes
       const finalVal = param === 'oscType' ? String(val) : Number(val);
       dispatchDawAction({ type: 'UPDATE_INSTRUMENT_PARAM', payload: { trackId, param, value: finalVal } });
   };
 
   const applyAudioEffectParam = (trackId, fxId, param, val) => {
       const numVal = Number(val);
+      if (isNaN(numVal)) return; // Protect against NaN crashes mapping to Web Audio
       const synth = synthsRef.current[trackId];
       if (!synth || !synth.fxNodes[fxId]) return;
       const nodeObj = synth.fxNodes[fxId];
@@ -2363,6 +2429,16 @@ function DAWStudio() {
                           dispatchDawAction({ type: 'UPDATE_TRACK_PAN', payload: { id: mapping.trackId, pan: Math.round(normalizedVal * 100 - 50) } });
                       } else if (mapping.type === 'master_vol') {
                           handleMasterVolumeChange(Math.round(normalizedVal * 100));
+                      } else if (mapping.type.startsWith('transport_')) {
+                          if (velocityOrVal > 0) { // Only trigger on button press
+                              const actions = transportActionsRef.current;
+                              if (mapping.type === 'transport_play') actions.togglePlay?.();
+                              if (mapping.type === 'transport_stop') actions.stopPlayback?.();
+                              if (mapping.type === 'transport_record') actions.toggleRecord?.();
+                              if (mapping.type === 'transport_rewind') actions.rewind?.();
+                              if (mapping.type === 'transport_forward') actions.forward?.();
+                              if (mapping.type === 'transport_loop') actions.loop?.();
+                          }
                       } else if (mapping.type === 'fx_param' || mapping.type === 'inst_param') {
                           const constraints = getParamConstraints(mapping.param);
                           let mappedVal;
@@ -2674,6 +2750,7 @@ function DAWStudio() {
           newTime = Math.max(0, Math.round(newTime / sg) * sg);
           setCurrentTime(newTime);
           stateRefs.current.currentTime = newTime;
+          lastMetronomeBeatRef.current = Math.floor(newTime);
           broadcastLivePreview({ type: 'UPDATE_TIME', payload: { currentTime: newTime } });
           return;
       }
@@ -2958,15 +3035,18 @@ function DAWStudio() {
           case 'UPDATE_TIME': 
               setCurrentTime(action.payload.currentTime); 
               stateRefs.current.currentTime = action.payload.currentTime; 
+              lastMetronomeBeatRef.current = Math.floor(action.payload.currentTime);
               break;
           case 'SET_PLAYBACK':
               if (action.payload.isPlaying && !stateRefs.current.isPlaying) {
                   initAudioEngine().then(() => setIsPlaying(true));
+                  lastMetronomeBeatRef.current = Math.floor(action.payload.currentTime) - 1;
               } else if (!action.payload.isPlaying && stateRefs.current.isPlaying) {
                   setIsPlaying(false); stopAudio();
               }
               setCurrentTime(action.payload.currentTime);
               stateRefs.current.currentTime = action.payload.currentTime;
+              lastMetronomeBeatRef.current = Math.floor(action.payload.currentTime);
               break;
           case 'ADD_CLIP': {
               const clipToAdd = action.payload.clip;
@@ -3121,6 +3201,7 @@ function DAWStudio() {
               newTime = Math.max(0, Math.round(newTime / sg) * sg);
               setCurrentTime(newTime);
               stateRefs.current.currentTime = newTime;
+              lastMetronomeBeatRef.current = Math.floor(newTime);
               broadcastLivePreview({ type: 'UPDATE_TIME', payload: { currentTime: newTime } });
           },
           rewind: () => {
@@ -3129,6 +3210,7 @@ function DAWStudio() {
               newTime = Math.max(0, Math.round(newTime / sg) * sg);
               setCurrentTime(newTime);
               stateRefs.current.currentTime = newTime;
+              lastMetronomeBeatRef.current = Math.floor(newTime);
               broadcastLivePreview({ type: 'UPDATE_TIME', payload: { currentTime: newTime } });
           },
           loop: () => {
@@ -3317,17 +3399,19 @@ function DAWStudio() {
               broadcastLivePreview({ type: 'UPDATE_LOOP_REGION', payload: newLoop });
               return newLoop;
           });
-      } else if (draggingPlayhead) {
-          if (timelineRef.current) {
-              const rect = timelineRef.current.getBoundingClientRect();
-              const x = e.clientX - rect.left + timelineRef.current.scrollLeft;
-              const newTime = Math.max(0, snap(x / BEAT_WIDTH));
-              setCurrentTime(newTime);
-              stateRefs.current.currentTime = newTime;
-              broadcastLivePreview({ type: 'UPDATE_TIME', payload: { currentTime: newTime } });
-          }
-      } else if (draggingDockHeight) {
-          setDockHeight(Math.max(150, Math.min(800, window.innerHeight - e.clientY)));
+        } else if (draggingPlayhead) {
+            if (timelineRef.current) {
+                const rect = timelineRef.current.getBoundingClientRect();
+                const x = e.clientX - rect.left + timelineRef.current.scrollLeft;
+                const newTime = Math.max(0, snap(x / BEAT_WIDTH));
+                setCurrentTime(newTime);
+                stateRefs.current.currentTime = newTime;
+                lastMetronomeBeatRef.current = Math.floor(newTime);
+                broadcastLivePreview({ type: 'UPDATE_TIME', payload: { currentTime: newTime } });
+            }
+        } else if (draggingDockHeight) {
+          // Keep a minimum readable bound on the bottom rack (260px) to prevent squished crash behaviors
+          setDockHeight(Math.max(260, Math.min(800, window.innerHeight - e.clientY)));
       }
   }, [draggingClip, draggingEdge, draggingNote, draggingNoteEdge, draggingLoop, draggingPlayhead, draggingDockHeight, BEAT_WIDTH]);
   
@@ -3384,6 +3468,7 @@ function DAWStudio() {
       const newTime = Math.max(0, snap(x / BEAT_WIDTH));
       setCurrentTime(newTime);
       stateRefs.current.currentTime = newTime;
+      lastMetronomeBeatRef.current = Math.floor(newTime);
       stopAudio();
   };
 
@@ -3629,17 +3714,20 @@ function DAWStudio() {
 
         
         <div className="flex items-center justify-center gap-1.5 bg-neutral-900 px-3 py-1.5 rounded-xl border border-neutral-800 shrink-0 shadow-inner">
-            <button onClick={stopPlayback} className="p-1.5 text-neutral-400 hover:text-white transition-colors"><SkipBack size={16} /></button>
-            <button onClick={togglePlay} className={`p-2 rounded-full transition-all ${isPlaying ? 'bg-blue-600 text-white shadow-[0_0_12px_rgba(37,99,235,0.5)]' : 'bg-neutral-800 text-white hover:bg-neutral-700'}`}>{isPlaying ? <Pause size={16}/> : <Play size={16}/>}</button>
-            <button onClick={stopPlayback} className="p-1.5 text-neutral-400 hover:text-white transition-colors"><Square size={16}/></button>
-            <button onClick={toggleRecord} className={`p-1.5 rounded-lg transition-colors ml-1 ${isRecording ? 'text-red-500 bg-red-500/20 shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'text-neutral-400 hover:text-red-400 hover:bg-neutral-800'}`} title="Record (Keyboard/Mic)"><Circle size={16} fill="currentColor"/></button>
+            <button onClick={() => transportActionsRef.current.rewind?.()} onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'transport_rewind' })} className="p-1.5 text-neutral-400 hover:text-white transition-colors" title="Rewind"><SkipBack size={16} /></button>
+            <button onClick={togglePlay} onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'transport_play' })} className={`p-2 rounded-full transition-all ${isPlaying ? 'bg-blue-600 text-white shadow-[0_0_12px_rgba(37,99,235,0.5)]' : 'bg-neutral-800 text-white hover:bg-neutral-700'}`} title="Play/Pause">{isPlaying ? <Pause size={16}/> : <Play size={16}/>}</button>
+            <button onClick={stopPlayback} onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'transport_stop' })} className="p-1.5 text-neutral-400 hover:text-white transition-colors" title="Stop"><Square size={16}/></button>
+            <button onClick={() => transportActionsRef.current.forward?.()} onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'transport_forward' })} className="p-1.5 text-neutral-400 hover:text-white transition-colors" title="Forward"><SkipForward size={16} /></button>
+            <button onClick={toggleRecord} onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'transport_record' })} className={`p-1.5 rounded-lg transition-colors ml-1 ${isRecording ? 'text-red-500 bg-red-500/20 shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'text-neutral-400 hover:text-red-400 hover:bg-neutral-800'}`} title="Record (Keyboard/Mic)"><Circle size={16} fill="currentColor"/></button>
             <div className="w-px h-5 bg-neutral-800 mx-2" />
             <button onClick={() => {
                 const nextEnabled = !loopRegion.enabled;
                 setLoopRegion(prev => ({...prev, enabled: nextEnabled}));
-                dispatchDawAction({ type: 'UPDATE_LOOP_REGION', payload: { ...loopRegion, enabled: nextEnabled } });
-            }} className={`p-1.5 rounded-lg transition-colors ${loopRegion.enabled ? 'text-blue-400 bg-blue-500/20' : 'text-neutral-400 hover:text-white hover:bg-neutral-800'}`} title="Toggle Loop"><Repeat size={16}/></button>
-        </div>
+            dispatchDawAction({ type: 'UPDATE_LOOP_REGION', payload: { ...loopRegion, enabled: nextEnabled } });
+        }} onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'transport_loop' })} className={`p-1.5 rounded-lg transition-colors ${loopRegion.enabled ? 'text-blue-400 bg-blue-500/20' : 'text-neutral-400 hover:text-white hover:bg-neutral-800'}`} title="Toggle Loop"><Repeat size={16}/></button>
+        <button onClick={() => setIsMetronomeEnabled(!isMetronomeEnabled)} className={`p-1.5 rounded-lg transition-colors ml-1 ${isMetronomeEnabled ? 'text-blue-400 bg-blue-500/20' : 'text-neutral-400 hover:text-white hover:bg-neutral-800'}`} title="Toggle Metronome"><Bell size={16}/></button>
+    </div>
+
 
         <div className="flex items-center justify-end gap-3 w-1/3">
             <div className="hidden lg:flex items-center gap-4 bg-neutral-900/80 px-4 py-1.5 rounded-xl border border-neutral-800 font-mono text-[11px] shadow-inner mr-2">

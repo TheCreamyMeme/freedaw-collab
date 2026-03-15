@@ -206,3 +206,11 @@ io.on('connection', (socket) => {
 server.listen(PORT, () => {
     console.log(`Secured WebDAW Server running on port ${PORT}`);
 });
+
+app.post('/api/logs/frontend-error', (req, res) => {
+    console.error('\n🚨 [FRONTEND ERROR REPORT] 🚨');
+    console.error('Timestamp:', new Date().toISOString());
+    console.error('Details:', JSON.stringify(req.body, null, 2));
+    console.error('---------------------------\n');
+    res.status(200).send({ status: 'logged' });
+});
