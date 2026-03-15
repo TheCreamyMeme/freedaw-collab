@@ -3714,7 +3714,7 @@ function DAWStudio() {
 
         
         <div className="flex items-center justify-center gap-1.5 bg-neutral-900 px-3 py-1.5 rounded-xl border border-neutral-800 shrink-0 shadow-inner">
-            <button onClick={() => transportActionsRef.current.rewind?.()} onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'transport_rewind' })} className="p-1.5 text-neutral-400 hover:text-white transition-colors" title="Rewind"><SkipBack size={16} /></button>
+            <button onClick={() => transportActionsRef.current.rewind?.()} onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'transport_rewind' })} className="p-1.5 text-neutral-400 hover:text-white transition-colors" title="Return to Start"><SkipBack size={16} /></button>
             <button onClick={togglePlay} onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'transport_play' })} className={`p-2 rounded-full transition-all ${isPlaying ? 'bg-blue-600 text-white shadow-[0_0_12px_rgba(37,99,235,0.5)]' : 'bg-neutral-800 text-white hover:bg-neutral-700'}`} title="Play/Pause">{isPlaying ? <Pause size={16}/> : <Play size={16}/>}</button>
             <button onClick={stopPlayback} onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'transport_stop' })} className="p-1.5 text-neutral-400 hover:text-white transition-colors" title="Stop"><Square size={16}/></button>
             <button onClick={() => transportActionsRef.current.forward?.()} onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'transport_forward' })} className="p-1.5 text-neutral-400 hover:text-white transition-colors" title="Forward"><SkipForward size={16} /></button>
