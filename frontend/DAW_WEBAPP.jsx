@@ -398,6 +398,18 @@ const getAutomationConstraints = (paramKey) => {
 };
 
 // --- Full Internal Engine Definitions ---
+// Pre-define gradient literal strings so the Tailwind production purger knows NOT to delete them
+const TRACK_COLOR_GRADIENTS = {
+  'bg-emerald-500': 'from-emerald-500/80 to-emerald-500/40',
+  'bg-blue-500': 'from-blue-500/80 to-blue-500/40',
+  'bg-purple-500': 'from-purple-500/80 to-purple-500/40',
+  'bg-pink-500': 'from-pink-500/80 to-pink-500/40',
+  'bg-red-500': 'from-red-500/80 to-red-500/40',
+  'bg-orange-500': 'from-orange-500/80 to-orange-500/40',
+  'bg-yellow-500': 'from-yellow-500/80 to-yellow-500/40',
+  'bg-cyan-500': 'from-cyan-500/80 to-cyan-500/40',
+};
+
 const INTERNAL_PLUGINS = [
   { id: 'fx-delay', name: 'Digital Delay', category: 'effect', type: 'delay', vendor: 'FreeDaw-Collab', params: { time: 0.3, feedback: 0.4, mix: 0.5 } },
   { id: 'fx-pareq', name: 'Parametric EQ', category: 'effect', type: 'parametric-eq', vendor: 'FreeDaw-Collab', params: { lowFreq: 100, lowGain: 0, mid1Freq: 500, mid1Q: 1.0, mid1Gain: 0, mid2Freq: 2000, mid2Q: 1.0, mid2Gain: 0, highFreq: 5000, highGain: 0 } },
@@ -1386,7 +1398,7 @@ export default class App extends Component {
 
   render() {
     if (this.state.hasError) return (
-      <div className="flex flex-col h-screen bg-neutral-950 items-center justify-center text-white p-8">
+      <div className="flex flex-col w-screen h-screen overflow-hidden bg-neutral-950 items-center justify-center text-white p-8">
         <AlertTriangle size={64} className="text-red-500 mb-6" />
         <h1 className="text-3xl font-bold mb-2">Workspace Crashed</h1>
         <p className="text-sm text-neutral-400 font-mono text-center max-w-md mb-6">{this.state.error?.toString()}</p>
@@ -3959,7 +3971,7 @@ function DAWStudio() {
       );
 
       return (
-        <div className="flex flex-col h-screen bg-neutral-950 text-neutral-300 p-8 overflow-y-auto custom-scrollbar select-none">
+        <div className="flex flex-col w-screen h-screen overflow-y-auto overflow-x-hidden bg-neutral-950 text-neutral-300 p-8 custom-scrollbar select-none">
             <header className="flex justify-between items-center mb-12 border-b border-neutral-800 pb-6">
                 <h1 className="text-3xl font-bold text-white">Project Library</h1>
                 <div className="flex items-center gap-4">
@@ -4404,7 +4416,7 @@ function DAWStudio() {
                                               const sliceBeat = snap(x / BEAT_WIDTH);
                                               handleContextMenu(e, 'clip', { trackId: t.id, clipId: c.id, sliceBeat });
                                           }}
-                                          className={`clip-element absolute top-2 bottom-2 rounded border overflow-hidden cursor-grab active:cursor-grabbing bg-gradient-to-br ${t.color.replace('bg-','from-')}/80 ${t.color.replace('bg-','to-')}/40 shadow-lg transition-all ${selectedClipIds.includes(c.id) ? 'border-white ring-2 ring-white/60 brightness-125 z-40' : 'border-white/20 hover:brightness-110 z-10'}`} 
+                                          className={`clip-element absolute top-2 bottom-2 rounded border overflow-hidden cursor-grab active:cursor-grabbing bg-gradient-to-br ${TRACK_COLOR_GRADIENTS[t.color] || 'from-blue-500/80 to-blue-500/40'} shadow-lg transition-all ${selectedClipIds.includes(c.id) ? 'border-white ring-2 ring-white/60 brightness-125 z-40' : 'border-white/20 hover:brightness-110 z-10'}`} 
                                           style={{ left: `${c.start * BEAT_WIDTH}px`, width: `${c.duration * BEAT_WIDTH}px`, zIndex: draggingClip?.clipId === c.id || selectedClipIds.includes(c.id) ? 50 : 10 }}
                                         >
                                             {/* Resize Handles */}
