@@ -464,6 +464,24 @@ const formatAutoName = (track, paramKey) => {
 // FULL DSP & WEB AUDIO ENGINE
 // ==========================================
 
+const reverbIRCache = {};
+const getReverbIR = (ctx, type) => {
+    if (reverbIRCache[type]) return reverbIRCache[type];
+    const sampleRate = ctx.sampleRate || 44100;
+    const duration = type === 'reverb-hall' ? 2.5 : type === 'reverb-plate' ? 1.5 : 0.8;
+    const length = Math.floor(sampleRate * duration);
+    const buffer = ctx.createBuffer(2, length, sampleRate);
+    const left = buffer.getChannelData(0);
+    const right = buffer.getChannelData(1);
+    for (let i = 0; i < length; i++) {
+        const decay = Math.pow(1 - (i / length), 3);
+        left[i] = (Math.random() * 2 - 1) * decay;
+        right[i] = (Math.random() * 2 - 1) * decay;
+    }
+    reverbIRCache[type] = buffer;
+    return buffer;
+};
+
 const bitcrusherCurveCache = {};
 const getBitcrusherCurve = (bitDepth) => {
   if (bitcrusherCurveCache[bitDepth]) return bitcrusherCurveCache[bitDepth];
@@ -2258,10 +2276,22 @@ function DAWStudio() {
           triggerMetronome(audioCtxRef.current, masterGainRef.current, beatToPlay % 4 === 0, now);
       }
 
-      setCurrentTime(newTime);
+      // CRITICAL PERFORMANCE FIX: Prevent massive React re-renders by mutating DOM directly at 60fps
       stateRefs.current.currentTime = newTime;
+      if (playheadRef.current) playheadRef.current.style.left = `${newTime * BEAT_WIDTH}px`;
+      if (timeDisplayRef.current) timeDisplayRef.current.innerText = formatTime(newTime, stateRefs.current.bpm);
+      if (posDisplayRef.current) posDisplayRef.current.innerText = `${Math.floor(newTime / 4) + 1}.${Math.floor(newTime % 4) + 1}.1`;
+      
+      if (stateRefs.current.isRecording) {
+          tracksRef.current.forEach(t => {
+              if (t.armed) {
+                  const previewEl = document.getElementById(`record-preview-${t.id}`);
+                  if (previewEl) previewEl.style.width = `${Math.max(1, (newTime - recordingStartTimeRef.current) * BEAT_WIDTH)}px`;
+              }
+          });
+      }
 
-          const currentTracks = tracksRef.current;
+      const currentTracks = tracksRef.current;
           const anySolo = currentTracks.some(t => t.solo);
 
           currentTracks.forEach(track => {
@@ -3984,8 +4014,8 @@ function DAWStudio() {
                         <option value={0} className="bg-neutral-900 text-neutral-300">Off</option>
                     </select>
                </div>
-               <div className="flex items-center gap-1.5 text-neutral-400 border-l border-neutral-700 pl-4"><span className="uppercase text-[9px] font-bold text-neutral-600">Time</span> <span className="text-white w-14">{formatTime(currentTime, bpm)}</span></div>
-               <div className="flex items-center gap-1.5 text-neutral-400"><span className="uppercase text-[9px] font-bold text-neutral-600">Pos</span> <span className="text-white">{Math.floor(currentTime / 4) + 1}.{Math.floor(currentTime % 4) + 1}.1</span></div>
+               <div className="flex items-center gap-1.5 text-neutral-400 border-l border-neutral-700 pl-4"><span className="uppercase text-[9px] font-bold text-neutral-600">Time</span> <span ref={timeDisplayRef} className="text-white w-14">{formatTime(currentTime, bpm)}</span></div>
+               <div className="flex items-center gap-1.5 text-neutral-400"><span className="uppercase text-[9px] font-bold text-neutral-600">Pos</span> <span ref={posDisplayRef} className="text-white">{Math.floor(currentTime / 4) + 1}.{Math.floor(currentTime % 4) + 1}.1</span></div>
                <div className="flex items-center gap-1 text-neutral-400"><span className="uppercase text-[9px] font-bold text-neutral-600">BPM</span> <input type="number" value={bpm} onChange={(e) => dispatchDawAction({ type: 'SYNC_STATE', payload: { tracks, bpm: Number(e.target.value) } })} className="bg-transparent w-8 text-white focus:outline-none" min="40" max="300" /></div>
                
                {/* Global Master Volume & VU Meter in the Header */}
