@@ -464,25 +464,6 @@ const formatAutoName = (track, paramKey) => {
 // FULL DSP & WEB AUDIO ENGINE
 // ==========================================
 
-const reverbIRCache = {};
-const getReverbIR = (ctx, type) => {
-    if (reverbIRCache[type]) return reverbIRCache[type];
-    const sampleRate = ctx.sampleRate || 44100;
-    const duration = type === 'hall' ? 3.0 : type === 'room' ? 0.6 : 1.5;
-    const length = Math.floor(sampleRate * duration);
-    const buffer = ctx.createBuffer(2, length, sampleRate);
-    const left = buffer.getChannelData(0);
-    const right = buffer.getChannelData(1);
-    for (let i = 0; i < length; i++) {
-        const decay = 1 - (i / length);
-        const curve = decay * decay * decay; // Fast exponential-like curve without blocking the main thread math
-        left[i] = (Math.random() * 2 - 1) * curve;
-        right[i] = (Math.random() * 2 - 1) * curve;
-    }
-    reverbIRCache[type] = buffer;
-    return buffer;
-};
-
 const getBitcrusherCurve = (bitDepth) => {
   const steps = Math.pow(2, bitDepth); const curve = new Float32Array(44100);
   for (let i = 0; i < 44100; i++) { const x = (i * 2) / 44100 - 1; curve[i] = Math.round(x * steps) / steps; }
@@ -2333,7 +2314,6 @@ function DAWStudio() {
       if (param === 'feedback') nodeObj.feedback.gain.setTargetAtTime(numVal, now, 0.05);
       if (param === 'mix') { nodeObj.wet.gain.setTargetAtTime(numVal, now, 0.05); nodeObj.dry.gain.setTargetAtTime(1-numVal, now, 0.05); }
   } else if (nodeObj.fxType === 'reverb') {
-      // Simplified reverb now only manages the Wet/Dry mix. Internal room attributes are baked into the IR buffers.
       if (param === 'mix') { nodeObj.wet.gain.setTargetAtTime(numVal, now, 0.05); nodeObj.dry.gain.setTargetAtTime(1-numVal, now, 0.05); }
   } else if (nodeObj.fxType === 'distortion' || nodeObj.fxType === 'bitcrusher') {
       if (param === 'mix') { nodeObj.wet.gain.setTargetAtTime(numVal, now, 0.05); nodeObj.dry.gain.setTargetAtTime(1-numVal, now, 0.05); }
