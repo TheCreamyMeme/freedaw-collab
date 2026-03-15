@@ -465,21 +465,42 @@ const formatAutoName = (track, paramKey) => {
 // ==========================================
 
 const reverbIRCache = {};
-const getReverbIR = (ctx, type) => {
+const getReverbIR = async (ctx, type) => {
     if (reverbIRCache[type]) return reverbIRCache[type];
     const sampleRate = ctx.sampleRate || 44100;
     const duration = type === 'reverb-hall' ? 2.5 : type === 'reverb-plate' ? 1.5 : 0.8;
-    const length = Math.floor(sampleRate * duration);
-    const buffer = ctx.createBuffer(2, length, sampleRate);
-    const left = buffer.getChannelData(0);
-    const right = buffer.getChannelData(1);
-    for (let i = 0; i < length; i++) {
-        const decay = Math.pow(1 - (i / length), 3);
-        left[i] = (Math.random() * 2 - 1) * decay;
-        right[i] = (Math.random() * 2 - 1) * decay;
+    
+    // ASYNC OFF-THREAD OPTIMIZATION: Generate Impulse Response natively in C++ via OfflineAudioContext
+    // This completely prevents the massive UI freezes caused by main-thread Math loops and FFT processing.
+    const offlineCtx = new (window.OfflineAudioContext || window.webkitOfflineAudioContext)(2, sampleRate * duration, sampleRate);
+    
+    const noiseBuffer = offlineCtx.createBuffer(2, sampleRate * duration, sampleRate);
+    const left = noiseBuffer.getChannelData(0);
+    const right = noiseBuffer.getChannelData(1);
+    for (let i = 0; i < left.length; i++) {
+        left[i] = Math.random() * 2 - 1;
+        right[i] = Math.random() * 2 - 1;
     }
-    reverbIRCache[type] = buffer;
-    return buffer;
+    
+    const noiseSource = offlineCtx.createBufferSource();
+    noiseSource.buffer = noiseBuffer;
+    
+    const filter = offlineCtx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = type === 'reverb-hall' ? 4000 : 6000;
+
+    const envelope = offlineCtx.createGain();
+    envelope.gain.setValueAtTime(1, 0);
+    envelope.gain.exponentialRampToValueAtTime(0.001, duration);
+
+    noiseSource.connect(filter);
+    filter.connect(envelope);
+    envelope.connect(offlineCtx.destination);
+    noiseSource.start();
+
+    const renderedBuffer = await offlineCtx.startRendering();
+    reverbIRCache[type] = renderedBuffer;
+    return renderedBuffer;
 };
 
 const bitcrusherCurveCache = {};
@@ -1113,19 +1134,20 @@ const initTrackRouting = async (track, ctx, masterGain) => {
   let currentOutput = inputBus;
   const fxNodes = {};
   if (track.effects) {
-    track.effects.forEach(fx => {
-      const nodeObj = createFXNode(ctx, fx);
+  for (const fx of track.effects) {
+      const nodeObj = await createFXNode(ctx, fx);
       if (nodeObj) { currentOutput.connect(nodeObj.input); currentOutput = nodeObj.output; fxNodes[fx.id] = nodeObj; }
-    });
+  }
   }
   currentOutput.connect(panner); panner.connect(faderGain); faderGain.connect(masterGain);
-  
+
   const analyser = ctx.createAnalyser();
   analyser.fftSize = 256;
   faderGain.connect(analyser);
 
-  return { inputBus, faderGain, panner, fxNodes, activeNoteIds: new Set(), activeSource: null, analyser, pitchBendNode };
+  return { inputBus, faderGain, panner, fxNodes, activeNoteIds: new Set(), activeSource: null, analyser, pitchBendNode, lastTargetVolume: -1 };
 };
+
 
 // --- VU Meter Component ---
 const VuMeter = ({ trackId, synthsRef, isMaster, masterAnalyserRef, isVertical = true }) => {
@@ -2295,38 +2317,51 @@ function DAWStudio() {
           const anySolo = currentTracks.some(t => t.solo);
 
           currentTracks.forEach(track => {
+            const synth = synthsRef.current[track.id];
+            if (!synth) return;
+
             if (track.automation) {
                 Object.entries(track.automation).forEach(([paramKey, points]) => {
                     if (points.length > 0) {
                         const val = getInterpolatedValue(points, newTime);
                         if (val !== null) {
-                            const synth = synthsRef.current[track.id];
-                            // Apply parameters smoothly to Web Audio engine without choking React with setStates
-                            if (paramKey === 'volume' && synth) {
-                                if (Math.abs(synth.faderGain.gain.value - val/100) > 0.01) synth.faderGain.gain.setTargetAtTime(val/100, now, 0.05);
-                            } else if (paramKey === 'pan' && synth?.panner?.pan) {
-                                synth.panner.pan.setTargetAtTime(val/50, now, 0.05);
+                            // PERFORMANCE FIX: Cache automation targets to absolutely prevent 60fps event spam
+                            // which chokes the Web Audio API event queue and freezes the browser!
+                            if (paramKey === 'volume') {
+                                const targetVol = val / 100;
+                                if (synth.lastAutoVol !== targetVol) {
+                                    synth.faderGain.gain.setTargetAtTime(targetVol, now, 0.05);
+                                    synth.lastAutoVol = targetVol;
+                                }
+                            } else if (paramKey === 'pan' && synth.panner?.pan) {
+                                const targetPan = val / 50;
+                                if (synth.lastAutoPan !== targetPan) {
+                                    synth.panner.pan.setTargetAtTime(targetPan, now, 0.05);
+                                    synth.lastAutoPan = targetPan;
+                                }
                             } else if (paramKey.startsWith('fx_param_')) {
                                 const parts = paramKey.split('_');
                                 const fxId = parts[2];
                                 const pName = parts.slice(3).join('_');
-                                applyAudioEffectParam(track.id, fxId, pName, val, now);
+                                
+                                const cacheKey = `lastAuto_${fxId}_${pName}`;
+                                if (synth[cacheKey] !== val) {
+                                    applyAudioEffectParam(track.id, fxId, pName, val, now);
+                                    synth[cacheKey] = val;
+                                }
                             }
                         }
                     }
                 });
             }
 
-            const synth = synthsRef.current[track.id];
-
-        if (!synth) return;
-
         const activeClip = track.clips.find(c => newTime >= c.start && newTime < c.start + c.duration);
         const shouldPlayTrack = activeClip && !track.muted && (!anySolo || track.solo);
 
         const targetVolume = (!track.muted && (!anySolo || track.solo)) ? track.volume / 100 : 0;
-        if (Math.abs(synth.faderGain.gain.value - targetVolume) > 0.01) {
+        if (synth.lastTargetVolume !== targetVolume) {
           synth.faderGain.gain.setTargetAtTime(targetVolume, now, 0.05);
+          synth.lastTargetVolume = targetVolume;
         }
 
         if (track.type === 'midi' && shouldPlayTrack) {
