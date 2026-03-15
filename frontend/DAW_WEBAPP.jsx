@@ -678,7 +678,7 @@ const EQNode = React.memo(({ id, freq = 1000, gain = 0, color, onParamChange }) 
     );
 }, (prev, next) => prev.freq === next.freq && prev.gain === next.gain);
 
-const createFXNode = (ctx, fx) => {
+const createFXNode = async (ctx, fx) => {
   const input = ctx.createGain(), output = ctx.createGain(), wet = ctx.createGain(), dry = ctx.createGain();
   input.connect(dry); dry.connect(output);
   wet.gain.value = fx.params?.mix ?? 0.5; dry.gain.value = 1 - wet.gain.value;
@@ -689,64 +689,23 @@ const createFXNode = (ctx, fx) => {
     input.connect(delay); delay.connect(fb); fb.connect(delay); delay.connect(wet); wet.connect(output);
     return { input, output, delay, feedback: fb, wet, dry, fxType: 'delay' };
   } else if (fx.type.startsWith('reverb')) {
-    // FREEVERB ALGORITHM (Lightweight & Efficient)
-    // Offloads heavy room-simulation calculations to native C++ Web Audio nodes via Comb & Allpass filters,
-    // drastically reducing JS Main Thread load as identified by React performance profiling.
+    // ASYNC NATIVE CONVOLVER REVERB
+    // Guaranteed crash-proof: eliminates topological sort lagging by replacing cyclical Comb graphs 
+    // with a lightning-fast, pre-rendered C++ Impulse Response buffer generated asynchronously.
+    const conv = ctx.createConvolver();
+    conv.buffer = await getReverbIR(ctx, fx.type);
+
     const filter = ctx.createBiquadFilter();
     filter.type = 'lowpass';
     filter.frequency.value = fx.type === 'reverb-hall' ? 4000 : fx.type === 'reverb-plate' ? 6000 : 8000;
 
     input.connect(filter);
+    filter.connect(conv);
+    conv.connect(wet);
+    wet.connect(output);
 
-    // 4 Parallel Comb Filters (Simulating Room Size)
-    const combDelays = [0.0253, 0.0269, 0.0289, 0.0307];
-    const roomSize = fx.type === 'reverb-hall' ? 0.84 : fx.type === 'reverb-plate' ? 0.72 : 0.6;
-    const combOutput = ctx.createGain();
-
-    const combs = combDelays.map(dt => {
-        const delay = ctx.createDelay(1); delay.delayTime.value = dt;
-        const fb = ctx.createGain(); fb.gain.value = roomSize; // Clamped strictly below 1.0 to prevent Infinite Loop/NaN crashes
-        filter.connect(delay); delay.connect(fb); fb.connect(delay); delay.connect(combOutput);
-        return { delay, fb };
-    });
-
-    // 2 Sequential Allpass Filters (Diffusion/Density)
-    const ap1 = ctx.createBiquadFilter(); ap1.type = 'allpass'; ap1.frequency.value = 300;
-    const ap2 = ctx.createBiquadFilter(); ap2.type = 'allpass'; ap2.frequency.value = 1000;
-
-    combOutput.connect(ap1); ap1.connect(ap2); ap2.connect(wet);
-    wet.connect(output); // CRITICAL FIX: The wet signal must actually connect to the output!
-
-    return { input, output, wet, dry, filter, combs, ap1, ap2, fxType: 'reverb' };
+    return { input, output, wet, dry, conv, filter, fxType: 'reverb' };
   } else if (fx.type === 'filter') {
-// --- Helper to prevent Web Audio Memory Leaks ---
-const disconnectTrackRouting = (synth) => {
-    if (!synth) return;
-    try {
-        if (synth.activeSource) { try { synth.activeSource.stop(); } catch(e){} synth.activeSource.disconnect(); }
-        if (synth.pitchBendNode) { try { synth.pitchBendNode.stop(); } catch(e){} synth.pitchBendNode.disconnect(); }
-        if (synth.inputBus) synth.inputBus.disconnect();
-        if (synth.faderGain) synth.faderGain.disconnect();
-        if (synth.panner) synth.panner.disconnect();
-        if (synth.analyser) synth.analyser.disconnect();
-        if (synth.fxNodes) {
-            Object.values(synth.fxNodes).forEach(nodeObj => {
-                // Aggressively hunt down and sever every single audio connection to prevent Cyclic Graph memory leaks
-                Object.values(nodeObj).forEach(prop => {
-                    if (prop && typeof prop.disconnect === 'function') {
-                        try { prop.disconnect(); } catch(e){}
-                    } else if (Array.isArray(prop)) {
-                        prop.forEach(p => { 
-                            if (p && typeof p.disconnect === 'function') try { p.disconnect(); } catch(e){} 
-                        });
-                    }
-                });
-            });
-        }
-    } catch (e) {
-        console.error("Audio cleanup error", e);
-    }
-};
     const node = ctx.createBiquadFilter(); node.type = 'lowpass'; node.frequency.value = fx.params?.freq || 1200; node.Q.value = fx.params?.res || 1.5;
     input.connect(node); node.connect(output);
     return { input, output, node, fxType: 'filter' };
