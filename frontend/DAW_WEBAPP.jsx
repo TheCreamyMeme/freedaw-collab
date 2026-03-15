@@ -474,7 +474,7 @@ const getBitcrusherCurve = (bitDepth) => {
 };
 
 // --- Reusable DAW Radial Knob Component ---
-const Knob = ({ param, value, min, max, step, isLog, onChange, onContextMenu }) => {
+const Knob = React.memo(({ param, value, min, max, step, isLog, onChange, onContextMenu }) => {
     const [isDragging, setIsDragging] = useState(false);
     const dragStartY = useRef(0);
     const startValue = useRef(0);
@@ -576,10 +576,10 @@ const Knob = ({ param, value, min, max, step, isLog, onChange, onContextMenu }) 
             </div>
         </div>
     );
-};
+}, (prev, next) => prev.value === next.value && prev.param === next.param);
 
 // --- Dedicated EQ Node Component for Bulletproof Dragging ---
-const EQNode = ({ id, freq = 1000, gain = 0, color, onParamChange }) => {
+const EQNode = React.memo(({ id, freq = 1000, gain = 0, color, onParamChange }) => {
     const [isDragging, setIsDragging] = useState(false);
     const onChangeRef = useRef(onParamChange);
     const nodeRef = useRef(null);
@@ -637,7 +637,7 @@ const EQNode = ({ id, freq = 1000, gain = 0, color, onParamChange }) => {
             title={`${id.toUpperCase()} Band`}
         />
     );
-};
+}, (prev, next) => prev.freq === next.freq && prev.gain === next.gain);
 
 const createFXNode = (ctx, fx) => {
   const input = ctx.createGain(), output = ctx.createGain(), wet = ctx.createGain(), dry = ctx.createGain();
@@ -783,15 +783,16 @@ const createFXNode = (ctx, fx) => {
 };
 
 // --- Custom Canvas EQ Node Visualizer ---
-const ParametricEqVisualizer = ({ trackId, fxId, params, onParamChange, synthsRef, audioCtxRef }) => {
+const ParametricEqVisualizer = React.memo(({ trackId, fxId, params, onParamChange, synthsRef, audioCtxRef }) => {
     const canvasRef = useRef(null);
     const eqCurveRef = useRef(new Float32Array(300)); 
 
     useEffect(() => {
         try {
-            // CRITICAL FIX: ALWAYS use a disposable OfflineAudioContext for visualizer math.
-            // Using the main audioCtxRef here causes a massive memory leak of BiquadFilters every time the component re-renders!
-            const ctx = new (window.OfflineAudioContext || window.webkitOfflineAudioContext)(1, 44100, 44100);
+            // OFF-THREAD OPTIMIZATION: Use the existing audio context and safely create isolated nodes.
+            // This completely prevents the Main Thread freezing caused by spinning up new OfflineAudioContexts!
+            const ctx = audioCtxRef.current;
+            if (!ctx) return;
             const low = ctx.createBiquadFilter(); low.type = 'lowshelf'; low.frequency.value = params?.lowFreq || 100; low.gain.value = params?.lowGain || 0;
             const mid1 = ctx.createBiquadFilter(); mid1.type = 'peaking'; mid1.frequency.value = params?.mid1Freq || 500; mid1.Q.value = params?.mid1Q || 1.0; mid1.gain.value = params?.mid1Gain || 0;
             const mid2 = ctx.createBiquadFilter(); mid2.type = 'peaking'; mid2.frequency.value = params?.mid2Freq || 2000; mid2.Q.value = params?.mid2Q || 1.0; mid2.gain.value = params?.mid2Gain || 0;
@@ -896,7 +897,7 @@ const ParametricEqVisualizer = ({ trackId, fxId, params, onParamChange, synthsRe
             <EQNode id="high" freq={params?.highFreq} gain={params?.highGain} color="#a855f7" onParamChange={onParamChange} />
         </div>
     );
-};
+}, (prev, next) => JSON.stringify(prev.params) === JSON.stringify(next.params));
 
 // --- Synth Triggers ---
 const triggerSubtractive = (ctx, bus, pitch, time, vol, dur, p={}, vel=100, pbNode) => {
@@ -1288,7 +1289,7 @@ const ImageCropper = ({ src, onComplete, onCancel }) => {
 };
 
 // --- Custom Audio Waveform Preview Component ---
-const WaveformDisplay = ({ buffer, bpm, beatWidth, sampleOffset = 0 }) => {
+const WaveformDisplay = React.memo(({ buffer, bpm, beatWidth, sampleOffset = 0 }) => {
     const canvasRef = useRef(null);
     const widthPx = buffer.duration * (bpm / 60) * beatWidth;
 
@@ -1341,7 +1342,7 @@ const WaveformDisplay = ({ buffer, bpm, beatWidth, sampleOffset = 0 }) => {
             <canvas ref={canvasRef} className="w-full h-full object-fill" />
         </div>
     );
-};
+}, (prev, next) => prev.buffer === next.buffer && prev.bpm === next.bpm && prev.beatWidth === next.beatWidth && prev.sampleOffset === next.sampleOffset);
 export default class App extends Component {
   constructor(props) { super(props); this.state = { hasError: false, error: null }; }
   static getDerivedStateFromError(error) { return { hasError: true, error }; }
