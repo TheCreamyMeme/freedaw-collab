@@ -17,8 +17,8 @@ WORKDIR /app/webdaw
 RUN npm install
 
 # 3. Install specific libraries
-# (Pinning Tailwind to v3 to guarantee config compatibility and avoid npx crashes)
-RUN npm install lucide-react tailwindcss@3 postcss autoprefixer tailwindcss-animate socket.io-client
+# (Removed tailwindcss-animate to prevent silent ESM import failures during build)
+RUN npm install lucide-react tailwindcss@3 postcss autoprefixer socket.io-client
 
 # 4. Inject PostCSS Configuration dynamically
 RUN cat <<EOF > postcss.config.js
@@ -32,8 +32,6 @@ EOF
 
 # 5. Inject the Tailwind Configuration dynamically with explicit SAFELIST
 RUN cat <<EOF > tailwind.config.js
-import tailwindcssAnimate from "tailwindcss-animate";
-
 /** @type {import("tailwindcss").Config} */
 export default {
   content: [
@@ -41,17 +39,17 @@ export default {
     "./src/**/*.{js,ts,jsx,tsx}",
   ],
   safelist: [
-    { pattern: /bg-(emerald|blue|purple|pink|red|orange|yellow|cyan)-500/ },
-    { pattern: /from-(emerald|blue|purple|pink|red|orange|yellow|cyan)-500\/80/ },
-    { pattern: /to-(emerald|blue|purple|pink|red|orange|yellow|cyan)-500\/40/ },
+    { pattern: /bg-(emerald|blue|purple|pink|red|orange|yellow|cyan)-(400|500|600)/ },
+    { pattern: /from-(emerald|blue|purple|pink|red|orange|yellow|cyan)-(400|500|600)/ },
+    { pattern: /to-(emerald|blue|purple|pink|red|orange|yellow|cyan)-(400|500|600)/ },
+    { pattern: /text-(emerald|blue|purple|pink|red|orange|yellow|cyan)-(400|500|600)/ },
+    { pattern: /border-(emerald|blue|purple|pink|red|orange|yellow|cyan)-(400|500|600)/ },
     'animate-spin', 'animate-pulse'
   ],
   theme: {
     extend: {},
   },
-  plugins: [
-    tailwindcssAnimate
-  ],
+  plugins: [],
 }
 EOF
 
@@ -75,10 +73,27 @@ body {
 }
 EOF
 
-# 7. Copy your local React file into the container
+# 7. Create a serve.json to defeat aggressive browser caching for the SPA
+RUN cat <<EOF > serve.json
+{
+  "headers": [
+    {
+      "source": "**/*.@(html|htm|css|js)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-cache, no-store, must-revalidate"
+        }
+      ]
+    }
+  ]
+}
+EOF
+
+# 8. Copy your local React file into the container
 COPY DAW_WEBAPP.jsx src/App.jsx
 
-# 8. Build the Production App
+# 9. Build the Production App
 RUN npm run build
 
 
@@ -93,11 +108,12 @@ WORKDIR /app
 # Install 'serve', a lightweight static web server perfect for SPAs
 RUN npm install -g serve
 
-# Copy ONLY the compiled static files from Stage 1 into this clean container
+# Copy ONLY the compiled static files and server config from Stage 1
 COPY --from=builder /app/webdaw/dist ./dist
+COPY --from=builder /app/webdaw/serve.json ./serve.json
 
 # Expose port 3000
 EXPOSE 3000
 
-# Start the server (-s redirects all routing back to index.html)
-CMD ["serve", "-s", "dist", "-l", "3000"]
+# Start the server with the cache-busting configuration
+CMD ["serve", "-s", "dist", "-l", "3000", "-c", "serve.json"]
