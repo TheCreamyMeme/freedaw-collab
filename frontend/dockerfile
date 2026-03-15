@@ -16,7 +16,7 @@ WORKDIR /app/webdaw
 # 2. Install base React dependencies
 RUN npm install
 
-# 3. Install specific libraries (ADDED socket.io-client here)
+# 3. Install specific libraries
 # (Pinning Tailwind to v3 to guarantee config compatibility and avoid npx crashes)
 RUN npm install lucide-react tailwindcss@3 postcss autoprefixer tailwindcss-animate socket.io-client
 
@@ -29,7 +29,10 @@ RUN printf 'export default {\n\
 }\n' > postcss.config.js
 
 # 5. Inject the Tailwind Configuration dynamically
-RUN printf '/** @type {import("tailwindcss").Config} */\n\
+# CRITICAL FIX: Changed from 'require' to 'import' to prevent ES Module compilation crashes in Vite
+RUN printf 'import tailwindcssAnimate from "tailwindcss-animate";\n\
+\n\
+/** @type {import("tailwindcss").Config} */\n\
 export default {\n\
   content: [\n\
     "./index.html",\n\
@@ -39,19 +42,27 @@ export default {\n\
     extend: {},\n\
   },\n\
   plugins: [\n\
-    require("tailwindcss-animate")\n\
+    tailwindcssAnimate\n\
   ],\n\
 }\n' > tailwind.config.js
 
 # 6. Inject the Base CSS
+# CRITICAL FIX: Added strict root bounds and overflow constraints so the DAW fills the screen and doesn't scroll
 RUN printf '@tailwind base;\n\
 @tailwind components;\n\
 @tailwind utilities;\n\
 \n\
 body {\n\
   margin: 0;\n\
+  overflow: hidden;\n\
+  touch-action: none;\n\
   background-color: #0a0a0a;\n\
   color: #d4d4d4;\n\
+}\n\
+\n\
+#root {\n\
+  width: 100vw;\n\
+  height: 100vh;\n\
 }\n' > src/index.css
 
 # 7. Copy your local React file into the container
