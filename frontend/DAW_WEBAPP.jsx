@@ -1537,20 +1537,6 @@ function DAWStudio() {
           const script = document.createElement('script');
           script.id = 'tailwind-cdn';
           script.src = 'https://cdn.tailwindcss.com';
-          script.onload = () => {
-              // Polyfill the 'tailwindcss-animate' plugin so Context Menus/Modals animate in the Canvas just like in deployment
-              const style = document.createElement('style');
-              style.innerHTML = `
-                  .animate-in { animation: animate-in 200ms ease-out forwards; }
-                  @keyframes animate-in {
-                      0% { opacity: 0; transform: scale(0.95); }
-                      100% { opacity: 1; transform: scale(1); }
-                  }
-                  .fade-in { opacity: 0; }
-                  .zoom-in, .zoom-in-95 { transform: scale(0.95); }
-              `;
-              document.head.appendChild(style);
-          };
           document.head.appendChild(script);
       }
   }, []);
@@ -4837,7 +4823,7 @@ function DAWStudio() {
             
             {/* Global Context Menus */}
             {contextMenu && (
-              <div className="fixed z-[100] bg-neutral-900 border border-neutral-700 rounded-lg shadow-xl py-1 min-w-[160px] animate-in fade-in zoom-in duration-100" style={{ left: contextMenu.x, top: contextMenu.y }}>
+              <div className="fixed z-[100] bg-neutral-900 border border-neutral-700 rounded-lg shadow-xl py-1 min-w-[160px]" style={{ left: contextMenu.x, top: contextMenu.y }}>
                 {contextMenu.type === 'track' && (
                   <>
                     <button onClick={() => { setEditingTrackId(contextMenu.payload.trackId); setContextMenu(null); }} className="w-full text-left px-4 py-2 text-sm text-neutral-300 hover:bg-neutral-800 hover:text-white flex items-center gap-2"><Pencil size={14}/> Rename Track</button>
@@ -4959,7 +4945,7 @@ function DAWStudio() {
             {/* Cropper Modal */}
             {cropImageSrc && (
                 <div className="fixed inset-0 z-[300] bg-black/80 backdrop-blur-sm flex items-center justify-center">
-                    <div className="bg-neutral-900 border border-neutral-700 rounded-2xl w-full max-w-md p-6 shadow-2xl animate-in zoom-in-95 duration-200">
+                    <div className="bg-neutral-900 border border-neutral-700 rounded-2xl w-full max-w-md p-6 shadow-2xl">
                         <div className="flex justify-between items-center mb-6">
                             <h2 className="text-lg font-bold text-white flex items-center gap-2">
                                 <Users size={18}/> Adjust Profile Picture
@@ -4978,7 +4964,7 @@ function DAWStudio() {
             {/* Settings Modal */}
             {showSettings && (
                 <div className="fixed inset-0 z-[200] bg-black/80 backdrop-blur-sm flex items-center justify-center">
-                    <div className="bg-neutral-900 border border-neutral-700 rounded-2xl w-full max-w-md p-6 shadow-2xl animate-in zoom-in-95 duration-200">
+                    <div className="bg-neutral-900 border border-neutral-700 rounded-2xl w-full max-w-md p-6 shadow-2xl">
                         <div className="flex justify-between items-center mb-6">
                             <h2 className="text-lg font-bold text-white flex items-center gap-2">
                                 <Settings size={18}/> Studio Settings
@@ -5084,7 +5070,7 @@ function DAWStudio() {
             {/* User Profile Modal */}
             {viewProfileUser && (
                 <div className="fixed inset-0 z-[200] bg-black/80 backdrop-blur-sm flex items-center justify-center">
-                    <div className="bg-neutral-900 border border-neutral-700 rounded-2xl w-full max-w-sm p-6 shadow-2xl animate-in zoom-in-95 duration-200">
+                    <div className="bg-neutral-900 border border-neutral-700 rounded-2xl w-full max-w-sm p-6 shadow-2xl">
                         <div className="flex justify-between items-start mb-4">
                             <div className="flex items-center gap-4">
                                 <div className={`w-16 h-16 rounded-full border-4 border-neutral-800 overflow-hidden flex items-center justify-center text-2xl font-bold text-white shadow-lg shrink-0 ${viewProfileUser.color || 'bg-blue-600'}`}>
@@ -5146,7 +5132,7 @@ function DAWStudio() {
             {/* Share Project Modal */}
             {showShareModal && (
                 <div className="fixed inset-0 z-[200] bg-black/80 backdrop-blur-sm flex items-center justify-center">
-                    <div className="bg-neutral-900 border border-neutral-700 rounded-2xl w-full max-w-md p-6 shadow-2xl animate-in zoom-in-95 duration-200">
+                    <div className="bg-neutral-900 border border-neutral-700 rounded-2xl w-full max-w-md p-6 shadow-2xl">
                         <div className="flex justify-between items-center mb-6">
                             <h2 className="text-lg font-bold text-white flex items-center gap-2">
                                 <Users size={18}/> Share Project
