@@ -2817,8 +2817,8 @@ function DAWStudio() {
           return;
       }
 
-      // Select All
-      if (cmd && key === 'a') {
+      // Select All (Ctrl/Cmd + A)
+      if (cmd && key === 'a' && !shift) {
           const allIds = [];
           tracksRef.current.forEach(t => {
               if (!selectedTrackIdRef.current || t.id === selectedTrackIdRef.current) {
@@ -2826,6 +2826,16 @@ function DAWStudio() {
               }
           });
           setSelectedClipIds(allIds);
+          return;
+      }
+
+      // Toggle Automation View (Ctrl/Cmd + Shift + A)
+      if (cmd && shift && key === 'a') {
+          setIsAutomationMode(prev => {
+              const next = !prev;
+              showToast(next ? "Automation Mode ON" : "Automation Mode OFF", "info");
+              return next;
+          });
           return;
       }
 
@@ -2859,16 +2869,6 @@ function DAWStudio() {
           if (selectedTrackIdRef.current) {
               dispatchDawAction({ type: 'TOGGLE_SOLO', payload: { trackId: selectedTrackIdRef.current } });
           }
-          return;
-      }
-
-          // Toggle Automation View
-      if (!cmd && !shift && key === 'a') {
-          setIsAutomationMode(prev => {
-              const next = !prev;
-              showToast(next ? "Automation Mode ON" : "Automation Mode OFF", "info");
-              return next;
-          });
           return;
       }
 
@@ -4055,7 +4055,7 @@ function DAWStudio() {
                     <div className="h-8 bg-neutral-950 border-b border-neutral-800 flex items-center justify-between px-2 shrink-0">
                         <span className="text-[10px] font-bold text-neutral-500">TRACKS</span>
                         <div className="flex gap-1">
-                            <button onClick={() => setIsAutomationMode(!isAutomationMode)} className={`text-[9px] uppercase font-bold flex items-center gap-1 px-1.5 py-0.5 rounded transition-colors ${isAutomationMode ? 'bg-blue-500 text-white' : 'bg-neutral-800 text-neutral-400 hover:text-white'}`} title="Toggle Automation Lanes (A)"><Activity size={10}/> Auto</button>
+                            <button onClick={() => setIsAutomationMode(!isAutomationMode)} className={`text-[9px] uppercase font-bold flex items-center gap-1 px-1.5 py-0.5 rounded transition-colors ${isAutomationMode ? 'bg-blue-500 text-white shadow-[0_0_8px_rgba(59,130,246,0.5)]' : 'bg-neutral-800 text-neutral-400 hover:text-white hover:bg-neutral-700'}`} title="Toggle Automation Lanes (Ctrl+Shift+A)"><Activity size={10}/> Auto Tracks</button>
                             <button onClick={() => dispatchDawAction({ type: 'ADD_TRACK', payload: { id: Date.now(), name: 'New MIDI', type: 'midi', instrument: 'inst-subtractive', instrumentParams: {cutoff:2000, res:1}, color: 'bg-pink-500', volume: 80, pan: 0, automation: {}, activeAutomationParam: 'volume', clips: [], effects: [] }})} className="text-[9px] uppercase text-neutral-400 hover:text-white font-bold flex items-center gap-1 bg-neutral-800 hover:bg-neutral-700 px-1.5 py-0.5 rounded transition-colors"><Plus size={10}/> MIDI</button>
                             <button onClick={() => dispatchDawAction({ type: 'ADD_TRACK', payload: { id: Date.now(), name: 'New Audio', type: 'audio', color: 'bg-emerald-500', volume: 80, pan: 0, automation: {}, activeAutomationParam: 'volume', clips: [], effects: [] }})} className="text-[9px] uppercase text-neutral-400 hover:text-white font-bold flex items-center gap-1 bg-neutral-800 hover:bg-neutral-700 px-1.5 py-0.5 rounded transition-colors"><Plus size={10}/> Audio</button>
                         </div>
