@@ -439,6 +439,24 @@ const INITIAL_TRACKS = [
   { id: 3, name: 'Vocals', type: 'audio', audioInputId: '', color: 'bg-emerald-500', volume: 80, pan: 0, muted: false, solo: false, armed: false, automation: {}, activeAutomationParam: 'volume', effects: [], clips: [] }
 ];
 
+const formatAutoName = (track, paramKey) => {
+    if (paramKey === 'volume') return 'Volume';
+    if (paramKey === 'pan') return 'Pan';
+    if (paramKey.startsWith('fx_param_')) {
+        const parts = paramKey.split('_');
+        const fxId = parts[2];
+        const pName = parts.slice(3).join('_');
+        const fx = track.effects?.find(f => f.id === fxId);
+        return `${fx ? fx.name : 'FX'} - ${pName.replace(/([A-Z])/g, ' $1').trim()}`;
+    }
+    if (paramKey.startsWith('inst_param_')) {
+        const pName = paramKey.split('_').slice(2).join('_');
+        const inst = INTERNAL_PLUGINS.find(p => p.id === track.instrument);
+        return `${inst ? inst.name : 'Inst'} - ${pName.replace(/([A-Z])/g, ' $1').trim()}`;
+    }
+    return paramKey;
+};
+
 // ==========================================
 // FULL DSP & WEB AUDIO ENGINE
 // ==========================================
@@ -3512,7 +3530,8 @@ function DAWStudio() {
             
             const minMax = getAutomationConstraints(paramKey);
             const valueRange = minMax.max - minMax.min;
-            const deltaValue = -(deltaY / 96) * valueRange;
+            const laneHeight = draggingAutoPoint.laneHeight || 96;
+            const deltaValue = -(deltaY / laneHeight) * valueRange;
             
             const newTime = Math.max(0, initialTime + deltaBeats);
             const newValue = Math.max(minMax.min, Math.min(minMax.max, initialValue + deltaValue));
@@ -4044,8 +4063,10 @@ function DAWStudio() {
                     <div className="flex-1 overflow-y-auto overflow-x-hidden custom-scrollbar pr-1">
                         {tracks.map(t => {
                             const isPeered = Object.values(peers).find(p => p.activeTrack === t.id);
+                            const autoKeys = isAutomationMode ? Array.from(new Set([...Object.keys(t.automation || {}).filter(k => t.automation[k]?.length > 0), t.activeAutomationParam].filter(Boolean))) : [];
                             return (
-                            <div key={t.id} onClick={() => dispatchPresence(t.id)} onContextMenu={(e) => handleContextMenu(e, 'track', { trackId: t.id })} className={`h-24 border-b border-neutral-800 p-2 flex flex-col justify-between hover:bg-neutral-800/50 relative transition-colors ${bottomDock?.trackId === t.id && bottomDock?.type === 'devices' ? 'bg-neutral-800/40 border-l-2 border-l-blue-500' : ''}`}>
+                            <div key={t.id} className="flex flex-col w-full">
+                            <div onClick={() => dispatchPresence(t.id)} onContextMenu={(e) => handleContextMenu(e, 'track', { trackId: t.id })} className={`h-24 border-b border-neutral-800 p-2 flex flex-col justify-between hover:bg-neutral-800/50 relative transition-colors ${bottomDock?.trackId === t.id && bottomDock?.type === 'devices' ? 'bg-neutral-800/40 border-l-2 border-l-blue-500' : ''}`}>
                                 {isPeered && <div className={`absolute left-0 top-0 bottom-0 w-1 shadow-[0_0_8px_rgba(255,255,255,0.3)] ${isPeered.color || 'bg-blue-500'}`} title={`${isPeered.username} is active`} />}
                                 <div className="flex justify-between items-center">
                                     <div className="flex items-center gap-2 pl-1">
@@ -4077,6 +4098,15 @@ function DAWStudio() {
                                         <VuMeter trackId={t.id} synthsRef={synthsRef} isVertical={false} />
                                     </div>
                                 </div>
+                            </div>
+                            {autoKeys.map(paramKey => (
+                                <div key={paramKey} className="h-16 border-b border-neutral-800/50 bg-neutral-900/60 pl-6 pr-2 py-2 flex items-center shadow-inner relative border-l-2 border-l-blue-500/50">
+                                     <span className="text-[10px] text-neutral-400 font-bold uppercase tracking-wider truncate w-full" title={formatAutoName(t, paramKey)}>
+                                          <Activity size={10} className="inline mr-1.5 mb-0.5 text-blue-400" />
+                                          {formatAutoName(t, paramKey)}
+                                     </span>
+                                </div>
+                            ))}
                             </div>
                         )})}
                     </div>
@@ -4133,8 +4163,11 @@ function DAWStudio() {
                             <div className="absolute top-0 bottom-0 w-px bg-blue-500 z-30 shadow-[0_0_10px_rgba(59,130,246,0.8)] pointer-events-none" style={{ left: `${currentTime * BEAT_WIDTH}px` }}><div className="w-3 h-3 bg-blue-500 rotate-45 absolute -top-1.5 -left-1.5"/></div>
 
                             {/* Tracks Lanes */}
-                            {tracks.map(t => (
-                                <div key={t.id} className={`h-24 border-b border-neutral-800/50 w-full relative transition-all ${t.muted ? 'opacity-40 grayscale' : ''} ${t.armed && isRecording ? 'bg-red-500/5' : ''}`} onDoubleClick={(e) => handleTrackDoubleClick(e, t.id)}>
+                            {tracks.map(t => {
+                                const autoKeys = isAutomationMode ? Array.from(new Set([...Object.keys(t.automation || {}).filter(k => t.automation[k]?.length > 0), t.activeAutomationParam].filter(Boolean))) : [];
+                                return (
+                                <div key={t.id} className="flex flex-col w-full">
+                                <div className={`h-24 border-b border-neutral-800/50 w-full relative transition-all ${t.muted ? 'opacity-40 grayscale' : ''} ${t.armed && isRecording ? 'bg-red-500/5' : ''}`} onDoubleClick={(e) => handleTrackDoubleClick(e, t.id)}>
                                     {t.clips.map(c => (
                                         <div 
                                           key={c.id} 
@@ -4189,64 +4222,60 @@ function DAWStudio() {
                                            <div className="px-2 pt-1 text-[9px] font-bold text-white">RECORDING...</div>
                                        </div>
                                     )}
-
-                                    {/* Automation Overlay */}
-                                    {isAutomationMode && t.activeAutomationParam && (
-                                        <div className="absolute inset-0 z-50 pointer-events-auto" onMouseDown={(e) => {
-                                            e.stopPropagation();
-                                            if (e.button === 2) return;
-                                            const rect = e.currentTarget.getBoundingClientRect();
-                                            const x = e.clientX - rect.left + timelineRef.current.scrollLeft;
-                                            const y = e.clientY - rect.top;
-                                            const sg = snapGridRef.current;
-                                            const snapVal = (val) => sg === 0 ? val : Math.round(val / sg) * sg;
-                                            const time = Math.max(0, snapVal(x / BEAT_WIDTH));
-                                            const minMax = getAutomationConstraints(t.activeAutomationParam);
-                                            const value = minMax.min + ((96 - y) / 96) * (minMax.max - minMax.min);
-                                            dispatchDawAction({ type: 'ADD_AUTOMATION_POINT', payload: { trackId: t.id, paramKey: t.activeAutomationParam, point: { id: `pt_${Date.now()}`, time, value } }});
-                                        }}>
-                                            <div className="absolute top-1 left-1 bg-blue-500/90 text-white text-[9px] font-bold px-1.5 py-0.5 rounded pointer-events-none shadow">
-                                                {t.activeAutomationParam.replace('fx_param_', '').replace('inst_param_', '').replace(/_/g, ' ').toUpperCase()}
-                                            </div>
-                                            <svg width="100%" height="100%" className="pointer-events-none absolute inset-0">
-                                               {(() => {
-                                                   const pts = [...(t.automation?.[t.activeAutomationParam] || [])].sort((a,b) => a.time - b.time);
-                                                   if (pts.length === 0) return null;
-                                                   let d = "";
-                                                   const minMax = getAutomationConstraints(t.activeAutomationParam);
-                                                   const getY = (val) => 96 - ((val - minMax.min) / (minMax.max - minMax.min)) * 96;
-                                                   pts.forEach((p, i) => {
-                                                       const x = p.time * BEAT_WIDTH;
-                                                       const y = getY(p.value);
-                                                       d += `${i === 0 ? 'M' : 'L'} ${x} ${y} `;
-                                                   });
-                                                   return <path d={d} stroke="#3b82f6" strokeWidth="2" fill="none" />
-                                               })()}
-                                            </svg>
-                                            {(t.automation?.[t.activeAutomationParam] || []).map(p => {
-                                                const minMax = getAutomationConstraints(t.activeAutomationParam);
-                                                const y = 96 - ((p.value - minMax.min) / (minMax.max - minMax.min)) * 96;
-                                                return (
-                                                    <div 
-                                                        key={p.id}
-                                                        className="absolute w-3 h-3 bg-white border-[2.5px] border-blue-500 rounded-full -ml-1.5 -mt-1.5 cursor-pointer pointer-events-auto shadow-md hover:scale-125 transition-transform"
-                                                        style={{ left: `${p.time * BEAT_WIDTH}px`, top: `${y}px` }}
-                                                        onMouseDown={(e) => {
-                                                            e.stopPropagation();
-                                                            if (e.button === 2) {
-                                                                dispatchDawAction({ type: 'DELETE_AUTOMATION_POINT', payload: { trackId: t.id, paramKey: t.activeAutomationParam, pointId: p.id } });
-                                                            } else {
-                                                                setDraggingAutoPoint({ trackId: t.id, paramKey: t.activeAutomationParam, pointId: p.id, startX: e.clientX, startY: e.clientY, initialTime: p.time, initialValue: p.value });
-                                                            }
-                                                        }}
-                                                        onContextMenu={e => { e.preventDefault(); e.stopPropagation(); }}
-                                                    />
-                                                );
-                                            })}
-                                        </div>
-                                    )}
                                 </div>
-                            ))}
+                                {autoKeys.map(paramKey => (
+                                    <div key={paramKey} className="h-16 border-b border-neutral-800/50 bg-neutral-900/30 relative pointer-events-auto cursor-crosshair overflow-hidden" onMouseDown={(e) => {
+                                        e.stopPropagation();
+                                        if (e.button === 2) return;
+                                        const rect = e.currentTarget.getBoundingClientRect();
+                                        const x = e.clientX - rect.left + timelineRef.current.scrollLeft;
+                                        const y = e.clientY - rect.top;
+                                        const sg = snapGridRef.current;
+                                        const snapVal = (val) => sg === 0 ? val : Math.round(val / sg) * sg;
+                                        const time = Math.max(0, snapVal(x / BEAT_WIDTH));
+                                        const minMax = getAutomationConstraints(paramKey);
+                                        const value = minMax.min + ((64 - y) / 64) * (minMax.max - minMax.min);
+                                        dispatchDawAction({ type: 'ADD_AUTOMATION_POINT', payload: { trackId: t.id, paramKey, point: { id: `pt_${Date.now()}`, time, value } }});
+                                    }}>
+                                        <svg width="100%" height="100%" className="pointer-events-none absolute inset-0">
+                                            {(() => {
+                                                const pts = [...(t.automation?.[paramKey] || [])].sort((a,b) => a.time - b.time);
+                                                if (pts.length === 0) return null;
+                                                let d = "";
+                                                const minMax = getAutomationConstraints(paramKey);
+                                                const getY = (val) => 64 - ((val - minMax.min) / (minMax.max - minMax.min)) * 64;
+                                                pts.forEach((p, i) => {
+                                                    const x = p.time * BEAT_WIDTH;
+                                                    const y = getY(p.value);
+                                                    d += `${i === 0 ? 'M' : 'L'} ${x} ${y} `;
+                                                });
+                                                return <path d={d} stroke="#3b82f6" strokeWidth="2" fill="none" opacity="0.8" />
+                                            })()}
+                                        </svg>
+                                        {(t.automation?.[paramKey] || []).map(p => {
+                                            const minMax = getAutomationConstraints(paramKey);
+                                            const y = 64 - ((p.value - minMax.min) / (minMax.max - minMax.min)) * 64;
+                                            return (
+                                                <div 
+                                                    key={p.id}
+                                                    className="absolute w-2.5 h-2.5 bg-white border-2 border-blue-500 rounded-full -ml-[5px] -mt-[5px] cursor-pointer pointer-events-auto shadow-md hover:scale-150 transition-transform"
+                                                    style={{ left: `${p.time * BEAT_WIDTH}px`, top: `${y}px` }}
+                                                    onMouseDown={(e) => {
+                                                        e.stopPropagation();
+                                                        if (e.button === 2) {
+                                                            dispatchDawAction({ type: 'DELETE_AUTOMATION_POINT', payload: { trackId: t.id, paramKey, pointId: p.id } });
+                                                        } else {
+                                                            setDraggingAutoPoint({ trackId: t.id, paramKey, pointId: p.id, startX: e.clientX, startY: e.clientY, initialTime: p.time, initialValue: p.value, laneHeight: 64 });
+                                                        }
+                                                    }}
+                                                    onContextMenu={e => { e.preventDefault(); e.stopPropagation(); }}
+                                                />
+                                            );
+                                        })}
+                                    </div>
+                                ))}
+                                </div>
+                            )})}
                         </div>
                     </div>
                 </div>
