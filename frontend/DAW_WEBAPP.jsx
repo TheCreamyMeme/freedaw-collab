@@ -646,37 +646,43 @@ const createFXNode = (ctx, fx) => {
     const fb = ctx.createGain(); fb.gain.value = fx.params?.feedback || 0.3;
     input.connect(delay); delay.connect(fb); fb.connect(delay); delay.connect(wet); wet.connect(output);
     return { input, output, delay, feedback: fb, wet, dry, fxType: 'delay' };
-  } else if (fx.type === 'reverb') {
-    // PERFORMANCE FIX: Replaced heavy convolution engine with a lightweight algorithmic 4-tap Schroeder comb network
-    const size = fx.params?.size || 1.0;
-    const decay = fx.params?.decay || 2.0;
-    const damping = fx.params?.damping || 5000;
-    
-    const baseDelays = [0.0297, 0.0371, 0.0411, 0.0437];
-    const delays = [], fbs = [], dampingFilters = [];
+  } else if (fx.type.startsWith('reverb')) {
+    // 100% CRASH-PROOF FEED-FORWARD REVERB
+    // Uses a Multi-Tap delay line. Eliminates ALL cyclic feedback loops entirely 
+    // to guarantee zero Web Audio memory leaks and zero Offline Context rendering freezes.
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = fx.type === 'reverb-hall' ? 4000 : fx.type === 'reverb-plate' ? 6000 : 8000;
 
-    baseDelays.forEach(d => {
-        const del = ctx.createDelay(1);
-        del.delayTime.value = d * size;
-        delays.push(del);
+    input.connect(filter);
 
-        const fb = ctx.createGain();
-        fb.gain.value = Math.pow(10, -3 * (d * size) / decay);
-        fbs.push(fb);
+    const taps = fx.type === 'reverb-hall' ? 8 : fx.type === 'reverb-plate' ? 6 : 4;
+    const baseTime = fx.type === 'reverb-hall' ? 0.04 : fx.type === 'reverb-plate' ? 0.03 : 0.02;
+    const decay = fx.type === 'reverb-hall' ? 0.7 : fx.type === 'reverb-plate' ? 0.6 : 0.5;
 
-        const filter = ctx.createBiquadFilter();
-        filter.type = 'lowpass';
-        filter.frequency.value = damping;
-        dampingFilters.push(filter);
+    const delays = [];
+    const gains = [];
 
-        input.connect(del);
-        del.connect(filter);
-        filter.connect(fb);
-        fb.connect(del);
-        filter.connect(wet);
-    });
-    
-    return { input, output, delays, fbs, dampingFilters, wet, dry, state: { size, decay }, fxType: 'reverb' };
+    // Irrational multipliers spread reflections to prevent metallic ringing
+    const multipliers = [1.0, 1.414, 2.13, 3.17, 4.31, 5.57, 7.11, 8.87];
+
+    for (let i = 0; i < taps; i++) {
+        const delay = ctx.createDelay(2);
+        delay.delayTime.value = baseTime * multipliers[i];
+
+        const gain = ctx.createGain();
+        // Alternate phase (-1 / 1) and decay volume exponentially
+        gain.gain.value = Math.pow(decay, i + 1) * (i % 2 === 0 ? 1 : -1);
+
+        filter.connect(delay);
+        delay.connect(gain);
+        gain.connect(wet);
+
+        delays.push(delay);
+        gains.push(gain);
+    }
+
+    return { input, output, wet, dry, delays, gains, filter, fxType: 'reverb' };
   } else if (fx.type === 'filter') {
     const node = ctx.createBiquadFilter(); node.type = 'lowpass'; node.frequency.value = fx.params?.freq || 1200; node.Q.value = fx.params?.res || 1.5;
     input.connect(node); node.connect(output);
@@ -1032,10 +1038,16 @@ const disconnectTrackRouting = (synth) => {
         if (synth.analyser) synth.analyser.disconnect();
         if (synth.fxNodes) {
             Object.values(synth.fxNodes).forEach(nodeObj => {
-                if (nodeObj.input) nodeObj.input.disconnect();
-                if (nodeObj.output) nodeObj.output.disconnect();
-                if (nodeObj.wet) nodeObj.wet.disconnect();
-                if (nodeObj.dry) nodeObj.dry.disconnect();
+                // Aggressively hunt down and sever every single audio connection to prevent Cyclic Graph memory leaks
+                Object.values(nodeObj).forEach(prop => {
+                    if (prop && typeof prop.disconnect === 'function') {
+                        try { prop.disconnect(); } catch(e){}
+                    } else if (Array.isArray(prop)) {
+                        prop.forEach(p => { 
+                            if (p && typeof p.disconnect === 'function') try { p.disconnect(); } catch(e){} 
+                        });
+                    }
+                });
             });
         }
     } catch (e) {
