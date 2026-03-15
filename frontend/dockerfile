@@ -30,8 +30,7 @@ export default {
 }
 EOF
 
-# 5. Inject the Tailwind Configuration dynamically
-# CRITICAL FIX: Changed from 'require' to 'import' to prevent ES Module compilation crashes in Vite
+# 5. Inject the Tailwind Configuration dynamically with explicit SAFELIST
 RUN cat <<EOF > tailwind.config.js
 import tailwindcssAnimate from "tailwindcss-animate";
 
@@ -40,6 +39,12 @@ export default {
   content: [
     "./index.html",
     "./src/**/*.{js,ts,jsx,tsx}",
+  ],
+  safelist: [
+    { pattern: /bg-(emerald|blue|purple|pink|red|orange|yellow|cyan)-500/ },
+    { pattern: /from-(emerald|blue|purple|pink|red|orange|yellow|cyan)-500\/80/ },
+    { pattern: /to-(emerald|blue|purple|pink|red|orange|yellow|cyan)-500\/40/ },
+    'animate-spin', 'animate-pulse'
   ],
   theme: {
     extend: {},
@@ -51,7 +56,6 @@ export default {
 EOF
 
 # 6. Inject the Base CSS
-# CRITICAL FIX: Switched to heredoc (EOF) to prevent printf syntax errors in index.css
 RUN cat <<EOF > src/index.css
 @tailwind base;
 @tailwind components;
