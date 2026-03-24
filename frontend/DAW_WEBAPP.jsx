@@ -6,7 +6,7 @@ import {
   Folder, Sliders, Piano,
   MousePointer2, Pencil, Eraser, X, Grid, Trash2, Activity,
   Settings2, Plug, Power, LogOut, FileAudio, FileCode, Cpu,
-  Repeat, Home, Save, Download, Upload, FileJson, Info, AlertTriangle, CheckCircle2, Network, Video, VideoOff, MicOff, Lock, Copy, MoreHorizontal, Scissors, Mail, Globe, Instagram, Twitter, Bell, Loader2
+  Repeat, Home, Save, Download, Upload, FileJson, Info, AlertTriangle, CheckCircle2, Network, Video, VideoOff, MicOff, Lock, Copy, MoreHorizontal, Scissors, Mail, Globe, InstagramLogo, TwitterLogo, Bell, Loader2
 } from 'lucide-react';
 import { io } from 'socket.io-client';
 
