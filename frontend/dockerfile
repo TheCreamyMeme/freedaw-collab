@@ -18,7 +18,7 @@ RUN npm install
 
 # 3. Install specific libraries
 # (Re-adding tailwindcss-animate. Using .cjs config files below to safely prevent ESM crashes!)
-RUN npm install lucide-react tailwindcss@3 postcss autoprefixer tailwindcss-animate socket.io-client
+RUN npm install lucide-react@0.427.0 tailwindcss@3 postcss autoprefixer tailwindcss-animate socket.io-client
 
 # 4. Inject PostCSS Configuration dynamically (Using .cjs for CommonJS compatibility)
 RUN rm -f postcss.config.js tailwind.config.js
