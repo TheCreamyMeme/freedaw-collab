@@ -129,7 +129,7 @@ RUN npm install -g serve
 
 # Copy ONLY the compiled static files and server config from Stage 1
 COPY --from=builder /app/webdaw/dist ./dist
-COPY --from=builder /app/webdaw/serve.json ./serve.json
+COPY --from=builder /app/webdaw/serve.json ./dist/serve.json
 
 # Expose port 3000
 EXPOSE 3000
