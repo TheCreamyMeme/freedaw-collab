@@ -4113,7 +4113,7 @@ function DAWStudio() {
       )}
 
       <header className="h-14 bg-neutral-950 border-b border-neutral-800 flex items-center justify-between px-4 shrink-0 z-40 relative">
-        <div className="flex items-center gap-4 w-1/3">
+        <div className="flex items-center gap-4 flex-1 min-w-0">
             <button onClick={() => setAppView('home')} className="text-neutral-400 hover:text-white transition-colors" title="Back to Library"><Home size={18} /></button>
             <div className="flex flex-col justify-center">
                 <input value={projectName} onChange={(e) => setProjectName(e.target.value)} className="bg-transparent text-white font-bold text-sm outline-none w-[180px] focus:border-b focus:border-blue-500 transition-colors" />
@@ -4142,8 +4142,8 @@ function DAWStudio() {
     </div>
 
 
-        <div className="flex items-center justify-end gap-3 w-1/3">
-            <div className="hidden lg:flex items-center gap-4 bg-neutral-900/80 px-4 py-1.5 rounded-xl border border-neutral-800 font-mono text-[11px] shadow-inner mr-2">
+        <div className="flex items-center justify-end gap-3 flex-1 min-w-0">
+            <div className="hidden xl:flex items-center gap-4 bg-neutral-900/80 px-4 py-1.5 rounded-xl border border-neutral-800 font-mono text-[11px] shadow-inner mr-2">
                <div className="flex items-center gap-1 text-neutral-400">
                     <span className="uppercase text-[9px] font-bold text-neutral-600">GRID</span>
                     <select value={snapGrid} onChange={e => setSnapGrid(Number(e.target.value))} className="bg-transparent w-12 text-blue-400 font-bold focus:outline-none text-[10px] cursor-pointer">
@@ -4330,7 +4330,7 @@ function DAWStudio() {
                         <span className="text-[10px] font-bold text-neutral-500">TRACKS</span>
                         <div className="flex gap-1">
                             {/* Auto Tracks Toggle Button */}
-                            <button onClick={() => setIsAutomationMode(!isAutomationMode)} className={`text-[9px] uppercase font-bold flex items-center gap-1 px-1.5 py-0.5 rounded transition-colors ${isAutomationMode ? 'bg-blue-500 text-white shadow-[0_0_8px_rgba(59,130,246,0.5)]' : 'bg-neutral-800 text-neutral-400 hover:text-white hover:bg-neutral-700'}`} title="Toggle Automation Lanes (Ctrl+Shift+A)"><Activity size={10}/> Auto Tracks (Right-Click Knobs)</button>
+                            <button onClick={() => setIsAutomationMode(!isAutomationMode)} className={`text-[9px] uppercase font-bold flex items-center gap-1 px-1.5 py-0.5 rounded transition-colors ${isAutomationMode ? 'bg-blue-500 text-white shadow-[0_0_8px_rgba(59,130,246,0.5)]' : 'bg-neutral-800 text-neutral-400 hover:text-white hover:bg-neutral-700'}`} title="Toggle Automation Lanes (Ctrl+Shift+A)"><Activity size={10}/> Auto</button>
                             <button onClick={() => dispatchDawAction({ type: 'ADD_TRACK', payload: { id: Date.now(), name: 'New MIDI', type: 'midi', instrument: 'inst-subtractive', instrumentParams: {cutoff:2000, res:1}, color: 'bg-pink-500', volume: 80, pan: 0, automation: {}, activeAutomationParam: 'volume', clips: [], effects: [] }})} className="text-[9px] uppercase text-neutral-400 hover:text-white font-bold flex items-center gap-1 bg-neutral-800 hover:bg-neutral-700 px-1.5 py-0.5 rounded transition-colors"><Plus size={10}/> MIDI</button>
                             <button onClick={() => dispatchDawAction({ type: 'ADD_TRACK', payload: { id: Date.now(), name: 'New Audio', type: 'audio', color: 'bg-emerald-500', volume: 80, pan: 0, automation: {}, activeAutomationParam: 'volume', clips: [], effects: [] }})} className="text-[9px] uppercase text-neutral-400 hover:text-white font-bold flex items-center gap-1 bg-neutral-800 hover:bg-neutral-700 px-1.5 py-0.5 rounded transition-colors"><Plus size={10}/> Audio</button>
                         </div>
