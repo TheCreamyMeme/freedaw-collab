@@ -4115,8 +4115,8 @@ function DAWStudio() {
         </div>
       )}
 
-      <header className="h-14 bg-neutral-950 border-b border-neutral-800 flex items-center justify-between px-4 shrink-0 z-40 relative">
-        <div className="flex items-center gap-4 flex-1 min-w-0">
+      <header className="h-14 bg-neutral-950 border-b border-neutral-800 flex items-center justify-between px-4 shrink-0 z-40 relative overflow-x-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+        <div className="flex items-center gap-4 shrink-0">
             <button onClick={() => setAppView('home')} className="text-neutral-400 hover:text-white transition-colors" title="Back to Library"><Home size={18} /></button>
             <div className="flex flex-col justify-center">
                 <input value={projectName} onChange={(e) => setProjectName(e.target.value)} className="bg-transparent text-white font-bold text-sm outline-none w-[180px] focus:border-b focus:border-blue-500 transition-colors" />
@@ -4129,7 +4129,7 @@ function DAWStudio() {
         </div>
 
         
-        <div className="flex items-center justify-center gap-1.5 bg-neutral-900 px-3 py-1.5 rounded-xl border border-neutral-800 shrink-0 shadow-inner">
+        <div className="flex items-center justify-center gap-1.5 bg-neutral-900 px-3 py-1.5 rounded-xl border border-neutral-800 shrink-0 shadow-inner mx-4">
             <button onClick={() => transportActionsRef.current.rewind?.()} onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'transport_rewind' })} className="p-1.5 text-neutral-400 hover:text-white transition-colors" title="Return to Start"><SkipBack size={16} /></button>
             <button onClick={togglePlay} onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'transport_play' })} className={`p-2 rounded-full transition-all ${isPlaying ? 'bg-blue-600 text-white shadow-[0_0_12px_rgba(37,99,235,0.5)]' : 'bg-neutral-800 text-white hover:bg-neutral-700'}`} title="Play/Pause">{isPlaying ? <Pause size={16}/> : <Play size={16}/>}</button>
             <button onClick={stopPlayback} onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'transport_stop' })} className="p-1.5 text-neutral-400 hover:text-white transition-colors" title="Stop"><Square size={16}/></button>
@@ -4145,8 +4145,8 @@ function DAWStudio() {
     </div>
 
 
-        <div className="flex items-center justify-end gap-3 flex-1 min-w-0">
-            <div className="hidden xl:flex items-center gap-4 bg-neutral-900/80 px-4 py-1.5 rounded-xl border border-neutral-800 font-mono text-[11px] shadow-inner mr-2">
+        <div className="flex items-center justify-end gap-3 w-1/3">
+            <div className="hidden lg:flex items-center gap-4 bg-neutral-900/80 px-4 py-1.5 rounded-xl border border-neutral-800 font-mono text-[11px] shadow-inner mr-2">
                <div className="flex items-center gap-1 text-neutral-400">
                     <span className="uppercase text-[9px] font-bold text-neutral-600">GRID</span>
                     <select value={snapGrid} onChange={e => setSnapGrid(Number(e.target.value))} className="bg-transparent w-12 text-blue-400 font-bold focus:outline-none text-[10px] cursor-pointer">
