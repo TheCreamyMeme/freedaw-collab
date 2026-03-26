@@ -2935,7 +2935,10 @@ function DAWStudio() {
 
       // Return to beginning
       if (code === 'Enter') {
-          transportActionsRef.current.rewind?.();
+          setCurrentTime(0);
+          stateRefs.current.currentTime = 0;
+          lastMetronomeBeatRef.current = -1;
+          broadcastLivePreview({ type: 'UPDATE_TIME', payload: { currentTime: 0 } });
           return;
       }
 
