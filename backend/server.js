@@ -23,16 +23,49 @@ app.use(express.json({ limit: '100mb' }));
 
 const PROJECTS_DIR = path.join(__dirname, 'projects');
 const SAMPLES_DIR = path.join(__dirname, 'samples');
-const USERS_FILE = path.join(__dirname, 'users.json');
+const USERS_DIR = path.join(__dirname, 'users');
 if (!fs.existsSync(PROJECTS_DIR)) fs.mkdirSync(PROJECTS_DIR, { recursive: true });
 if (!fs.existsSync(SAMPLES_DIR)) fs.mkdirSync(SAMPLES_DIR, { recursive: true });
-
-let allRegisteredUsers = [];
-if (fs.existsSync(USERS_FILE)) {
-    try { allRegisteredUsers = JSON.parse(fs.readFileSync(USERS_FILE, 'utf-8')); } catch(e){}
-}
+if (!fs.existsSync(USERS_DIR)) fs.mkdirSync(USERS_DIR, { recursive: true });
 
 // Multer Storage Configuration for Audio Samples
+
+
+// --- 1. AUTHENTICATION ---
+app.post('/api/auth/login', (req, res) => {
+    const { username } = req.body;
+    if (!username) return res.status(400).json({ error: 'Username required' });
+
+    // In production, verify passwords against a database here.
+    const user = { id: `u_${username}_${Date.now()}`, username };
+    const token = jwt.sign(user, JWT_SECRET, { expiresIn: '7d' });
+
+    res.js// --- 1. AUTHENTICATION ---
+app.post('/api/auth/login', (req, res) => {
+    const { username } = req.body;
+    if (!username) return res.status(400).json({ error: 'Username required' });
+
+    let user = null;
+    const files = fs.readdirSync(USERS_DIR).filter(f => f.endsWith('.json'));
+    for (const file of files) {
+        const u = JSON.parse(fs.readFileSync(path.join(USERS_DIR, file), 'utf-8'));
+        if (u.username === username) {
+            user = u;
+            break;
+        }
+    }
+
+    if (!user) {
+        user = { id: `u_${username}_${Date.now()}`, username };
+        fs.writeFileSync(path.join(USERS_DIR, `${user.id}.json`), JSON.stringify(user, null, 2));
+    }
+
+    const token = jwt.sign(user, JWT_SECRET, { expiresIn: '7d' });
+
+    res.json({ token, user });
+});
+on({ token, user });
+});
 const storage = multer.diskStorage({
     destination: (req, file, cb) => cb(null, SAMPLES_DIR),
     filename: (req, file, cb) => cb(null, `${req.params.sampleId}.wav`)
@@ -86,17 +119,32 @@ app.delete('/api/samples/:sampleId', authenticateToken, (req, res) => {
 
 // User Lookup API
 app.get('/api/users', authenticateToken, (req, res) => {
-    // Strip sensitive info if you had any; send just what client needs
-    res.json(allRegisteredUsers.map(u => ({ id: u.id, username: u.username, avatar: u.avatar, bio: u.bio })));
+    const users = [];
+    const files = fs.readdirSync(USERS_DIR).filter(f => f.endsWith('.json'));
+    for (const file of files) {
+        const u = JSON.parse(fs.readFileSync(path.join(USERS_DIR, file), 'utf-8'));
+        users.push({ 
+            id: u.id, username: u.username, avatar: u.avatar, 
+            bio: u.bio, color: u.color, email: u.email,
+            website: u.website, instagram: u.instagram, twitter: u.twitter
+        });
+    }
+    res.json(users);
 });
 
 app.put('/api/users/profile', authenticateToken, (req, res) => {
-    const { avatar, bio } = req.body;
-    let user = allRegisteredUsers.find(u => u.id === req.user.id);
-    if (user) {
-        if (avatar !== undefined) user.avatar = avatar;
-        if (bio !== undefined) user.bio = bio;
-        fs.writeFileSync(USERS_FILE, JSON.stringify(allRegisteredUsers, null, 2));
+    const filePath = path.join(USERS_DIR, `${req.user.id}.json`);
+    if (fs.existsSync(filePath)) {
+        let user = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+        const allowedFields = ['avatar', 'bio', 'color', 'email', 'website', 'instagram', 'twitter'];
+        
+        for (const field of allowedFields) {
+            if (req.body[field] !== undefined) {
+                user[field] = req.body[field];
+            }
+        }
+        
+        fs.writeFileSync(filePath, JSON.stringify(user, null, 2));
         res.json({ status: 'success', user });
     } else {
         res.status(404).json({ error: 'User not found' });
