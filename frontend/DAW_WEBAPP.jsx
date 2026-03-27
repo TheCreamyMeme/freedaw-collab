@@ -1439,6 +1439,7 @@ function DAWStudio() {
   const [zoom, setZoom] = useState(1);
   const [toasts, setToasts] = useState([]);
   const [isProcessingAudio, setIsProcessingAudio] = useState(false);
+  const [lfos, setLfos] = useState([]);
   
   const [loopRegion, setLoopRegion] = useState({ start: 0, end: 8, enabled: false });
   const [draggingLoop, setDraggingLoop] = useState(null);
@@ -1515,6 +1516,7 @@ function DAWStudio() {
   const dragValuesRef = useRef({});
   const isInitialMount = useRef(true);
   const lastEmitRef = useRef(0);
+  const lfosRef = useRef(lfos);
   const lastAutoUiUpdateRef = useRef(0);
   
   // NEW REFS FOR PERFORMANCE FIX
@@ -1635,6 +1637,7 @@ function DAWStudio() {
   useEffect(() => { midiLearnTargetRef.current = midiLearnTarget; }, [midiLearnTarget]);
   useEffect(() => { snapGridRef.current = snapGrid; }, [snapGrid]);
   useEffect(() => { isMetronomeEnabledRef.current = isMetronomeEnabled; }, [isMetronomeEnabled]);
+  useEffect(() => { lfosRef.current = lfos; }, [lfos]);
   useEffect(() => { 
     stateRefs.current.isPlaying = isPlaying; 
     stateRefs.current.isRecording = isRecording;
@@ -1845,6 +1848,7 @@ function DAWStudio() {
           id: finalId, 
           name: finalName, 
           tracks: tracksRef.current, 
+          lfos: lfosRef.current,
           bpm: stateRefs.current.bpm, 
           lastModified: Date.now(),
           ownerId: projectOwnerId || currentUser?.id,
@@ -1864,7 +1868,7 @@ function DAWStudio() {
 
   const loadProjectToDaw = async (p) => {
       setIsProcessingAudio(true);
-      setProjectId(p.id); setProjectName(p.name); setProjectOwnerId(p.ownerId || null); setProjectOwnerName(p.ownerName || ''); setTracks(p.tracks || []); setBpm(p.bpm || 120); setSharedWith(p.sharedWith || []); setIsPublic(p.isPublic || false); setAppView('daw');
+      setProjectId(p.id); setProjectName(p.name); setProjectOwnerId(p.ownerId || null); setProjectOwnerName(p.ownerName || ''); setTracks(p.tracks || []); setLfos(p.lfos || []); setBpm(p.bpm || 120); setSharedWith(p.sharedWith || []); setIsPublic(p.isPublic || false); setAppView('daw');
       
       // Let React render the DAW + loading spinner before locking the thread with audio
       await new Promise(r => setTimeout(r, 100)); 
@@ -2346,6 +2350,63 @@ function DAWStudio() {
                   const previewEl = document.getElementById(`record-preview-${t.id}`);
                   if (previewEl) previewEl.style.width = `${Math.max(1, (newTime - recordingStartTimeRef.current) * BEAT_WIDTH)}px`;
               }
+          });
+      }
+
+      // Evaluate LFOs
+      const currentLfos = lfosRef.current;
+      if (currentLfos && currentLfos.length > 0) {
+          currentLfos.forEach(lfo => {
+              let phase = (now * lfo.rate) % 1.0;
+              let out = 0.5;
+              if (lfo.type === 'sine') out = (Math.sin(phase * Math.PI * 2) + 1) / 2;
+              else if (lfo.type === 'square') out = phase < 0.5 ? 1 : 0;
+              else if (lfo.type === 'triangle') out = phase < 0.5 ? phase * 2 : 2 - (phase * 2);
+              else if (lfo.type === 'sawtooth') out = phase;
+              else if (lfo.type === 'stepped') {
+                  const stepIdx = Math.floor(phase * (lfo.steps?.length || 8));
+                  out = lfo.steps ? lfo.steps[stepIdx] : 0.5;
+              }
+
+              const depthRatio = lfo.depth / 100;
+              const normalizedVal = 0.5 + (out - 0.5) * depthRatio;
+
+              (lfo.mappings || []).forEach(mapping => {
+                  const synth = synthsRef.current[mapping.trackId];
+                  if (!synth) return;
+
+                  if (mapping.type === 'fx_param') {
+                      const constraints = getParamConstraints(mapping.param);
+                      let mappedVal;
+                      if (constraints.isLog) {
+                          const minLog = Math.log(Math.max(0.001, constraints.min));
+                          const maxLog = Math.log(constraints.max);
+                          mappedVal = Math.exp(minLog + normalizedVal * (maxLog - minLog));
+                      } else {
+                          mappedVal = constraints.min + normalizedVal * (constraints.max - constraints.min);
+                      }
+                      if (constraints.step && !constraints.isLog) mappedVal = Math.round(mappedVal / constraints.step) * constraints.step;
+
+                      const cacheKey = `lastLfo_${mapping.fxId}_${mapping.param}`;
+                      if (synth[cacheKey] !== mappedVal) {
+                          applyAudioEffectParam(mapping.trackId, mapping.fxId, mapping.param, mappedVal, now);
+                          synth[cacheKey] = mappedVal;
+                      }
+                  } else if (mapping.type === 'mixer_vol') {
+                      const cacheKey = `lastLfo_vol`;
+                      if (synth[cacheKey] !== normalizedVal) {
+                          synth.faderGain.gain.setTargetAtTime(normalizedVal, now, 0.05);
+                          synth[cacheKey] = normalizedVal;
+                      }
+                  } else if (mapping.type === 'mixer_pan' && synth.panner?.pan) {
+                      const mappedPan = (normalizedVal * 2) - 1;
+                      const cacheKey = `lastLfo_pan`;
+                      if (synth[cacheKey] !== mappedPan) {
+                          synth.panner.pan.setTargetAtTime(mappedPan, now, 0.05);
+                          synth[cacheKey] = mappedPan;
+                      }
+                  }
+              });
           });
       }
 
@@ -3344,13 +3405,14 @@ function DAWStudio() {
                   socketRef.current.emit('daw-action', {
                       type: 'SYNC_STATE',
                       projectId: currentProjectIdRef.current,
-                      payload: { tracks: tracksRef.current, bpm: stateRefs.current.bpm }
+                      payload: { tracks: tracksRef.current, lfos: lfosRef.current, bpm: stateRefs.current.bpm }
                   });
               }
               break;
           case 'SYNC_STATE': 
               if(!isLocal) { 
                   setTracks(action.payload.tracks); 
+                  if (action.payload.lfos) setLfos(action.payload.lfos);
                   setBpm(action.payload.bpm); 
                   if (audioCtxRef.current) {
                       setIsProcessingAudio(true);
@@ -3580,6 +3642,11 @@ function DAWStudio() {
               setTracks(prev => prev.map(t => t.id === action.payload.trackId ? { ...t, instrumentParams: { ...t.instrumentParams, [action.payload.param]: action.payload.value } } : t)); 
               break;
           case 'UPDATE_NOTES': setTracks(prev => prev.map(t => t.id === action.payload.trackId ? { ...t, clips: t.clips.map(c => c.id === action.payload.clipId ? { ...c, notes: action.payload.notes } : c) } : t)); break;
+          case 'ADD_LFO': setLfos(prev => [...prev, action.payload]); break;
+          case 'UPDATE_LFO': setLfos(prev => prev.map(l => l.id === action.payload.id ? { ...l, ...action.payload.updates } : l)); break;
+          case 'DELETE_LFO': setLfos(prev => prev.filter(l => l.id !== action.payload.id)); break;
+          case 'MAP_LFO': setLfos(prev => prev.map(l => l.id === action.payload.lfoId ? { ...l, mappings: [...(l.mappings||[]), action.payload.mapping] } : l)); break;
+          case 'UNMAP_LFO': setLfos(prev => prev.map(l => l.id === action.payload.lfoId ? { ...l, mappings: l.mappings.filter(m => !(m.type === action.payload.mapping.type && m.trackId === action.payload.mapping.trackId && m.param === action.payload.mapping.param && m.fxId === action.payload.mapping.fxId)) } : l)); break;
           default: break;
       }
   }, []);
@@ -4267,6 +4334,7 @@ function DAWStudio() {
         <div className="w-12 bg-neutral-950 border-r border-neutral-800 flex flex-col items-center py-4 gap-4 z-20 shadow-[4px_0_15px_rgba(0,0,0,0.3)]">
           <button onClick={() => setActiveView('arrangement')} className={`p-2 rounded-lg transition-all ${activeView==='arrangement'?'bg-blue-500/20 text-blue-400':'text-neutral-500 hover:text-white'}`} title="Arrangement View"><Grid size={20}/></button>
           <button onClick={() => setActiveView('mixer')} className={`p-2 rounded-lg transition-all ${activeView==='mixer'?'bg-blue-500/20 text-blue-400':'text-neutral-500 hover:text-white'}`} title="Mixer Console"><Sliders size={20}/></button>
+          <button onClick={() => setActiveView('lfos')} className={`p-2 rounded-lg transition-all ${activeView==='lfos'?'bg-purple-500/20 text-purple-400':'text-neutral-500 hover:text-white'}`} title="LFO Rack"><Activity size={20}/></button>
           <button onClick={() => setActiveView('browser')} className={`p-2 rounded-lg transition-all mt-auto ${activeView==='browser'?'bg-blue-500/20 text-blue-400':'text-neutral-500 hover:text-white'}`} title="Plugin Browser"><Folder size={20}/></button>
         </div>
 
@@ -4344,6 +4412,82 @@ function DAWStudio() {
                      <input type="range" orient="vertical" min="0" max="100" value={masterVolume} onChange={(e) => handleMasterVolumeChange(e.target.value)} onDoubleClick={() => handleMasterVolumeChange(80)} onWheel={(e) => { e.stopPropagation(); handleMasterVolumeChange(Math.min(100, Math.max(0, masterVolume + (e.deltaY < 0 ? 5 : -5)))); }} className="absolute inset-0 opacity-0 cursor-pointer h-full w-full" title="Double-click to reset" style={{ WebkitAppearance: 'slider-vertical' }} />
                   </div>
                   <span className="text-[10px] font-mono text-red-400">{masterVolume}</span>
+             </div>
+          </div>
+        ) : activeView === 'lfos' ? (
+          <div className="flex-1 bg-neutral-900 flex p-4 gap-4 overflow-x-auto relative custom-scrollbar pb-6 items-start content-start">
+             {lfos.map(lfo => (
+                <div key={lfo.id} className="min-w-[16rem] max-w-sm h-full max-h-[400px] bg-neutral-950 border border-neutral-800 rounded-xl p-5 flex flex-col shrink-0 shadow-lg relative group">
+                    <div className="flex justify-between items-center mb-4 border-b border-neutral-800 pb-3 shrink-0">
+                       <div className="flex items-center gap-2">
+                          <Activity size={14} className="text-purple-400" />
+                          <span className="text-xs font-bold text-white uppercase tracking-wider">{lfo.name}</span>
+                       </div>
+                       <button onClick={() => dispatchDawAction({ type: 'DELETE_LFO', payload: { id: lfo.id } })} className="text-neutral-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"><Trash2 size={14}/></button>
+                    </div>
+
+                    <div className="flex flex-col gap-2 shrink-0 mb-4">
+                        <label className="text-[9px] text-neutral-500 font-bold uppercase tracking-wider">Wave Type</label>
+                        <select 
+                            value={lfo.type} 
+                            onChange={(e) => dispatchDawAction({ type: 'UPDATE_LFO', payload: { id: lfo.id, updates: { type: e.target.value } } })}
+                            className="w-full bg-neutral-900 border border-neutral-700 rounded-lg p-2 text-xs text-white outline-none focus:border-purple-500 cursor-pointer"
+                        >
+                            <option value="sine">Sine</option>
+                            <option value="triangle">Triangle</option>
+                            <option value="square">Square</option>
+                            <option value="sawtooth">Sawtooth</option>
+                            <option value="stepped">Stepped (Custom)</option>
+                        </select>
+                    </div>
+
+                    <div className="flex justify-around mt-2 shrink-0">
+                        <Knob 
+                            param="rate" 
+                            value={lfo.rate} 
+                            min={0.1} 
+                            max={20} 
+                            step={0.1} 
+                            isLog={true}
+                            onChange={(p, v) => dispatchDawAction({ type: 'UPDATE_LFO', payload: { id: lfo.id, updates: { rate: v } } })} 
+                        />
+                        <Knob 
+                            param="depth" 
+                            value={lfo.depth} 
+                            min={0} 
+                            max={100} 
+                            step={1} 
+                            isLog={false}
+                            onChange={(p, v) => dispatchDawAction({ type: 'UPDATE_LFO', payload: { id: lfo.id, updates: { depth: v } } })} 
+                        />
+                    </div>
+
+                    {lfo.type === 'stepped' && (
+                        <div className="flex flex-1 gap-1 min-h-[80px] mt-6 items-end justify-between bg-neutral-900 rounded-lg p-2 border border-neutral-800">
+                            {(lfo.steps || [0.5,0.5,0.5,0.5,0.5,0.5,0.5,0.5]).map((val, i) => (
+                                <input 
+                                    key={i} 
+                                    type="range" 
+                                    orient="vertical" 
+                                    min="0" max="1" step="0.01" 
+                                    value={val}
+                                    onChange={e => {
+                                        const newSteps = [...(lfo.steps || [0.5,0.5,0.5,0.5,0.5,0.5,0.5,0.5])];
+                                        newSteps[i] = Number(e.target.value);
+                                        dispatchDawAction({ type: 'UPDATE_LFO', payload: { id: lfo.id, updates: { steps: newSteps } } });
+                                    }}
+                                    className="w-full h-full appearance-none bg-neutral-950 rounded-full outline-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:h-2 [&::-webkit-slider-thumb]:w-full [&::-webkit-slider-thumb]:bg-purple-400 cursor-pointer hover:[&::-webkit-slider-thumb]:bg-purple-300 transition-colors shadow-inner" 
+                                    style={{ WebkitAppearance: 'slider-vertical' }} 
+                                />
+                            ))}
+                        </div>
+                    )}
+                </div>
+             ))}
+
+             <div className="w-48 min-w-[12rem] h-full max-h-[400px] border-2 border-dashed border-neutral-800 hover:border-neutral-700 rounded-xl flex flex-col items-center justify-center shrink-0 cursor-pointer group transition-colors" onClick={() => dispatchDawAction({ type: 'ADD_LFO', payload: { id: `lfo_${Date.now()}`, name: `LFO ${lfos.length + 1}`, type: 'sine', rate: 1.0, depth: 100, steps: [0.5,0.5,0.5,0.5,0.5,0.5,0.5,0.5], mappings: [] }})}>
+                <Plus size={24} className="text-neutral-600 group-hover:text-purple-400 mb-2 transition-colors"/>
+                <span className="text-[10px] text-neutral-500 group-hover:text-purple-400 font-bold uppercase tracking-wider transition-colors">Add LFO</span>
              </div>
           </div>
         ) : (
@@ -4848,7 +4992,7 @@ function DAWStudio() {
             
             {/* Global Context Menus */}
             {contextMenu && (
-              <div className="fixed z-[100] bg-neutral-900 border border-neutral-700 rounded-lg shadow-xl py-1 min-w-[160px]" style={{ left: contextMenu.x, top: contextMenu.y }}>
+              <div className="fixed z-[100] bg-neutral-900 border border-neutral-700 rounded-lg shadow-xl py-1 min-w-[180px] max-h-[80vh] overflow-y-auto custom-scrollbar" style={{ left: contextMenu.x, top: contextMenu.y }}>
                 {contextMenu.type === 'track' && (
                   <>
                     <button onClick={() => { setEditingTrackId(contextMenu.payload.trackId); setContextMenu(null); }} className="w-full text-left px-4 py-2 text-sm text-neutral-300 hover:bg-neutral-800 hover:text-white flex items-center gap-2"><Pencil size={14}/> Rename Track</button>
@@ -4952,6 +5096,26 @@ function DAWStudio() {
                             );
                         }
                     })()}
+
+                    <div className="h-px bg-neutral-800 my-1"/>
+                    <div className="px-4 py-2 text-[10px] text-neutral-500 font-bold uppercase tracking-wider border-b border-neutral-800">LFO Routing</div>
+                    {lfos.length === 0 && <div className="px-4 py-2 text-xs text-neutral-600 italic">No LFOs created</div>}
+                    {lfos.map(lfo => {
+                        const isMapped = lfo.mappings?.some(m => m.type === contextMenu.payload.type && m.trackId === contextMenu.payload.trackId && m.param === contextMenu.payload.param && m.fxId === contextMenu.payload.fxId);
+                        return (
+                            <button key={lfo.id} onClick={() => {
+                                if (isMapped) {
+                                    dispatchDawAction({ type: 'UNMAP_LFO', payload: { lfoId: lfo.id, mapping: contextMenu.payload }});
+                                } else {
+                                    dispatchDawAction({ type: 'MAP_LFO', payload: { lfoId: lfo.id, mapping: contextMenu.payload }});
+                                }
+                                setContextMenu(null);
+                            }} className="w-full text-left px-4 py-2 text-sm text-neutral-300 hover:bg-neutral-800 hover:text-purple-400 flex items-center justify-between transition-colors">
+                                <span><Activity size={14} className="inline mr-2 text-purple-400"/> {lfo.name}</span>
+                                {isMapped && <CheckCircle2 size={12} className="text-purple-500"/>}
+                            </button>
+                        );
+                    })}
                   </>
                 )}
               </div>
