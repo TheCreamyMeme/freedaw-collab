@@ -515,18 +515,21 @@ const getBitcrusherCurve = (bitDepth) => {
 };
 
 // --- Reusable DAW Radial Knob Component ---
-const Knob = React.memo(({ id, param, value, min, max, step, isLog, onChange, onContextMenu, mappedRange, onRangeAdjust }) => {
+const Knob = React.memo(({ id, param, value, min, max, step, isLog, onChange, onContextMenu, mappedRange, onRangeAdjust, lfoMappedRange, onLfoRangeAdjust }) => {
     const [isDragging, setIsDragging] = useState(false);
     const dragStartY = useRef(0);
     const startValue = useRef(0);
     const startRangeRef = useRef({ min: 0, max: 1 });
+    const startLfoRangeRef = useRef({ min: 0, max: 1 });
     const startPercentRef = useRef(0);
     const dragMode = useRef('value');
     const onChangeRef = useRef(onChange);
     const onRangeAdjustRef = useRef(onRangeAdjust);
+    const onLfoRangeAdjustRef = useRef(onLfoRangeAdjust);
 
     useEffect(() => { onChangeRef.current = onChange; }, [onChange]);
     useEffect(() => { onRangeAdjustRef.current = onRangeAdjust; }, [onRangeAdjust]);
+    useEffect(() => { onLfoRangeAdjustRef.current = onLfoRangeAdjust; }, [onLfoRangeAdjust]);
 
     const percent = isLog 
         ? (Math.log(Math.max(0.001, Number(value))) - Math.log(Math.max(0.001, min))) / (Math.log(max) - Math.log(Math.max(0.001, min)))
@@ -541,8 +544,11 @@ const Knob = React.memo(({ id, param, value, min, max, step, isLog, onChange, on
         startValue.current = Number(value);
         startPercentRef.current = percent || 0;
         startRangeRef.current = mappedRange || { min: 0, max: 1 };
+        startLfoRangeRef.current = lfoMappedRange || { min: 0, max: 1 };
 
-        if (e.ctrlKey || e.metaKey) {
+        if (e.altKey) {
+            dragMode.current = 'lfo_range';
+        } else if (e.ctrlKey || e.metaKey) {
             dragMode.current = 'range';
         } else {
             dragMode.current = 'value';
@@ -576,6 +582,26 @@ const Knob = React.memo(({ id, param, value, min, max, step, isLog, onChange, on
                 }
                 return;
             }
+            
+            if (dragMode.current === 'lfo_range') {
+                if (onLfoRangeAdjustRef.current && lfoMappedRange) {
+                    const center = startPercentRef.current;
+                    const currentSpread = startLfoRangeRef.current.max - startLfoRangeRef.current.min;
+                    
+                    let newSpread = currentSpread + dragFactor * 2;
+                    
+                    let newMin = center - newSpread / 2;
+                    let newMax = center + newSpread / 2;
+
+                    if (newMin < 0) newMin = 0;
+                    if (newMin > 1) newMin = 1;
+                    if (newMax < 0) newMax = 0;
+                    if (newMax > 1) newMax = 1;
+
+                    onLfoRangeAdjustRef.current(param, newMin, newMax);
+                }
+                return;
+            }
 
             let nextValue;
 
@@ -606,10 +632,32 @@ const Knob = React.memo(({ id, param, value, min, max, step, isLog, onChange, on
             window.removeEventListener('pointermove', handlePointerMove);
             window.removeEventListener('pointerup', handlePointerUp);
         };
-    }, [isDragging, min, max, step, param, isLog, mappedRange]);
+    }, [isDragging, min, max, step, param, isLog, mappedRange, lfoMappedRange]);
 
     const handleWheel = (e) => {
         e.stopPropagation();
+
+        if (e.altKey) {
+            if (e.preventDefault) e.preventDefault();
+            if (onLfoRangeAdjustRef.current && lfoMappedRange) {
+                const isUp = e.deltaY < 0;
+                const center = percent || 0;
+                const currentSpread = lfoMappedRange.max - lfoMappedRange.min;
+                
+                let newSpread = currentSpread + (isUp ? 0.1 : -0.1);
+                
+                let newMin = center - newSpread / 2;
+                let newMax = center + newSpread / 2;
+
+                if (newMin < 0) newMin = 0;
+                if (newMin > 1) newMin = 1;
+                if (newMax < 0) newMax = 0;
+                if (newMax > 1) newMax = 1;
+
+                onLfoRangeAdjustRef.current(param, newMin, newMax);
+            }
+            return;
+        }
         
         if (e.ctrlKey || e.metaKey) {
             if (e.preventDefault) e.preventDefault();
@@ -670,6 +718,12 @@ const Knob = React.memo(({ id, param, value, min, max, step, isLog, onChange, on
                         <div className="absolute w-[3px] h-[3px] bg-red-400 rounded-full z-10 shadow-[0_0_4px_#f87171] pointer-events-none" style={{ left: '50%', top: '2px', transformOrigin: '50% 18px', transform: `translate(-50%, 0) rotate(${-135 + mappedRange.max * 270}deg)` }} title="MIDI Max" />
                     </>
                 )}
+                {lfoMappedRange && (
+                    <>
+                        <div className="absolute w-[3px] h-[3px] bg-purple-400 rounded-full z-10 shadow-[0_0_4px_#c084fc] pointer-events-none" style={{ left: '50%', top: '2px', transformOrigin: '50% 18px', transform: `translate(-50%, 0) rotate(${-135 + lfoMappedRange.min * 270}deg)` }} title="LFO Min" />
+                        <div className="absolute w-[3px] h-[3px] bg-fuchsia-400 rounded-full z-10 shadow-[0_0_4px_#e879f9] pointer-events-none" style={{ left: '50%', top: '2px', transformOrigin: '50% 18px', transform: `translate(-50%, 0) rotate(${-135 + lfoMappedRange.max * 270}deg)` }} title="LFO Max" />
+                    </>
+                )}
                 <div id={id ? `knob-rot-${id}` : undefined} className="absolute inset-0" style={{ transform: `rotate(${angle}deg)` }}>
                     <div className="mx-auto mt-1 w-1 h-3 bg-blue-400 rounded-full shadow-[0_0_6px_rgba(96,165,250,0.8)] group-hover:bg-blue-300 transition-colors pointer-events-none" />
                 </div>
@@ -682,7 +736,7 @@ const Knob = React.memo(({ id, param, value, min, max, step, isLog, onChange, on
             </div>
         </div>
     );
-}, (prev, next) => prev.value === next.value && prev.param === next.param && prev.mappedRange?.min === next.mappedRange?.min && prev.mappedRange?.max === next.mappedRange?.max);
+}, (prev, next) => prev.value === next.value && prev.param === next.param && prev.mappedRange?.min === next.mappedRange?.min && prev.mappedRange?.max === next.mappedRange?.max && prev.lfoMappedRange?.min === next.lfoMappedRange?.min && prev.lfoMappedRange?.max === next.lfoMappedRange?.max);
 
 
 // --- Dedicated EQ Node Component for Bulletproof Dragging ---
@@ -2482,6 +2536,7 @@ function DAWStudio() {
                       if (!fx) return;
                       const baseVal = fx.params[mapping.param];
                       const constraints = getParamConstraints(mapping.param);
+                      const mappingSpread = (mapping.rangeMax !== undefined && mapping.rangeMin !== undefined) ? (mapping.rangeMax - mapping.rangeMin) : 1.0;
                       
                       let mappedVal;
                       if (constraints.isLog) {
@@ -2490,12 +2545,12 @@ function DAWStudio() {
                           const baseLog = Math.log(Math.max(0.001, baseVal));
                           const rangeLog = maxLog - minLog;
                           
-                          let targetLog = baseLog + (lfoSwing * (rangeLog / 2));
+                          let targetLog = baseLog + (lfoSwing * mappingSpread * (rangeLog / 2));
                           targetLog = Math.max(minLog, Math.min(maxLog, targetLog));
                           mappedVal = Math.exp(targetLog);
                       } else {
                           const range = constraints.max - constraints.min;
-                          mappedVal = baseVal + (lfoSwing * (range / 2));
+                          mappedVal = baseVal + (lfoSwing * mappingSpread * (range / 2));
                           mappedVal = Math.max(constraints.min, Math.min(constraints.max, mappedVal));
                       }
                       if (constraints.step && !constraints.isLog) mappedVal = Math.round(mappedVal / constraints.step) * constraints.step;
@@ -2520,6 +2575,7 @@ function DAWStudio() {
                       const baseVal = track.instrumentParams?.[mapping.param];
                       if (baseVal === undefined) return;
                       const constraints = getParamConstraints(mapping.param);
+                      const mappingSpread = (mapping.rangeMax !== undefined && mapping.rangeMin !== undefined) ? (mapping.rangeMax - mapping.rangeMin) : 1.0;
                       
                       let mappedVal;
                       if (constraints.isLog) {
@@ -2528,12 +2584,12 @@ function DAWStudio() {
                           const baseLog = Math.log(Math.max(0.001, baseVal));
                           const rangeLog = maxLog - minLog;
                           
-                          let targetLog = baseLog + (lfoSwing * (rangeLog / 2));
+                          let targetLog = baseLog + (lfoSwing * mappingSpread * (rangeLog / 2));
                           targetLog = Math.max(minLog, Math.min(maxLog, targetLog));
                           mappedVal = Math.exp(targetLog);
                       } else {
                           const range = constraints.max - constraints.min;
-                          mappedVal = baseVal + (lfoSwing * (range / 2));
+                          mappedVal = baseVal + (lfoSwing * mappingSpread * (range / 2));
                           mappedVal = Math.max(constraints.min, Math.min(constraints.max, mappedVal));
                       }
                       if (constraints.step && !constraints.isLog) mappedVal = Math.round(mappedVal / constraints.step) * constraints.step;
@@ -2801,6 +2857,18 @@ function DAWStudio() {
   const handleMasterVolumeChange = (val) => {
     dispatchDawAction({ type: 'UPDATE_MASTER_VOL', payload: { volume: Number(val) } });
   };
+
+  const handleLfoKnobRangeAdjust = useCallback((trackId, fxId, param, newMin, newMax) => {
+      dispatchDawAction({ type: 'UPDATE_LFO_MAPPING_RANGE', payload: { trackId, fxId, param, rangeMin: newMin, rangeMax: newMax } });
+  }, [dispatchDawAction]);
+
+  const getLfoMappedRangeForKnob = useCallback((trackId, fxId, param) => {
+      for (const lfo of lfos) {
+          const match = (lfo.mappings || []).find(m => fxId ? (m.type === 'fx_param' && m.trackId === trackId && m.fxId === fxId && m.param === param) : (m.type === 'inst_param' && m.trackId === trackId && m.param === param));
+          if (match) return { min: match.rangeMin !== undefined ? match.rangeMin : 0, max: match.rangeMax !== undefined ? match.rangeMax : 1 };
+      }
+      return null;
+  }, [lfos]);
 
   const handleKnobRangeAdjust = useCallback((trackId, fxId, param, newMin, newMax) => {
       setMidiMappings(prev => {
@@ -4029,6 +4097,21 @@ function DAWStudio() {
           case 'DELETE_LFO': setLfos(prev => prev.filter(l => l.id !== action.payload.id)); break;
           case 'MAP_LFO': setLfos(prev => prev.map(l => l.id === action.payload.lfoId ? { ...l, mappings: [...(l.mappings||[]), action.payload.mapping] } : l)); break;
           case 'UNMAP_LFO': setLfos(prev => prev.map(l => l.id === action.payload.lfoId ? { ...l, mappings: l.mappings.filter(m => !(m.type === action.payload.mapping.type && m.trackId === action.payload.mapping.trackId && m.param === action.payload.mapping.param && m.fxId === action.payload.mapping.fxId)) } : l)); break;
+          case 'UPDATE_LFO_MAPPING_RANGE': {
+              const { trackId, fxId, param, rangeMin, rangeMax } = action.payload;
+              setLfos(prev => prev.map(l => ({
+                  ...l,
+                  mappings: (l.mappings || []).map(m => {
+                      const matchesFx = fxId ? (m.type === 'fx_param' && m.trackId === trackId && m.fxId === fxId && m.param === param) : false;
+                      const matchesInst = !fxId ? (m.type === 'inst_param' && m.trackId === trackId && m.param === param) : false;
+                      if (matchesFx || matchesInst) {
+                          return { ...m, rangeMin, rangeMax };
+                      }
+                      return m;
+                  })
+              })));
+              break;
+          }
           default: break;
       }
   }, []);
@@ -5255,6 +5338,7 @@ function DAWStudio() {
                                             }
                                             const constraints = getParamConstraints(param);
                                             const mappedRange = getMappedRangeForKnob(track.id, null, param);
+                                            const lfoMappedRange = getLfoMappedRangeForKnob(track.id, null, param);
                                             return (
                                                 <Knob 
                                                     key={param}
@@ -5269,6 +5353,8 @@ function DAWStudio() {
                                                     onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'inst_param', trackId: track.id, param: param })}
                                                     mappedRange={mappedRange}
                                                     onRangeAdjust={(p, min, max) => handleKnobRangeAdjust(track.id, null, p, min, max)}
+                                                    lfoMappedRange={lfoMappedRange}
+                                                    onLfoRangeAdjust={(p, min, max) => handleLfoKnobRangeAdjust(track.id, null, p, min, max)}
                                                 />
                                             );
                                         })}
@@ -5330,6 +5416,7 @@ function DAWStudio() {
                                    {Object.keys(fx.params || {}).map(param => {
                                      const constraints = getParamConstraints(param);
                                      const mappedRange = getMappedRangeForKnob(track.id, fx.id, param);
+                                     const lfoMappedRange = getLfoMappedRangeForKnob(track.id, fx.id, param);
                                      return (
                                         <Knob 
                                             key={param}
@@ -5344,6 +5431,8 @@ function DAWStudio() {
                                             onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'fx_param', trackId: track.id, fxId: fx.id, param: param })}
                                             mappedRange={mappedRange}
                                             onRangeAdjust={(p, min, max) => handleKnobRangeAdjust(track.id, fx.id, p, min, max)}
+                                            lfoMappedRange={lfoMappedRange}
+                                            onLfoRangeAdjust={(p, min, max) => handleLfoKnobRangeAdjust(track.id, fx.id, p, min, max)}
                                         />
                                      );
                                    })}
