@@ -520,12 +520,17 @@ const Knob = React.memo(({ id, param, value, min, max, step, isLog, onChange, on
     const dragStartY = useRef(0);
     const startValue = useRef(0);
     const startRangeRef = useRef({ min: 0, max: 1 });
+    const startPercentRef = useRef(0);
     const dragMode = useRef('value');
     const onChangeRef = useRef(onChange);
     const onRangeAdjustRef = useRef(onRangeAdjust);
 
     useEffect(() => { onChangeRef.current = onChange; }, [onChange]);
     useEffect(() => { onRangeAdjustRef.current = onRangeAdjust; }, [onRangeAdjust]);
+
+    const percent = isLog 
+        ? (Math.log(Math.max(0.001, Number(value))) - Math.log(Math.max(0.001, min))) / (Math.log(max) - Math.log(Math.max(0.001, min)))
+        : (Number(value) - min) / (max - min);
 
     const handlePointerDown = (e) => {
         if (e.button === 2) return; 
@@ -534,10 +539,11 @@ const Knob = React.memo(({ id, param, value, min, max, step, isLog, onChange, on
         setIsDragging(true);
         dragStartY.current = e.clientY;
         startValue.current = Number(value);
+        startPercentRef.current = percent || 0;
         startRangeRef.current = mappedRange || { min: 0, max: 1 };
 
         if (e.ctrlKey || e.metaKey) {
-            dragMode.current = e.shiftKey ? 'min' : 'max';
+            dragMode.current = 'range';
         } else {
             dragMode.current = 'value';
         }
@@ -549,17 +555,24 @@ const Knob = React.memo(({ id, param, value, min, max, step, isLog, onChange, on
             const deltaY = dragStartY.current - e.clientY;
             const dragFactor = deltaY / 150; 
 
-            if (dragMode.current === 'min' || dragMode.current === 'max') {
+            if (dragMode.current === 'range') {
                 if (onRangeAdjustRef.current && mappedRange) {
-                    const isMin = dragMode.current === 'min';
-                    let base = isMin ? startRangeRef.current.min : startRangeRef.current.max;
-                    let newVal = base + dragFactor;
-                    newVal = Math.max(0, Math.min(1, newVal));
+                    const center = startPercentRef.current;
+                    const currentSpread = startRangeRef.current.max - startRangeRef.current.min;
                     
-                    if (isMin) newVal = Math.min(newVal, startRangeRef.current.max - 0.01);
-                    if (!isMin) newVal = Math.max(newVal, startRangeRef.current.min + 0.01);
+                    // Multiply drag factor by 2 so moving the mouse spans the spread outward symmetrically
+                    let newSpread = currentSpread + dragFactor * 2;
+                    newSpread = Math.max(0.01, newSpread);
                     
-                    onRangeAdjustRef.current(param, newVal, isMin);
+                    let newMin = center - newSpread / 2;
+                    let newMax = center + newSpread / 2;
+
+                    // Clamp to strictly stay within normalized 0 and 1 bounds
+                    if (newMin < 0) newMin = 0;
+                    if (newMax > 1) newMax = 1;
+                    if (newMax <= newMin) newMax = newMin + 0.01;
+
+                    onRangeAdjustRef.current(param, newMin, newMax);
                 }
                 return;
             }
@@ -593,10 +606,33 @@ const Knob = React.memo(({ id, param, value, min, max, step, isLog, onChange, on
             window.removeEventListener('pointermove', handlePointerMove);
             window.removeEventListener('pointerup', handlePointerUp);
         };
-    }, [isDragging, min, max, step, param, isLog]);
+    }, [isDragging, min, max, step, param, isLog, mappedRange]);
 
     const handleWheel = (e) => {
         e.stopPropagation();
+        
+        if (e.ctrlKey || e.metaKey) {
+            if (e.preventDefault) e.preventDefault();
+            if (onRangeAdjustRef.current && mappedRange) {
+                const isUp = e.deltaY < 0;
+                const center = percent || 0;
+                const currentSpread = mappedRange.max - mappedRange.min;
+                
+                let newSpread = currentSpread + (isUp ? 0.1 : -0.1);
+                newSpread = Math.max(0.01, newSpread);
+                
+                let newMin = center - newSpread / 2;
+                let newMax = center + newSpread / 2;
+
+                if (newMin < 0) newMin = 0;
+                if (newMax > 1) newMax = 1;
+                if (newMax <= newMin) newMax = newMin + 0.01;
+
+                onRangeAdjustRef.current(param, newMin, newMax);
+            }
+            return;
+        }
+
         const isUp = e.deltaY < 0;
         let nextValue;
         if (isLog) {
@@ -617,10 +653,6 @@ const Knob = React.memo(({ id, param, value, min, max, step, isLog, onChange, on
         onChangeRef.current(param, nextValue);
     };
 
-    const percent = isLog 
-        ? (Math.log(Math.max(0.001, Number(value))) - Math.log(Math.max(0.001, min))) / (Math.log(max) - Math.log(Math.max(0.001, min)))
-        : (Number(value) - min) / (max - min);
-    
     const angle = -135 + (percent || 0) * 270;
     const displayName = param.replace(/([A-Z0-9])/g, ' $1').trim();
 
@@ -2770,7 +2802,7 @@ function DAWStudio() {
     dispatchDawAction({ type: 'UPDATE_MASTER_VOL', payload: { volume: Number(val) } });
   };
 
-  const handleKnobRangeAdjust = useCallback((trackId, fxId, param, newVal, isMin) => {
+  const handleKnobRangeAdjust = useCallback((trackId, fxId, param, newMin, newMax) => {
       setMidiMappings(prev => {
           let updated = { ...prev };
           let changed = false;
@@ -2783,7 +2815,7 @@ function DAWStudio() {
 
                   if (matchesFx || matchesInst) {
                       changed = true;
-                      return { ...m, [isMin ? 'rangeMin' : 'rangeMax']: newVal };
+                      return { ...m, rangeMin: newMin, rangeMax: newMax };
                   }
                   return m;
               });
@@ -5236,7 +5268,7 @@ function DAWStudio() {
                                                     onChange={(p, v) => handleInstrumentParamChange(track.id, p, v)} 
                                                     onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'inst_param', trackId: track.id, param: param })}
                                                     mappedRange={mappedRange}
-                                                    onRangeAdjust={(p, val, isMin) => handleKnobRangeAdjust(track.id, null, p, val, isMin)}
+                                                    onRangeAdjust={(p, min, max) => handleKnobRangeAdjust(track.id, null, p, min, max)}
                                                 />
                                             );
                                         })}
@@ -5311,7 +5343,7 @@ function DAWStudio() {
                                             onChange={(p, v) => handleEffectParamChange(track.id, fx.id, p, v)} 
                                             onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'fx_param', trackId: track.id, fxId: fx.id, param: param })}
                                             mappedRange={mappedRange}
-                                            onRangeAdjust={(p, val, isMin) => handleKnobRangeAdjust(track.id, fx.id, p, val, isMin)}
+                                            onRangeAdjust={(p, min, max) => handleKnobRangeAdjust(track.id, fx.id, p, min, max)}
                                         />
                                      );
                                    })}
