@@ -3566,6 +3566,9 @@ function DAWStudio() {
   const handleDeleteProject = async (e, projectId) => {
       e.stopPropagation();
       
+      // Capture project details before optimistic removal in case we need to send a fail-safe unshare payload
+      const projToUnshare = [...serverProjects, ...localProjects].find(p => p.id === projectId);
+
       // Optimistic UI Update: Instantly remove the project from the screen
       setLocalProjects(prev => prev.filter(p => p.id !== projectId));
       setServerProjects(prev => prev.filter(p => p.id !== projectId));
@@ -3579,6 +3582,20 @@ function DAWStudio() {
       
       // 2. Delete from remote cloud database
       if (authTokenRef.current && !authTokenRef.current.startsWith('local_token_')) {
+          // Fail-safe: Explicitly unshare the project first so it disappears from public lists even if DELETE fails on the backend
+          if (projToUnshare) {
+              try {
+                  const unsharedProj = { ...projToUnshare, isPublic: false, sharedWith: [] };
+                  await fetch(`${API_BASE_URL}/api/projects`, { 
+                      method: 'POST', 
+                      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authTokenRef.current}` }, 
+                      body: JSON.stringify(unsharedProj) 
+                  });
+              } catch (e) {
+                  console.warn("Could not unshare project prior to deletion", e);
+              }
+          }
+
           try {
               const res = await fetch(`${API_BASE_URL}/api/projects/${projectId}`, {
                   method: 'DELETE',
@@ -3596,7 +3613,6 @@ function DAWStudio() {
       
       showToast("Project deleted.", "info");
   };
-
 
 
   const connectSocket = async (token, user) => {
