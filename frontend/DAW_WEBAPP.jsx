@@ -562,15 +562,15 @@ const Knob = React.memo(({ id, param, value, min, max, step, isLog, onChange, on
                     
                     // Multiply drag factor by 2 so moving the mouse spans the spread outward symmetrically
                     let newSpread = currentSpread + dragFactor * 2;
-                    newSpread = Math.max(0.01, newSpread);
                     
                     let newMin = center - newSpread / 2;
                     let newMax = center + newSpread / 2;
 
-                    // Clamp to strictly stay within normalized 0 and 1 bounds
+                    // Clamp to strictly stay within normalized 0 and 1 bounds, but allow them to cross/invert
                     if (newMin < 0) newMin = 0;
+                    if (newMin > 1) newMin = 1;
+                    if (newMax < 0) newMax = 0;
                     if (newMax > 1) newMax = 1;
-                    if (newMax <= newMin) newMax = newMin + 0.01;
 
                     onRangeAdjustRef.current(param, newMin, newMax);
                 }
@@ -619,14 +619,14 @@ const Knob = React.memo(({ id, param, value, min, max, step, isLog, onChange, on
                 const currentSpread = mappedRange.max - mappedRange.min;
                 
                 let newSpread = currentSpread + (isUp ? 0.1 : -0.1);
-                newSpread = Math.max(0.01, newSpread);
                 
                 let newMin = center - newSpread / 2;
                 let newMax = center + newSpread / 2;
 
                 if (newMin < 0) newMin = 0;
+                if (newMin > 1) newMin = 1;
+                if (newMax < 0) newMax = 0;
                 if (newMax > 1) newMax = 1;
-                if (newMax <= newMin) newMax = newMin + 0.01;
 
                 onRangeAdjustRef.current(param, newMin, newMax);
             }
