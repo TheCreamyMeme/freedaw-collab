@@ -4995,7 +4995,7 @@ function DAWStudio() {
                 const track = tracks.find(t => t.id === bottomDock.trackId);
                 if (!track) return null;
                 return (
-                <div style={{ height: 'auto', minHeight: '260px', maxHeight: '70vh' }} className="bg-neutral-900 border-t border-neutral-800 flex flex-col shrink-0 shadow-[0_-4px_24px_rgba(0,0,0,0.3)] z-30 relative">
+                <div style={{ height: dockHeight }} className="bg-neutral-900 border-t border-neutral-800 flex flex-col shrink-0 shadow-[0_-4px_24px_rgba(0,0,0,0.3)] z-30 relative">
                     <div className="absolute top-0 left-0 right-0 h-1.5 -translate-y-1/2 cursor-ns-resize hover:bg-blue-500 z-50 transition-colors" onMouseDown={() => setDraggingDockHeight(true)} />
                     <div className="h-8 bg-neutral-950 flex justify-between items-center px-4 border-b border-neutral-800 shrink-0">
                         <div className="flex items-center gap-2">
@@ -5166,14 +5166,17 @@ function DAWStudio() {
                         ))}
                         
                         {/* Add Effect Button Container */}
-                        <div className="w-48 min-w-[12rem] h-max min-h-[160px] self-stretch border-2 border-dashed border-neutral-800 hover:border-neutral-700 rounded-xl flex flex-col items-center justify-center shrink-0 relative group transition-colors cursor-pointer">
+                        <div className="w-48 min-w-[12rem] h-[160px] border-2 border-dashed border-neutral-800 hover:border-neutral-700 rounded-xl flex flex-col items-center justify-center shrink-0 relative group transition-colors cursor-pointer">
                             <Plus size={24} className="text-neutral-600 group-hover:text-blue-400 mb-2 transition-colors" />
                             <span className="text-[10px] text-neutral-500 group-hover:text-blue-400 font-bold uppercase tracking-wider">Add Effect</span>
                             
-                            <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 w-max max-h-[300px] bg-neutral-900/95 border border-neutral-700 shadow-2xl backdrop-blur-md rounded-xl opacity-0 group-hover:opacity-100 transition-opacity flex flex-col gap-1.5 pointer-events-none group-hover:pointer-events-auto p-2 overflow-y-auto custom-scrollbar z-50">
-                               <div className="text-[9px] font-bold text-neutral-500 mb-1 uppercase tracking-wider px-1 mt-1">Engines</div>
+                            <div 
+                                className="absolute top-0 left-0 w-full bg-neutral-900/95 border border-neutral-700 shadow-2xl backdrop-blur-md rounded-xl opacity-0 group-hover:opacity-100 transition-opacity flex flex-col gap-1.5 pointer-events-none group-hover:pointer-events-auto p-2 overflow-y-auto custom-scrollbar z-50"
+                                style={{ maxHeight: `${Math.max(160, dockHeight - 64)}px` }}
+                            >
+                               <div className="text-[9px] font-bold text-neutral-500 mb-1 uppercase tracking-wider px-1 mt-1 shrink-0">Engines</div>
                                {INTERNAL_PLUGINS.filter(p => p.category === 'effect').map(p => (
-                                  <button key={p.id} onClick={() => addEffect(track.id, p)} className="w-full text-[10px] font-bold text-neutral-300 hover:text-white bg-neutral-950 border border-neutral-800 hover:border-blue-500 hover:bg-blue-600/20 px-3 py-2 rounded-lg transition-colors text-left whitespace-nowrap">{p.name}</button>
+                                  <button key={p.id} onClick={() => addEffect(track.id, p)} className="w-full text-[10px] font-bold text-neutral-300 hover:text-white bg-neutral-950 border border-neutral-800 hover:border-blue-500 hover:bg-blue-600/20 px-3 py-2 rounded-lg transition-colors text-left truncate shrink-0">{p.name}</button>
                                ))}
                             </div>
                         </div>
