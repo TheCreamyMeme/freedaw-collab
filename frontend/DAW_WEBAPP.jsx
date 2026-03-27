@@ -1845,25 +1845,52 @@ function DAWStudio() {
   const saveProject = useCallback(async (currentShared = sharedWith, currentPublic = isPublic, isAuto = false, overrideId = null, overrideName = null) => {
       const finalId = overrideId || currentProjectIdRef.current || `proj_${Date.now()}`;
       const finalName = overrideName || projectNameRef.current;
-      const p = { 
-          id: finalId, 
-          name: finalName, 
-          tracks: tracksRef.current, 
-          lfos: lfosRef.current,
-          bpm: stateRefs.current.bpm, 
-          lastModified: Date.now(),
-          ownerId: projectOwnerId || currentUser?.id,
-          ownerName: projectOwnerName || currentUser?.username,
-          sharedWith: currentShared,
-          isPublic: currentPublic
-      };
-      await idb.set('projects', p); 
-      if (!isAuto) showToast("Saved locally.", "info");
+      
+      // Deep clone prevents React Synthetic Events or unclonable nodes from crashing IndexedDB/JSON
+      let p;
+      try {
+          p = JSON.parse(JSON.stringify({ 
+              id: finalId, 
+              name: finalName, 
+              tracks: tracksRef.current, 
+              lfos: lfosRef.current || [],
+              bpm: stateRefs.current.bpm, 
+              lastModified: Date.now(),
+              ownerId: projectOwnerId || currentUser?.id,
+              ownerName: projectOwnerName || currentUser?.username,
+              sharedWith: currentShared,
+              isPublic: currentPublic
+          }));
+      } catch (cloneErr) {
+          console.error("Failed to clone project state:", cloneErr);
+          if (!isAuto) showToast("Failed to compile project data.", "error");
+          return;
+      }
+
+      try {
+          await idb.set('projects', p); 
+          if (!isAuto) showToast("Saved locally.", "info");
+      } catch (err) {
+          console.error("Local save failed:", err);
+          if (!isAuto) showToast("Failed to save locally.", "error");
+      }
+
       if (authTokenRef.current) {
           try { 
-              await fetch(`${API_BASE_URL}/api/projects`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authTokenRef.current}` }, body: JSON.stringify(p) }); 
+              const res = await fetch(`${API_BASE_URL}/api/projects`, { 
+                  method: 'POST', 
+                  headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authTokenRef.current}` }, 
+                  body: JSON.stringify(p) 
+              }); 
+              if (!res.ok) {
+                  const errText = await res.text();
+                  throw new Error(`Server returned ${res.status}: ${errText}`);
+              }
               if (!isAuto) showToast("Synced to Server.", "success"); 
-          } catch(e) {}
+          } catch(e) {
+              console.error("Server sync failed:", e);
+              if (!isAuto) showToast("Failed to sync to server.", "error");
+          }
       }
   }, [sharedWith, isPublic, projectOwnerId, projectOwnerName, currentUser, showToast]);
 
@@ -3478,14 +3505,25 @@ function DAWStudio() {
   };
 
   const loadProjects = async (token) => {
-      const offlineProjs = await idb.getAll('projects');
-      setLocalProjects(offlineProjs || []);
+      try {
+          const offlineProjs = await idb.getAll('projects');
+          setLocalProjects(offlineProjs || []);
+      } catch(e) { console.warn("Failed to load local projects", e); }
+      
       if (token) {
           try {
               const res = await fetch(`${API_BASE_URL}/api/projects`, { headers: { 'Authorization': `Bearer ${token}` } });
+              if (!res.ok) throw new Error("API rejected project fetch");
               const data = await res.json();
-              if (Array.isArray(data)) setServerProjects(data);
-          } catch (e) { console.warn("Could not fetch server projects"); }
+              if (Array.isArray(data)) {
+                  setServerProjects(data);
+              } else {
+                  console.warn("API did not return an array of projects", data);
+              }
+          } catch (e) { 
+              console.error("Could not fetch server projects", e); 
+              showToast("Failed to fetch cloud projects.", "error");
+          }
       }
   };
 
@@ -4393,8 +4431,8 @@ function DAWStudio() {
       )}
 
       <header className="h-14 bg-neutral-950 border-b border-neutral-800 flex items-center justify-between px-4 shrink-0 z-40 relative overflow-x-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
-        <div className="flex items-center gap-4 shrink-0">
-            <button onClick={() => setAppView('home')} className="text-neutral-400 hover:text-white transition-colors" title="Back to Library"><Home size={18} /></button>
+        <div className="flex items-center gap-4 flex-1 min-w-0">
+            <button onClick={() => { loadProjects(authTokenRef.current); setAppView('home'); }} className="text-neutral-400 hover:text-white transition-colors" title="Back to Library"><Home size={18} /></button>
             <div className="flex flex-col justify-center">
                 <input value={projectName} onChange={(e) => setProjectName(e.target.value)} className="bg-transparent text-white font-bold text-sm outline-none w-[180px] focus:border-b focus:border-blue-500 transition-colors" />
                 {(projectOwnerName || currentUser?.username) && <span className="text-[9px] text-neutral-500 font-medium tracking-wide">by {projectOwnerName || currentUser?.username}</span>}
