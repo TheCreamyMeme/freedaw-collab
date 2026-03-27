@@ -4497,20 +4497,20 @@ function DAWStudio() {
       )}
 
       <header className="h-14 bg-neutral-950 border-b border-neutral-800 flex items-center justify-between px-4 shrink-0 z-40 relative overflow-x-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
-        <div className="flex items-center gap-4 flex-1 min-w-0">
-            <button onClick={() => { loadProjects(authTokenRef.current); setAppView('home'); }} className="text-neutral-400 hover:text-white transition-colors" title="Back to Library"><Home size={18} /></button>
-            <div className="flex flex-col justify-center">
-                <input value={projectName} onChange={(e) => setProjectName(e.target.value)} className="bg-transparent text-white font-bold text-sm outline-none w-[180px] focus:border-b focus:border-blue-500 transition-colors" />
-                {(projectOwnerName || currentUser?.username) && <span className="text-[9px] text-neutral-500 font-medium tracking-wide">by {projectOwnerName || currentUser?.username}</span>}
+        <div className="flex items-center gap-2 lg:gap-4 flex-1 min-w-0 justify-start">
+            <button onClick={() => { loadProjects(authTokenRef.current); setAppView('home'); }} className="text-neutral-400 hover:text-white transition-colors shrink-0" title="Back to Library"><Home size={18} /></button>
+            <div className="flex flex-col justify-center shrink-0">
+                <input value={projectName} onChange={(e) => setProjectName(e.target.value)} className="bg-transparent text-white font-bold text-sm outline-none w-24 sm:w-32 lg:w-[180px] truncate focus:border-b focus:border-blue-500 transition-colors" />
+                {(projectOwnerName || currentUser?.username) && <span className="text-[9px] text-neutral-500 font-medium tracking-wide truncate max-w-[180px]">by {projectOwnerName || currentUser?.username}</span>}
             </div>
-            <button onClick={() => saveProject()} className="text-neutral-400 hover:text-blue-400 transition-colors" title="Save Project"><Save size={16}/></button>
-            <button onClick={() => setShowShareModal(true)} className="text-neutral-400 hover:text-purple-400 ml-2 transition-colors" title="Share Project"><Users size={16}/></button>
-            <button onClick={handleExportBounce} disabled={isExporting} className={`ml-2 transition-colors ${isExporting ? 'text-green-400 animate-pulse' : 'text-neutral-400 hover:text-green-400'}`} title="Export Mixdown to WAV"><Download size={16}/></button>
-            <button onClick={handleExportMultitrack} disabled={isExporting} className={`ml-2 transition-colors ${isExporting ? 'text-blue-400 animate-pulse' : 'text-neutral-400 hover:text-blue-400'}`} title="Export Multitrack ZIP (Stems)"><Folder size={16}/></button>
+            <button onClick={() => saveProject()} className="text-neutral-400 hover:text-blue-400 transition-colors shrink-0" title="Save Project"><Save size={16}/></button>
+            <button onClick={() => setShowShareModal(true)} className="text-neutral-400 hover:text-purple-400 ml-1 lg:ml-2 transition-colors shrink-0" title="Share Project"><Users size={16}/></button>
+            <button onClick={handleExportBounce} disabled={isExporting} className={`ml-1 lg:ml-2 transition-colors shrink-0 ${isExporting ? 'text-green-400 animate-pulse' : 'text-neutral-400 hover:text-green-400'}`} title="Export Mixdown to WAV"><Download size={16}/></button>
+            <button onClick={handleExportMultitrack} disabled={isExporting} className={`ml-1 lg:ml-2 transition-colors shrink-0 ${isExporting ? 'text-blue-400 animate-pulse' : 'text-neutral-400 hover:text-blue-400'}`} title="Export Multitrack ZIP (Stems)"><Folder size={16}/></button>
         </div>
 
         
-        <div className="flex items-center justify-center gap-1.5 bg-neutral-900 px-3 py-1.5 rounded-xl border border-neutral-800 shrink-0 shadow-inner mx-4">
+        <div className="flex items-center justify-center gap-1 sm:gap-1.5 bg-neutral-900 px-2 sm:px-3 py-1.5 rounded-xl border border-neutral-800 shrink-0 shadow-inner mx-2 lg:mx-4">
             <button onClick={() => transportActionsRef.current.rewind?.()} onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'transport_rewind' })} className="p-1.5 text-neutral-400 hover:text-white transition-colors" title="Return to Start"><SkipBack size={16} /></button>
             <button onClick={togglePlay} onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'transport_play' })} className={`p-2 rounded-full transition-all ${isPlaying ? 'bg-blue-600 text-white shadow-[0_0_12px_rgba(37,99,235,0.5)]' : 'bg-neutral-800 text-white hover:bg-neutral-700'}`} title="Play/Pause">{isPlaying ? <Pause size={16}/> : <Play size={16}/>}</button>
             <button onClick={stopPlayback} onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'transport_stop' })} className="p-1.5 text-neutral-400 hover:text-white transition-colors" title="Stop"><Square size={16}/></button>
@@ -4526,8 +4526,8 @@ function DAWStudio() {
     </div>
 
 
-        <div className="flex items-center justify-end gap-3 w-1/3">
-            <div className="hidden lg:flex items-center gap-4 bg-neutral-900/80 px-4 py-1.5 rounded-xl border border-neutral-800 font-mono text-[11px] shadow-inner mr-2">
+        <div className="flex items-center justify-end gap-2 lg:gap-3 flex-1 min-w-0">
+            <div className="hidden xl:flex items-center gap-4 bg-neutral-900/80 px-4 py-1.5 rounded-xl border border-neutral-800 font-mono text-[11px] shadow-inner mr-2 shrink-0">
                <div className="flex items-center gap-1 text-neutral-400">
                     <span className="uppercase text-[9px] font-bold text-neutral-600">GRID</span>
                     <select value={snapGrid} onChange={e => setSnapGrid(Number(e.target.value))} className="bg-transparent w-12 text-blue-400 font-bold focus:outline-none text-[10px] cursor-pointer">
