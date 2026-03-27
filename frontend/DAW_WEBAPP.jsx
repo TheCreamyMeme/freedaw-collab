@@ -3540,7 +3540,14 @@ function DAWStudio() {
       
       if (token && !token.startsWith('local_token_')) {
           try {
-              const res = await fetch(`${API_BASE_URL}/api/projects`, { headers: { 'Authorization': `Bearer ${token}` } });
+              // Cache-bust the URL and pass strict no-cache headers so the browser never loads stale project lists
+              const res = await fetch(`${API_BASE_URL}/api/projects?_t=${Date.now()}`, { 
+                  headers: { 
+                      'Authorization': `Bearer ${token}`,
+                      'Cache-Control': 'no-cache',
+                      'Pragma': 'no-cache'
+                  } 
+              });
               if (!res.ok) throw new Error("API rejected project fetch");
               const data = await res.json();
               if (Array.isArray(data)) {
@@ -3575,16 +3582,21 @@ function DAWStudio() {
           try {
               const res = await fetch(`${API_BASE_URL}/api/projects/${projectId}`, {
                   method: 'DELETE',
-                  headers: { 'Authorization': `Bearer ${authTokenRef.current}` }
+                  headers: { 
+                      'Authorization': `Bearer ${authTokenRef.current}`,
+                      'Content-Type': 'application/json'
+                  },
+                  body: JSON.stringify({ id: projectId }) // Fallback for strict backend routers
               });
               if (!res.ok) console.warn("Server refused deletion", await res.text());
           } catch (err) {
               console.warn("Could not delete from server", err);
           }
       }
-        
+      
       showToast("Project deleted.", "info");
   };
+
 
 
   const connectSocket = async (token, user) => {
