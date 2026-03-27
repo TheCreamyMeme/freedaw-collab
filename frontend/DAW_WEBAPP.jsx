@@ -2858,18 +2858,6 @@ function DAWStudio() {
     dispatchDawAction({ type: 'UPDATE_MASTER_VOL', payload: { volume: Number(val) } });
   };
 
-  const handleLfoKnobRangeAdjust = useCallback((trackId, fxId, param, newMin, newMax) => {
-      dispatchDawAction({ type: 'UPDATE_LFO_MAPPING_RANGE', payload: { trackId, fxId, param, rangeMin: newMin, rangeMax: newMax } });
-  }, [dispatchDawAction]);
-
-  const getLfoMappedRangeForKnob = useCallback((trackId, fxId, param) => {
-      for (const lfo of lfos) {
-          const match = (lfo.mappings || []).find(m => fxId ? (m.type === 'fx_param' && m.trackId === trackId && m.fxId === fxId && m.param === param) : (m.type === 'inst_param' && m.trackId === trackId && m.param === param));
-          if (match) return { min: match.rangeMin !== undefined ? match.rangeMin : 0, max: match.rangeMax !== undefined ? match.rangeMax : 1 };
-      }
-      return null;
-  }, [lfos]);
-
   const handleKnobRangeAdjust = useCallback((trackId, fxId, param, newMin, newMax) => {
       setMidiMappings(prev => {
           let updated = { ...prev };
@@ -4120,6 +4108,18 @@ function DAWStudio() {
       applyDawAction(action, true);
       if (socketRef.current) socketRef.current.emit('daw-action', { ...action, projectId: currentProjectIdRef.current });
   }, [applyDawAction]);
+
+  const handleLfoKnobRangeAdjust = useCallback((trackId, fxId, param, newMin, newMax) => {
+      dispatchDawAction({ type: 'UPDATE_LFO_MAPPING_RANGE', payload: { trackId, fxId, param, rangeMin: newMin, rangeMax: newMax } });
+  }, [dispatchDawAction]);
+
+  const getLfoMappedRangeForKnob = useCallback((trackId, fxId, param) => {
+      for (const lfo of lfos) {
+          const match = (lfo.mappings || []).find(m => fxId ? (m.type === 'fx_param' && m.trackId === trackId && m.fxId === fxId && m.param === param) : (m.type === 'inst_param' && m.trackId === trackId && m.param === param));
+          if (match) return { min: match.rangeMin !== undefined ? match.rangeMin : 0, max: match.rangeMax !== undefined ? match.rangeMax : 1 };
+      }
+      return null;
+  }, [lfos]);
 
   useEffect(() => {
       transportActionsRef.current = {
