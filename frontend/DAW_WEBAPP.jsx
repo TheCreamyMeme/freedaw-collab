@@ -515,13 +515,17 @@ const getBitcrusherCurve = (bitDepth) => {
 };
 
 // --- Reusable DAW Radial Knob Component ---
-const Knob = React.memo(({ id, param, value, min, max, step, isLog, onChange, onContextMenu }) => {
+const Knob = React.memo(({ id, param, value, min, max, step, isLog, onChange, onContextMenu, mappedRange, onRangeAdjust }) => {
     const [isDragging, setIsDragging] = useState(false);
     const dragStartY = useRef(0);
     const startValue = useRef(0);
+    const startRangeRef = useRef({ min: 0, max: 1 });
+    const dragMode = useRef('value');
     const onChangeRef = useRef(onChange);
+    const onRangeAdjustRef = useRef(onRangeAdjust);
 
     useEffect(() => { onChangeRef.current = onChange; }, [onChange]);
+    useEffect(() => { onRangeAdjustRef.current = onRangeAdjust; }, [onRangeAdjust]);
 
     const handlePointerDown = (e) => {
         if (e.button === 2) return; 
@@ -530,6 +534,13 @@ const Knob = React.memo(({ id, param, value, min, max, step, isLog, onChange, on
         setIsDragging(true);
         dragStartY.current = e.clientY;
         startValue.current = Number(value);
+        startRangeRef.current = mappedRange || { min: 0, max: 1 };
+
+        if (e.ctrlKey || e.metaKey) {
+            dragMode.current = e.shiftKey ? 'min' : 'max';
+        } else {
+            dragMode.current = 'value';
+        }
     };
 
     useEffect(() => {
@@ -537,6 +548,22 @@ const Knob = React.memo(({ id, param, value, min, max, step, isLog, onChange, on
         const handlePointerMove = (e) => {
             const deltaY = dragStartY.current - e.clientY;
             const dragFactor = deltaY / 150; 
+
+            if (dragMode.current === 'min' || dragMode.current === 'max') {
+                if (onRangeAdjustRef.current && mappedRange) {
+                    const isMin = dragMode.current === 'min';
+                    let base = isMin ? startRangeRef.current.min : startRangeRef.current.max;
+                    let newVal = base + dragFactor;
+                    newVal = Math.max(0, Math.min(1, newVal));
+                    
+                    if (isMin) newVal = Math.min(newVal, startRangeRef.current.max - 0.01);
+                    if (!isMin) newVal = Math.max(newVal, startRangeRef.current.min + 0.01);
+                    
+                    onRangeAdjustRef.current(param, newVal, isMin);
+                }
+                return;
+            }
+
             let nextValue;
 
             if (isLog) {
@@ -605,6 +632,12 @@ const Knob = React.memo(({ id, param, value, min, max, step, isLog, onChange, on
                 onWheel={handleWheel}
             >
                 <div className="absolute inset-0 rounded-full bg-gradient-to-b from-neutral-600/20 to-transparent pointer-events-none" />
+                {mappedRange && (
+                    <>
+                        <div className="absolute w-[3px] h-[3px] bg-green-400 rounded-full z-10 shadow-[0_0_4px_#4ade80] pointer-events-none" style={{ left: '50%', top: '2px', transformOrigin: '50% 18px', transform: `translate(-50%, 0) rotate(${-135 + mappedRange.min * 270}deg)` }} title="MIDI Min" />
+                        <div className="absolute w-[3px] h-[3px] bg-red-400 rounded-full z-10 shadow-[0_0_4px_#f87171] pointer-events-none" style={{ left: '50%', top: '2px', transformOrigin: '50% 18px', transform: `translate(-50%, 0) rotate(${-135 + mappedRange.max * 270}deg)` }} title="MIDI Max" />
+                    </>
+                )}
                 <div id={id ? `knob-rot-${id}` : undefined} className="absolute inset-0" style={{ transform: `rotate(${angle}deg)` }}>
                     <div className="mx-auto mt-1 w-1 h-3 bg-blue-400 rounded-full shadow-[0_0_6px_rgba(96,165,250,0.8)] group-hover:bg-blue-300 transition-colors pointer-events-none" />
                 </div>
@@ -615,10 +648,10 @@ const Knob = React.memo(({ id, param, value, min, max, step, isLog, onChange, on
                     {Number(value) >= 1000 ? (Number(value) / 1000).toFixed(1) + 'k' : Number(value).toFixed(step < 1 ? 2 : 0)}
                 </span>
             </div>
-
         </div>
     );
-}, (prev, next) => prev.value === next.value && prev.param === next.param);
+}, (prev, next) => prev.value === next.value && prev.param === next.param && prev.mappedRange?.min === next.mappedRange?.min && prev.mappedRange?.max === next.mappedRange?.max);
+
 
 // --- Dedicated EQ Node Component for Bulletproof Dragging ---
 const EQNode = React.memo(({ id, freq = 1000, gain = 0, color, onParamChange }) => {
@@ -2736,6 +2769,39 @@ function DAWStudio() {
   const handleMasterVolumeChange = (val) => {
     dispatchDawAction({ type: 'UPDATE_MASTER_VOL', payload: { volume: Number(val) } });
   };
+
+  const handleKnobRangeAdjust = useCallback((trackId, fxId, param, newVal, isMin) => {
+      setMidiMappings(prev => {
+          let updated = { ...prev };
+          let changed = false;
+
+          Object.keys(updated).forEach(ccKey => {
+              const maps = Array.isArray(updated[ccKey]) ? updated[ccKey] : [updated[ccKey]];
+              const newMaps = maps.map(m => {
+                  const matchesFx = fxId ? (m.type === 'fx_param' && m.trackId === trackId && m.fxId === fxId && m.param === param) : false;
+                  const matchesInst = !fxId ? (m.type === 'inst_param' && m.trackId === trackId && m.param === param) : false;
+
+                  if (matchesFx || matchesInst) {
+                      changed = true;
+                      return { ...m, [isMin ? 'rangeMin' : 'rangeMax']: newVal };
+                  }
+                  return m;
+              });
+              updated[ccKey] = newMaps;
+          });
+
+          return changed ? updated : prev;
+      });
+  }, []);
+
+  const getMappedRangeForKnob = useCallback((trackId, fxId, param) => {
+      for (const maps of Object.values(midiMappings)) {
+          const arr = Array.isArray(maps) ? maps : [maps];
+          const match = arr.find(m => fxId ? (m.type === 'fx_param' && m.trackId === trackId && m.fxId === fxId && m.param === param) : (m.type === 'inst_param' && m.trackId === trackId && m.param === param));
+          if (match) return { min: match.rangeMin !== undefined ? match.rangeMin : 0, max: match.rangeMax !== undefined ? match.rangeMax : 1 };
+      }
+      return null;
+  }, [midiMappings]);
 
   const handleEffectParamChange = (trackId, fxId, param, val) => {
     dispatchDawAction({ type: 'UPDATE_EFFECT_PARAM', payload: { trackId, fxId, param, value: Number(val) } });
@@ -5156,6 +5222,7 @@ function DAWStudio() {
                                                 );
                                             }
                                             const constraints = getParamConstraints(param);
+                                            const mappedRange = getMappedRangeForKnob(track.id, null, param);
                                             return (
                                                 <Knob 
                                                     key={param}
@@ -5168,6 +5235,8 @@ function DAWStudio() {
                                                     isLog={constraints.isLog}
                                                     onChange={(p, v) => handleInstrumentParamChange(track.id, p, v)} 
                                                     onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'inst_param', trackId: track.id, param: param })}
+                                                    mappedRange={mappedRange}
+                                                    onRangeAdjust={(p, val, isMin) => handleKnobRangeAdjust(track.id, null, p, val, isMin)}
                                                 />
                                             );
                                         })}
@@ -5228,6 +5297,7 @@ function DAWStudio() {
                                 <div className="flex-1 flex flex-wrap gap-x-6 gap-y-4 overflow-y-auto custom-scrollbar pt-2 pr-2 content-start">
                                    {Object.keys(fx.params || {}).map(param => {
                                      const constraints = getParamConstraints(param);
+                                     const mappedRange = getMappedRangeForKnob(track.id, fx.id, param);
                                      return (
                                         <Knob 
                                             key={param}
@@ -5240,6 +5310,8 @@ function DAWStudio() {
                                             isLog={constraints.isLog}
                                             onChange={(p, v) => handleEffectParamChange(track.id, fx.id, p, v)} 
                                             onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'fx_param', trackId: track.id, fxId: fx.id, param: param })}
+                                            mappedRange={mappedRange}
+                                            onRangeAdjust={(p, val, isMin) => handleKnobRangeAdjust(track.id, fx.id, p, val, isMin)}
                                         />
                                      );
                                    })}
