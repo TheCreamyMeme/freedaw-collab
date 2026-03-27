@@ -2371,7 +2371,7 @@ function DAWStudio() {
               }
 
               const depthRatio = lfo.depth / 100;
-              const normalizedVal = 0.5 + (out - 0.5) * depthRatio;
+              const lfoSwing = (out - 0.5) * 2 * depthRatio; // Ranges from -1.0 to 1.0 at 100% depth
 
               const lfoDot = document.getElementById(`lfo-vis-dot-${lfo.id}`);
               if (lfoDot) {
@@ -2380,18 +2380,30 @@ function DAWStudio() {
               }
 
               (lfo.mappings || []).forEach(mapping => {
+                  const track = tracksRef.current.find(t => t.id === mapping.trackId);
                   const synth = synthsRef.current[mapping.trackId];
-                  if (!synth) return;
+                  if (!track || !synth) return;
 
                   if (mapping.type === 'fx_param') {
+                      const fx = track.effects?.find(f => f.id === mapping.fxId);
+                      if (!fx) return;
+                      const baseVal = fx.params[mapping.param];
                       const constraints = getParamConstraints(mapping.param);
+                      
                       let mappedVal;
                       if (constraints.isLog) {
                           const minLog = Math.log(Math.max(0.001, constraints.min));
                           const maxLog = Math.log(constraints.max);
-                          mappedVal = Math.exp(minLog + normalizedVal * (maxLog - minLog));
+                          const baseLog = Math.log(Math.max(0.001, baseVal));
+                          const rangeLog = maxLog - minLog;
+                          
+                          let targetLog = baseLog + (lfoSwing * (rangeLog / 2));
+                          targetLog = Math.max(minLog, Math.min(maxLog, targetLog));
+                          mappedVal = Math.exp(targetLog);
                       } else {
-                          mappedVal = constraints.min + normalizedVal * (constraints.max - constraints.min);
+                          const range = constraints.max - constraints.min;
+                          mappedVal = baseVal + (lfoSwing * (range / 2));
+                          mappedVal = Math.max(constraints.min, Math.min(constraints.max, mappedVal));
                       }
                       if (constraints.step && !constraints.isLog) mappedVal = Math.round(mappedVal / constraints.step) * constraints.step;
 
@@ -2412,14 +2424,24 @@ function DAWStudio() {
                           }
                       }
                   } else if (mapping.type === 'inst_param') {
+                      const baseVal = track.instrumentParams?.[mapping.param];
+                      if (baseVal === undefined) return;
                       const constraints = getParamConstraints(mapping.param);
+                      
                       let mappedVal;
                       if (constraints.isLog) {
                           const minLog = Math.log(Math.max(0.001, constraints.min));
                           const maxLog = Math.log(constraints.max);
-                          mappedVal = Math.exp(minLog + normalizedVal * (maxLog - minLog));
+                          const baseLog = Math.log(Math.max(0.001, baseVal));
+                          const rangeLog = maxLog - minLog;
+                          
+                          let targetLog = baseLog + (lfoSwing * (rangeLog / 2));
+                          targetLog = Math.max(minLog, Math.min(maxLog, targetLog));
+                          mappedVal = Math.exp(targetLog);
                       } else {
-                          mappedVal = constraints.min + normalizedVal * (constraints.max - constraints.min);
+                          const range = constraints.max - constraints.min;
+                          mappedVal = baseVal + (lfoSwing * (range / 2));
+                          mappedVal = Math.max(constraints.min, Math.min(constraints.max, mappedVal));
                       }
                       if (constraints.step && !constraints.isLog) mappedVal = Math.round(mappedVal / constraints.step) * constraints.step;
 
@@ -2439,12 +2461,16 @@ function DAWStudio() {
                           }
                       }
                   } else if (mapping.type === 'mixer_vol') {
-                      const cacheKey = `lastLfo_vol`;
-                      if (synth[cacheKey] !== normalizedVal) {
-                          synth.faderGain.gain.setTargetAtTime(normalizedVal, now, 0.05);
-                          synth[cacheKey] = normalizedVal;
+                      const baseVal = track.volume / 100;
+                      let mappedVal = baseVal + (lfoSwing * 0.5); // Full depth = +/- 50% volume
+                      mappedVal = Math.max(0, Math.min(1, mappedVal));
 
-                          const volPercent = normalizedVal * 100;
+                      const cacheKey = `lastLfo_vol`;
+                      if (synth[cacheKey] !== mappedVal) {
+                          synth.faderGain.gain.setTargetAtTime(mappedVal, now, 0.05);
+                          synth[cacheKey] = mappedVal;
+
+                          const volPercent = mappedVal * 100;
                           const f1 = document.getElementById(`vol-fill-arr-${mapping.trackId}`);
                           const f2 = document.getElementById(`vol-fill-mix-${mapping.trackId}`);
                           const i1 = document.getElementById(`vol-input-arr-${mapping.trackId}`);
@@ -2455,14 +2481,17 @@ function DAWStudio() {
                           if (i2) i2.value = volPercent;
                       }
                   } else if (mapping.type === 'mixer_pan' && synth.panner?.pan) {
-                      const mappedPan = (normalizedVal * 2) - 1;
+                      const baseVal = track.pan / 50;
+                      let mappedPan = baseVal + lfoSwing; // Full depth = +/- 100% pan (Left to Right)
+                      mappedPan = Math.max(-1, Math.min(1, mappedPan));
+
                       const cacheKey = `lastLfo_pan`;
                       if (synth[cacheKey] !== mappedPan) {
                           synth.panner.pan.setTargetAtTime(mappedPan, now, 0.05);
                           synth[cacheKey] = mappedPan;
 
                           const panInput = document.getElementById(`pan-input-${mapping.trackId}`);
-                          if (panInput) panInput.value = (normalizedVal * 100) - 50;
+                          if (panInput) panInput.value = mappedPan * 50;
                       }
                   }
               });
