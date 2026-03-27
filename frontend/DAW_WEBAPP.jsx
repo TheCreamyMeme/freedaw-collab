@@ -515,7 +515,7 @@ const getBitcrusherCurve = (bitDepth) => {
 };
 
 // --- Reusable DAW Radial Knob Component ---
-const Knob = React.memo(({ param, value, min, max, step, isLog, onChange, onContextMenu }) => {
+const Knob = React.memo(({ id, param, value, min, max, step, isLog, onChange, onContextMenu }) => {
     const [isDragging, setIsDragging] = useState(false);
     const dragStartY = useRef(0);
     const startValue = useRef(0);
@@ -605,16 +605,17 @@ const Knob = React.memo(({ param, value, min, max, step, isLog, onChange, onCont
                 onWheel={handleWheel}
             >
                 <div className="absolute inset-0 rounded-full bg-gradient-to-b from-neutral-600/20 to-transparent pointer-events-none" />
-                <div className="absolute inset-0" style={{ transform: `rotate(${angle}deg)` }}>
+                <div id={id ? `knob-rot-${id}` : undefined} className="absolute inset-0" style={{ transform: `rotate(${angle}deg)` }}>
                     <div className="mx-auto mt-1 w-1 h-3 bg-blue-400 rounded-full shadow-[0_0_6px_rgba(96,165,250,0.8)] group-hover:bg-blue-300 transition-colors pointer-events-none" />
                 </div>
             </div>
             <div className="flex flex-col items-center w-full">
                 <span className="text-[10px] text-neutral-300 font-bold uppercase tracking-wider text-center truncate w-full" title={displayName}>{displayName}</span>
-                <span className="text-[10px] text-blue-400 font-mono bg-neutral-950 px-1.5 py-0.5 rounded mt-0.5 border border-neutral-800 shadow-inner select-none">
+                <span id={id ? `knob-val-${id}` : undefined} className="text-[10px] text-blue-400 font-mono bg-neutral-950 px-1.5 py-0.5 rounded mt-0.5 border border-neutral-800 shadow-inner select-none">
                     {Number(value) >= 1000 ? (Number(value) / 1000).toFixed(1) + 'k' : Number(value).toFixed(step < 1 ? 2 : 0)}
                 </span>
             </div>
+
         </div>
     );
 }, (prev, next) => prev.value === next.value && prev.param === next.param);
@@ -2353,11 +2354,12 @@ function DAWStudio() {
           });
       }
 
-      // Evaluate LFOs
+      // Evaluate LFOs tied to Project Time
+      const projectTimeSec = stateRefs.current.currentTime * (60 / stateRefs.current.bpm);
       const currentLfos = lfosRef.current;
       if (currentLfos && currentLfos.length > 0) {
           currentLfos.forEach(lfo => {
-              let phase = (now * lfo.rate) % 1.0;
+              let phase = (projectTimeSec * lfo.rate) % 1.0;
               let out = 0.5;
               if (lfo.type === 'sine') out = (Math.sin(phase * Math.PI * 2) + 1) / 2;
               else if (lfo.type === 'square') out = phase < 0.5 ? 1 : 0;
@@ -2370,6 +2372,12 @@ function DAWStudio() {
 
               const depthRatio = lfo.depth / 100;
               const normalizedVal = 0.5 + (out - 0.5) * depthRatio;
+
+              const lfoDot = document.getElementById(`lfo-vis-dot-${lfo.id}`);
+              if (lfoDot) {
+                  lfoDot.style.left = `${phase * 100}%`;
+                  lfoDot.style.top = `${(1 - out) * 100}%`;
+              }
 
               (lfo.mappings || []).forEach(mapping => {
                   const synth = synthsRef.current[mapping.trackId];
@@ -2391,12 +2399,60 @@ function DAWStudio() {
                       if (synth[cacheKey] !== mappedVal) {
                           applyAudioEffectParam(mapping.trackId, mapping.fxId, mapping.param, mappedVal, now);
                           synth[cacheKey] = mappedVal;
+
+                          const knobRot = document.getElementById(`knob-rot-fx-${mapping.trackId}-${mapping.fxId}-${mapping.param}`);
+                          const knobVal = document.getElementById(`knob-val-fx-${mapping.trackId}-${mapping.fxId}-${mapping.param}`);
+                          if (knobRot && knobVal) {
+                              const percent = constraints.isLog 
+                                  ? (Math.log(Math.max(0.001, mappedVal)) - Math.log(Math.max(0.001, constraints.min))) / (Math.log(constraints.max) - Math.log(Math.max(0.001, constraints.min)))
+                                  : (mappedVal - constraints.min) / (constraints.max - constraints.min);
+                              const angle = -135 + (percent || 0) * 270;
+                              knobRot.style.transform = `rotate(${angle}deg)`;
+                              knobVal.innerText = mappedVal >= 1000 ? (mappedVal / 1000).toFixed(1) + 'k' : mappedVal.toFixed(constraints.step < 1 ? 2 : 0);
+                          }
+                      }
+                  } else if (mapping.type === 'inst_param') {
+                      const constraints = getParamConstraints(mapping.param);
+                      let mappedVal;
+                      if (constraints.isLog) {
+                          const minLog = Math.log(Math.max(0.001, constraints.min));
+                          const maxLog = Math.log(constraints.max);
+                          mappedVal = Math.exp(minLog + normalizedVal * (maxLog - minLog));
+                      } else {
+                          mappedVal = constraints.min + normalizedVal * (constraints.max - constraints.min);
+                      }
+                      if (constraints.step && !constraints.isLog) mappedVal = Math.round(mappedVal / constraints.step) * constraints.step;
+
+                      const cacheKey = `lastLfo_inst_${mapping.param}`;
+                      if (synth[cacheKey] !== mappedVal) {
+                          synth[cacheKey] = mappedVal;
+                          
+                          const knobRot = document.getElementById(`knob-rot-inst-${mapping.trackId}-${mapping.param}`);
+                          const knobVal = document.getElementById(`knob-val-inst-${mapping.trackId}-${mapping.param}`);
+                          if (knobRot && knobVal) {
+                              const percent = constraints.isLog 
+                                  ? (Math.log(Math.max(0.001, mappedVal)) - Math.log(Math.max(0.001, constraints.min))) / (Math.log(constraints.max) - Math.log(Math.max(0.001, constraints.min)))
+                                  : (mappedVal - constraints.min) / (constraints.max - constraints.min);
+                              const angle = -135 + (percent || 0) * 270;
+                              knobRot.style.transform = `rotate(${angle}deg)`;
+                              knobVal.innerText = mappedVal >= 1000 ? (mappedVal / 1000).toFixed(1) + 'k' : mappedVal.toFixed(constraints.step < 1 ? 2 : 0);
+                          }
                       }
                   } else if (mapping.type === 'mixer_vol') {
                       const cacheKey = `lastLfo_vol`;
                       if (synth[cacheKey] !== normalizedVal) {
                           synth.faderGain.gain.setTargetAtTime(normalizedVal, now, 0.05);
                           synth[cacheKey] = normalizedVal;
+
+                          const volPercent = normalizedVal * 100;
+                          const f1 = document.getElementById(`vol-fill-arr-${mapping.trackId}`);
+                          const f2 = document.getElementById(`vol-fill-mix-${mapping.trackId}`);
+                          const i1 = document.getElementById(`vol-input-arr-${mapping.trackId}`);
+                          const i2 = document.getElementById(`vol-input-mix-${mapping.trackId}`);
+                          if (f1) f1.style.height = `${volPercent}%`;
+                          if (f2) f2.style.height = `${volPercent}%`;
+                          if (i1) i1.value = volPercent;
+                          if (i2) i2.value = volPercent;
                       }
                   } else if (mapping.type === 'mixer_pan' && synth.panner?.pan) {
                       const mappedPan = (normalizedVal * 2) - 1;
@@ -2404,6 +2460,9 @@ function DAWStudio() {
                       if (synth[cacheKey] !== mappedPan) {
                           synth.panner.pan.setTargetAtTime(mappedPan, now, 0.05);
                           synth[cacheKey] = mappedPan;
+
+                          const panInput = document.getElementById(`pan-input-${mapping.trackId}`);
+                          if (panInput) panInput.value = (normalizedVal * 100) - 50;
                       }
                   }
               });
@@ -2516,6 +2575,68 @@ function DAWStudio() {
         cancelAnimationFrame(reqId);
         // Sync React state seamlessly when playback stops so the UI doesn't snap back
         setCurrentTime(stateRefs.current.currentTime);
+
+        // Snap everything back to baseline values when playback stops to clean up DOM manipulations
+        lfosRef.current.forEach(lfo => {
+            const lfoDot = document.getElementById(`lfo-vis-dot-${lfo.id}`);
+            if (lfoDot) { lfoDot.style.left = '0%'; lfoDot.style.top = '50%'; }
+            
+            (lfo.mappings || []).forEach(mapping => {
+                const track = tracksRef.current.find(t => t.id === mapping.trackId);
+                const synth = synthsRef.current[mapping.trackId];
+                if (!track) return;
+                
+                if (mapping.type === 'fx_param') {
+                    const fx = track.effects?.find(f => f.id === mapping.fxId);
+                    if (fx) {
+                        const baseVal = fx.params[mapping.param];
+                        if (synth) applyAudioEffectParam(mapping.trackId, mapping.fxId, mapping.param, baseVal, audioCtxRef.current?.currentTime || 0);
+                        const constraints = getParamConstraints(mapping.param);
+                        const knobRot = document.getElementById(`knob-rot-fx-${mapping.trackId}-${mapping.fxId}-${mapping.param}`);
+                        const knobVal = document.getElementById(`knob-val-fx-${mapping.trackId}-${mapping.fxId}-${mapping.param}`);
+                        if (knobRot && knobVal) {
+                            const percent = constraints.isLog 
+                                ? (Math.log(Math.max(0.001, baseVal)) - Math.log(Math.max(0.001, constraints.min))) / (Math.log(constraints.max) - Math.log(Math.max(0.001, constraints.min)))
+                                : (baseVal - constraints.min) / (constraints.max - constraints.min);
+                            const angle = -135 + (percent || 0) * 270;
+                            knobRot.style.transform = `rotate(${angle}deg)`;
+                            knobVal.innerText = baseVal >= 1000 ? (baseVal / 1000).toFixed(1) + 'k' : baseVal.toFixed(constraints.step < 1 ? 2 : 0);
+                        }
+                    }
+                } else if (mapping.type === 'inst_param') {
+                    const baseVal = track.instrumentParams?.[mapping.param];
+                    if (baseVal !== undefined) {
+                        const constraints = getParamConstraints(mapping.param);
+                        const knobRot = document.getElementById(`knob-rot-inst-${mapping.trackId}-${mapping.param}`);
+                        const knobVal = document.getElementById(`knob-val-inst-${mapping.trackId}-${mapping.param}`);
+                        if (knobRot && knobVal) {
+                            const percent = constraints.isLog 
+                                ? (Math.log(Math.max(0.001, baseVal)) - Math.log(Math.max(0.001, constraints.min))) / (Math.log(constraints.max) - Math.log(Math.max(0.001, constraints.min)))
+                                : (baseVal - constraints.min) / (constraints.max - constraints.min);
+                            const angle = -135 + (percent || 0) * 270;
+                            knobRot.style.transform = `rotate(${angle}deg)`;
+                            knobVal.innerText = baseVal >= 1000 ? (baseVal / 1000).toFixed(1) + 'k' : baseVal.toFixed(constraints.step < 1 ? 2 : 0);
+                        }
+                    }
+                } else if (mapping.type === 'mixer_vol') {
+                    const baseVal = track.volume;
+                    if (synth) synth.faderGain.gain.setTargetAtTime(baseVal / 100, audioCtxRef.current?.currentTime || 0, 0.05);
+                    const f1 = document.getElementById(`vol-fill-arr-${mapping.trackId}`);
+                    const f2 = document.getElementById(`vol-fill-mix-${mapping.trackId}`);
+                    const i1 = document.getElementById(`vol-input-arr-${mapping.trackId}`);
+                    const i2 = document.getElementById(`vol-input-mix-${mapping.trackId}`);
+                    if (f1) f1.style.height = `${baseVal}%`;
+                    if (f2) f2.style.height = `${baseVal}%`;
+                    if (i1) i1.value = baseVal;
+                    if (i2) i2.value = baseVal;
+                } else if (mapping.type === 'mixer_pan') {
+                    const baseVal = track.pan;
+                    if (synth && synth.panner?.pan) synth.panner.pan.setTargetAtTime(baseVal / 50, audioCtxRef.current?.currentTime || 0, 0.05);
+                    const panInput = document.getElementById(`pan-input-${mapping.trackId}`);
+                    if (panInput) panInput.value = baseVal;
+                }
+            });
+        });
     };
   }, [isPlaying, bpm, zoom, BEAT_WIDTH]);
 
@@ -4377,7 +4498,7 @@ function DAWStudio() {
                   
                   <div className="w-full px-4 mt-2 flex flex-col items-center" onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'mixer_pan', trackId: t.id })}>
                      <span className="text-[9px] text-neutral-500 mb-1 font-mono">PAN</span>
-                     <input type="range" min="-50" max="50" value={t.pan} onDoubleClick={() => dispatchDawAction({ type: 'UPDATE_TRACK_PAN', payload: { id: t.id, pan: 0 } })} onChange={(e) => dispatchDawAction({ type: 'UPDATE_TRACK_PAN', payload: { id: t.id, pan: Number(e.target.value) } })} onWheel={(e) => { e.stopPropagation(); dispatchDawAction({ type: 'UPDATE_TRACK_PAN', payload: { id: t.id, pan: Math.min(50, Math.max(-50, t.pan + (e.deltaY < 0 ? 5 : -5))) } }); }} className="w-full h-1 bg-neutral-800 rounded-full appearance-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-2 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-neutral-400 cursor-pointer" />
+                     <input id={`pan-input-${t.id}`} type="range" min="-50" max="50" value={t.pan} onDoubleClick={() => dispatchDawAction({ type: 'UPDATE_TRACK_PAN', payload: { id: t.id, pan: 0 } })} onChange={(e) => dispatchDawAction({ type: 'UPDATE_TRACK_PAN', payload: { id: t.id, pan: Number(e.target.value) } })} onWheel={(e) => { e.stopPropagation(); dispatchDawAction({ type: 'UPDATE_TRACK_PAN', payload: { id: t.id, pan: Math.min(50, Math.max(-50, t.pan + (e.deltaY < 0 ? 5 : -5))) } }); }} className="w-full h-1 bg-neutral-800 rounded-full appearance-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-2 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-neutral-400 cursor-pointer" />
                   </div>
 
                   <div className="flex gap-1.5 mt-4">
@@ -4388,11 +4509,11 @@ function DAWStudio() {
                   <div className="flex-1 w-full flex justify-center py-4 relative mt-2 min-h-[200px]" onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'mixer_vol', trackId: t.id })}>
                      <div className="flex justify-center gap-2 h-full w-full pointer-events-none">
                          <div className="w-2 bg-black rounded-full h-full relative border border-neutral-800">
-                            <div className={`absolute bottom-0 w-full rounded-full opacity-60 ${t.color}`} style={{ height: `${t.volume}%` }} />
+                            <div id={`vol-fill-mix-${t.id}`} className={`absolute bottom-0 w-full rounded-full opacity-60 ${t.color}`} style={{ height: `${t.volume}%` }} />
                          </div>
                          <VuMeter trackId={t.id} synthsRef={synthsRef} isVertical={true} />
                      </div>
-                     <input type="range" orient="vertical" min="0" max="100" value={t.volume} onChange={(e) => dispatchDawAction({ type: 'UPDATE_TRACK_VOL', payload: { id: t.id, volume: Number(e.target.value) } })} onWheel={(e) => { e.stopPropagation(); dispatchDawAction({ type: 'UPDATE_TRACK_VOL', payload: { id: t.id, volume: Math.min(100, Math.max(0, t.volume + (e.deltaY < 0 ? 5 : -5))) } }); }} className="absolute inset-0 opacity-0 cursor-pointer h-full w-full" style={{ WebkitAppearance: 'slider-vertical' }} />
+                     <input id={`vol-input-mix-${t.id}`} type="range" orient="vertical" min="0" max="100" value={t.volume} onChange={(e) => dispatchDawAction({ type: 'UPDATE_TRACK_VOL', payload: { id: t.id, volume: Number(e.target.value) } })} onWheel={(e) => { e.stopPropagation(); dispatchDawAction({ type: 'UPDATE_TRACK_VOL', payload: { id: t.id, volume: Math.min(100, Math.max(0, t.volume + (e.deltaY < 0 ? 5 : -5))) } }); }} className="absolute inset-0 opacity-0 cursor-pointer h-full w-full" style={{ WebkitAppearance: 'slider-vertical' }} />
                   </div>
                   <span className="text-[10px] font-mono text-neutral-500">{t.volume}</span>
                </div>
@@ -4460,6 +4581,17 @@ function DAWStudio() {
                             isLog={false}
                             onChange={(p, v) => dispatchDawAction({ type: 'UPDATE_LFO', payload: { id: lfo.id, updates: { depth: v } } })} 
                         />
+                    </div>
+
+                    <div className="relative w-full h-12 bg-black border border-neutral-800 rounded-lg overflow-hidden mt-4 shrink-0 shadow-inner">
+                        <div id={`lfo-vis-dot-${lfo.id}`} className="absolute w-3 h-3 bg-purple-500 rounded-full shadow-[0_0_10px_#a855f7] -ml-1.5 -mt-1.5 z-10" style={{ left: '0%', top: '50%' }} />
+                        <div className="absolute inset-y-0 left-0 w-full flex items-center pointer-events-none">
+                            {lfo.type === 'sine' && <svg width="100%" height="100%" preserveAspectRatio="none" viewBox="0 0 100 100"><path d="M0,50 Q25,0 50,50 T100,50" fill="none" stroke="#a855f7" strokeWidth="2" opacity="0.3"/></svg>}
+                            {lfo.type === 'triangle' && <svg width="100%" height="100%" preserveAspectRatio="none" viewBox="0 0 100 100"><path d="M0,50 L25,0 L75,100 L100,50" fill="none" stroke="#a855f7" strokeWidth="2" opacity="0.3"/></svg>}
+                            {lfo.type === 'square' && <svg width="100%" height="100%" preserveAspectRatio="none" viewBox="0 0 100 100"><path d="M0,0 L50,0 L50,100 L100,100" fill="none" stroke="#a855f7" strokeWidth="2" opacity="0.3"/></svg>}
+                            {lfo.type === 'sawtooth' && <svg width="100%" height="100%" preserveAspectRatio="none" viewBox="0 0 100 100"><path d="M0,100 L100,0 V100" fill="none" stroke="#a855f7" strokeWidth="2" opacity="0.3"/></svg>}
+                            {lfo.type === 'stepped' && <svg width="100%" height="100%" preserveAspectRatio="none" viewBox="0 0 100 100"><path d="M0,50 L100,50" fill="none" stroke="#a855f7" strokeWidth="2" opacity="0.3" strokeDasharray="5,5"/></svg>}
+                        </div>
                     </div>
 
                     {lfo.type === 'stepped' && (
@@ -4533,9 +4665,12 @@ function DAWStudio() {
                                     </div>
                                 </div>
                                 <div className="flex flex-col gap-1 px-1">
-                                    <div className="flex gap-2 items-center">
-                                        <Volume2 size={10} className="text-neutral-500 shrink-0"/>
-                                        <input type="range" min="0" max="100" value={t.volume} onChange={(e) => dispatchDawAction({ type: 'UPDATE_TRACK_VOL', payload: { id: t.id, volume: Number(e.target.value) } })} onWheel={(e) => { e.stopPropagation(); dispatchDawAction({ type: 'UPDATE_TRACK_VOL', payload: { id: t.id, volume: Math.min(100, Math.max(0, t.volume + (e.deltaY < 0 ? 5 : -5))) } }); }} className="w-full h-1 bg-black rounded-full appearance-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-2 [&::-webkit-slider-thumb]:h-2 [&::-webkit-slider-thumb]:bg-white cursor-pointer" />
+                                    <div className="flex gap-2 items-center relative">
+                                        <Volume2 size={10} className="text-neutral-500 shrink-0 z-10"/>
+                                        <div className="flex-1 h-1 bg-black rounded-full relative border border-neutral-800 pointer-events-none">
+                                            <div id={`vol-fill-arr-${t.id}`} className={`absolute left-0 top-0 bottom-0 rounded-full opacity-60 ${t.color}`} style={{ width: `${t.volume}%` }} />
+                                        </div>
+                                        <input id={`vol-input-arr-${t.id}`} type="range" min="0" max="100" value={t.volume} onChange={(e) => dispatchDawAction({ type: 'UPDATE_TRACK_VOL', payload: { id: t.id, volume: Number(e.target.value) } })} onWheel={(e) => { e.stopPropagation(); dispatchDawAction({ type: 'UPDATE_TRACK_VOL', payload: { id: t.id, volume: Math.min(100, Math.max(0, t.volume + (e.deltaY < 0 ? 5 : -5))) } }); }} className="absolute inset-0 opacity-0 cursor-pointer w-full pl-4" />
                                     </div>
                                     <div className="flex gap-2 items-center mb-1 pr-2">
                                         <Activity size={10} className="text-neutral-600 shrink-0"/>
@@ -4887,7 +5022,8 @@ function DAWStudio() {
                                             const constraints = getParamConstraints(param);
                                             return (
                                                 <Knob 
-                                                    key={param} 
+                                                    key={param}
+                                                    id={`inst-${track.id}-${param}`}
                                                     param={param} 
                                                     value={track.instrumentParams[param]} 
                                                     min={constraints.min} 
@@ -4958,7 +5094,8 @@ function DAWStudio() {
                                      const constraints = getParamConstraints(param);
                                      return (
                                         <Knob 
-                                            key={param} 
+                                            key={param}
+                                            id={`fx-${track.id}-${fx.id}-${param}`}
                                             param={param} 
                                             value={fx.params[param]} 
                                             min={constraints.min} 
