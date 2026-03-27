@@ -2552,18 +2552,43 @@ function DAWStudio() {
         if (track.type === 'midi' && shouldPlayTrack) {
           const clipTime = newTime - activeClip.start;
           const activeNotes = activeClip.notes?.filter(n => clipTime >= n.start && clipTime < n.start + n.duration) || [];
+          
+          // Merge Base Params with Live LFO and Automation values
+          const dynamicInstParams = { ...track.instrumentParams };
+          
+          lfosRef.current?.forEach(lfo => {
+              (lfo.mappings || []).forEach(m => {
+                  if (m.type === 'inst_param' && m.trackId === track.id) {
+                      const lfoVal = synth[`lastLfo_inst_${m.param}`];
+                      if (lfoVal !== undefined) dynamicInstParams[m.param] = lfoVal;
+                  }
+              });
+          });
+
+          if (track.automation) {
+              Object.entries(track.automation).forEach(([paramKey, points]) => {
+                  if (paramKey.startsWith('inst_param_') && points.length > 0) {
+                      const val = getInterpolatedValue(points, newTime);
+                      if (val !== null) {
+                          const pName = paramKey.split('_').slice(2).join('_');
+                          dynamicInstParams[pName] = val;
+                      }
+                  }
+              });
+          }
+
           activeNotes.forEach(note => {
             if (!synth.activeNoteIds.has(note.id)) {
               synth.activeNoteIds.add(note.id);
               const durSeconds = note.duration * (60/bpm);
               const pbNode = synth.pitchBendNode;
-              if (track.instrument === 'inst-drum') triggerDrum(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, track.instrumentParams, note.velocity);
-              else if (track.instrument === 'inst-fm') triggerFMSynth(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, track.instrumentParams, note.velocity, pbNode);
-              else if (track.instrument === 'inst-supersaw') triggerSupersaw(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, track.instrumentParams, note.velocity, pbNode);
-              else if (track.instrument === 'inst-pluck') triggerPluck(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, track.instrumentParams, note.velocity, pbNode);
-              else if (track.instrument === 'inst-acid') triggerAcid(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, track.instrumentParams, note.velocity, pbNode);
-              else if (track.instrument === 'inst-organ') triggerOrgan(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, track.instrumentParams, note.velocity, pbNode);
-              else triggerSubtractive(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, track.instrumentParams, note.velocity, pbNode);
+              if (track.instrument === 'inst-drum') triggerDrum(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, dynamicInstParams, note.velocity);
+              else if (track.instrument === 'inst-fm') triggerFMSynth(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, note.velocity, pbNode);
+              else if (track.instrument === 'inst-supersaw') triggerSupersaw(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, note.velocity, pbNode);
+              else if (track.instrument === 'inst-pluck') triggerPluck(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, note.velocity, pbNode);
+              else if (track.instrument === 'inst-acid') triggerAcid(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, note.velocity, pbNode);
+              else if (track.instrument === 'inst-organ') triggerOrgan(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, note.velocity, pbNode);
+              else triggerSubtractive(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, note.velocity, pbNode);
             }
           });
           const activeIds = activeNotes.map(n => n.id);
