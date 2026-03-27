@@ -3582,11 +3582,10 @@ function DAWStudio() {
               console.warn("Could not delete from server", err);
           }
       }
-      
-      // 3. Refresh the UI to ensure sync
-      loadProjects(authTokenRef.current);
+        
       showToast("Project deleted.", "info");
   };
+
 
   const connectSocket = async (token, user) => {
       if (socketRef.current) return;
