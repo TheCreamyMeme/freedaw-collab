@@ -3538,7 +3538,7 @@ function DAWStudio() {
           setLocalProjects(offlineProjs || []);
       } catch(e) { console.warn("Failed to load local projects", e); }
       
-      if (token) {
+      if (token && !token.startsWith('local_token_')) {
           try {
               const res = await fetch(`${API_BASE_URL}/api/projects`, { headers: { 'Authorization': `Bearer ${token}` } });
               if (!res.ok) throw new Error("API rejected project fetch");
@@ -3550,30 +3550,40 @@ function DAWStudio() {
               }
           } catch (e) { 
               console.error("Could not fetch server projects", e); 
-              showToast("Failed to fetch cloud projects.", "error");
           }
+      } else if (token && token.startsWith('local_token_')) {
+          setServerProjects([]); // Ensure server projects are cleared for local fallback accounts
       }
   };
 
   const handleDeleteProject = async (e, projectId) => {
       e.stopPropagation();
       
+      // Optimistic UI Update: Instantly remove the project from the screen
+      setLocalProjects(prev => prev.filter(p => p.id !== projectId));
+      setServerProjects(prev => prev.filter(p => p.id !== projectId));
+      
       // 1. Delete from local offline database
-      await idb.delete('projects', projectId);
+      try {
+          await idb.delete('projects', projectId);
+      } catch(err) {
+          console.warn("Local DB delete skipped", err);
+      }
       
       // 2. Delete from remote cloud database
-      if (authTokenRef.current) {
+      if (authTokenRef.current && !authTokenRef.current.startsWith('local_token_')) {
           try {
-              await fetch(`${API_BASE_URL}/api/projects/${projectId}`, {
+              const res = await fetch(`${API_BASE_URL}/api/projects/${projectId}`, {
                   method: 'DELETE',
                   headers: { 'Authorization': `Bearer ${authTokenRef.current}` }
               });
+              if (!res.ok) console.warn("Server refused deletion", await res.text());
           } catch (err) {
               console.warn("Could not delete from server", err);
           }
       }
       
-      // 3. Refresh the UI
+      // 3. Refresh the UI to ensure sync
       loadProjects(authTokenRef.current);
       showToast("Project deleted.", "info");
   };
