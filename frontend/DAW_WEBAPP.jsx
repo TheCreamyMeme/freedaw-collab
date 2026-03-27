@@ -3633,7 +3633,10 @@ function DAWStudio() {
           const socket = ioClient(API_BASE_URL); 
           socketRef.current = socket;
 
-          const joinCurrentRoom = () => socket.emit('join-room', 'global-studio', user);
+          const joinCurrentRoom = () => {
+              const freshUser = JSON.parse(localStorage.getItem('freedaw_user')) || user;
+              socket.emit('join-room', 'global-studio', freshUser);
+          };
           if (socket.connected) joinCurrentRoom();
           socket.on('connect', joinCurrentRoom);
 
@@ -3642,10 +3645,12 @@ function DAWStudio() {
               setPeers(prev => ({ ...prev, [peerId]: { ...peerProfile } }));
               
               // CRITICAL FIX: Broadcast my profile back so the new user knows I'm online!
+              // Fetch fresh user state from localStorage to ensure we broadcast the newly uploaded avatar
+              const freshUser = JSON.parse(localStorage.getItem('freedaw_user')) || user;
               socket.emit('presence-update', { 
-                  username: user.username, avatar: user.avatar, color: user.color, 
-                  bio: user.bio, email: user.email, website: user.website, 
-                  instagram: user.instagram, twitter: user.twitter 
+                  username: freshUser.username, avatar: freshUser.avatar, color: freshUser.color, 
+                  bio: freshUser.bio, email: freshUser.email, website: freshUser.website, 
+                  instagram: freshUser.instagram, twitter: freshUser.twitter 
               });
           });
           
@@ -5698,9 +5703,11 @@ function DAWStudio() {
                                             Object.values(peers).forEach(p => {
                                                 if (p.username && p.username !== currentUser?.username) {
                                                     if (unifiedUsers.has(p.username)) {
-                                                        unifiedUsers.get(p.username).isOnline = true;
+                                                        const existing = unifiedUsers.get(p.username);
+                                                        existing.isOnline = true;
+                                                        if (p.avatar) existing.avatar = p.avatar;
                                                     } else {
-                                                        unifiedUsers.set(p.username, { id: `peer_${p.username}`, username: p.username, isOnline: true });
+                                                        unifiedUsers.set(p.username, { id: `peer_${p.username}`, username: p.username, avatar: p.avatar, isOnline: true });
                                                     }
                                                 }
                                             });
@@ -5719,7 +5726,9 @@ function DAWStudio() {
                                                     <div key={u.id} className="flex justify-between items-center bg-neutral-950 border border-neutral-800 p-2 rounded-lg group hover:border-neutral-700 transition-colors">
                                                         <div className="flex items-center gap-3">
                                                             <div className="relative">
-                                                                <div className="w-8 h-8 rounded-full bg-neutral-800 flex items-center justify-center text-xs font-bold text-white shadow-inner">{u.username.charAt(0).toUpperCase()}</div>
+                                                                <div className="w-8 h-8 rounded-full bg-neutral-800 flex items-center justify-center text-xs font-bold text-white shadow-inner overflow-hidden">
+                                                                    {u.avatar ? <img src={u.avatar} alt={u.username} className="w-full h-full object-cover" /> : u.username.charAt(0).toUpperCase()}
+                                                                </div>
                                                                 {u.isOnline && <div className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-green-500 rounded-full border-2 border-neutral-950 shadow-[0_0_5px_#22c55e]" title="Online" />}
                                                             </div>
                                                             <span className="text-sm text-neutral-300 font-medium">{u.username}</span>
