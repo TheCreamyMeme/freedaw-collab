@@ -4995,7 +4995,7 @@ function DAWStudio() {
                 const track = tracks.find(t => t.id === bottomDock.trackId);
                 if (!track) return null;
                 return (
-                <div style={{ height: dockHeight }} className="bg-neutral-900 border-t border-neutral-800 flex flex-col shrink-0 shadow-[0_-4px_24px_rgba(0,0,0,0.3)] z-30 relative">
+                <div style={{ height: 'auto', minHeight: '260px', maxHeight: '70vh' }} className="bg-neutral-900 border-t border-neutral-800 flex flex-col shrink-0 shadow-[0_-4px_24px_rgba(0,0,0,0.3)] z-30 relative">
                     <div className="absolute top-0 left-0 right-0 h-1.5 -translate-y-1/2 cursor-ns-resize hover:bg-blue-500 z-50 transition-colors" onMouseDown={() => setDraggingDockHeight(true)} />
                     <div className="h-8 bg-neutral-950 flex justify-between items-center px-4 border-b border-neutral-800 shrink-0">
                         <div className="flex items-center gap-2">
@@ -5004,11 +5004,11 @@ function DAWStudio() {
                         </div>
                         <button onClick={() => setBottomDock(null)} className="text-neutral-500 hover:text-white transition-colors"><X size={14}/></button>
                     </div>
-                    <div className="flex-1 flex overflow-x-auto p-4 gap-4 items-center bg-neutral-900/50 custom-scrollbar pb-6">
+                    <div className="flex-1 flex overflow-x-auto p-4 gap-4 items-start bg-neutral-900/50 custom-scrollbar pb-6">
                         
                         {/* Audio Track specific Input block */}
                         {track.type === 'audio' && (
-                            <div className="min-w-[14rem] h-full bg-neutral-950 border border-neutral-800 rounded-xl p-4 flex flex-col shrink-0 relative shadow-lg">
+                            <div className="min-w-[14rem] h-max bg-neutral-950 border border-neutral-800 rounded-xl p-4 flex flex-col shrink-0 relative shadow-lg">
                                 <div className="flex items-center gap-2 mb-4 border-b border-neutral-800 pb-2">
                                     <Mic size={14} className="text-emerald-400" />
                                     <span className="text-[11px] font-bold text-white uppercase tracking-wider">Audio Input</span>
@@ -5030,7 +5030,7 @@ function DAWStudio() {
 
                         {/* Instrument Selector & Controls for MIDI Tracks */}
                         {track.type === 'midi' && (
-                            <div className="min-w-[16rem] max-w-md w-max h-full bg-neutral-950 border border-neutral-800 rounded-xl p-5 flex flex-col shrink-0 relative shadow-lg">
+                            <div className="min-w-[16rem] max-w-md w-max h-max bg-neutral-950 border border-neutral-800 rounded-xl p-5 flex flex-col shrink-0 relative shadow-lg">
                                 <div className="flex items-center gap-2 mb-4 border-b border-neutral-800 pb-3 shrink-0">
                                     <Piano size={14} className="text-purple-400" />
                                     <span className="text-xs font-bold text-white uppercase tracking-wider">Instrument</span>
@@ -5133,7 +5133,7 @@ function DAWStudio() {
                                 }}
                                 onContextMenu={(e) => handleContextMenu(e, 'effect', { trackId: track.id, fxId: fx.id })} 
                                 // Added [&_*]:pointer-events-none to prevent child knobs from stealing drag events!
-                                className={`min-w-[16rem] max-w-lg w-max h-full bg-neutral-950 border rounded-xl p-5 flex flex-col shrink-0 relative group shadow-lg transition-all duration-200 cursor-grab active:cursor-grabbing ${draggedFxIndex === index ? 'opacity-40 scale-95 border-neutral-700' : dragOverFxIndex === index && draggedFxIndex !== null ? 'border-blue-500 scale-[1.02] bg-neutral-900 z-10' : 'border-neutral-800'} ${draggedFxIndex !== null ? '[&_*]:pointer-events-none' : ''}`}
+                                className={`min-w-[16rem] max-w-lg w-max h-max bg-neutral-950 border rounded-xl p-5 flex flex-col shrink-0 relative group shadow-lg transition-all duration-200 cursor-grab active:cursor-grabbing ${draggedFxIndex === index ? 'opacity-40 scale-95 border-neutral-700' : dragOverFxIndex === index && draggedFxIndex !== null ? 'border-blue-500 scale-[1.02] bg-neutral-900 z-10' : 'border-neutral-800'} ${draggedFxIndex !== null ? '[&_*]:pointer-events-none' : ''}`}
                             >
                                 <div className="flex justify-between items-center mb-2 border-b border-neutral-800 pb-3 shrink-0">
                                    <div className="flex items-center gap-2">
@@ -5166,13 +5166,14 @@ function DAWStudio() {
                         ))}
                         
                         {/* Add Effect Button Container */}
-                        <div className="w-48 min-w-[12rem] h-full border-2 border-dashed border-neutral-800 hover:border-neutral-700 rounded-xl flex flex-col items-center justify-center shrink-0 relative group transition-colors cursor-pointer">
+                        <div className="w-48 min-w-[12rem] h-max min-h-[160px] self-stretch border-2 border-dashed border-neutral-800 hover:border-neutral-700 rounded-xl flex flex-col items-center justify-center shrink-0 relative group transition-colors cursor-pointer">
                             <Plus size={24} className="text-neutral-600 group-hover:text-blue-400 mb-2 transition-colors" />
                             <span className="text-[10px] text-neutral-500 group-hover:text-blue-400 font-bold uppercase tracking-wider">Add Effect</span>
-                            <div className="absolute inset-0 bg-neutral-950/95 backdrop-blur-md rounded-xl opacity-0 group-hover:opacity-100 transition-opacity flex flex-col gap-1.5 pointer-events-none group-hover:pointer-events-auto p-2 overflow-y-auto custom-scrollbar pr-3">
+                            
+                            <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 w-max max-h-[300px] bg-neutral-900/95 border border-neutral-700 shadow-2xl backdrop-blur-md rounded-xl opacity-0 group-hover:opacity-100 transition-opacity flex flex-col gap-1.5 pointer-events-none group-hover:pointer-events-auto p-2 overflow-y-auto custom-scrollbar z-50">
                                <div className="text-[9px] font-bold text-neutral-500 mb-1 uppercase tracking-wider px-1 mt-1">Engines</div>
                                {INTERNAL_PLUGINS.filter(p => p.category === 'effect').map(p => (
-                                  <button key={p.id} onClick={() => addEffect(track.id, p)} className="w-full text-[10px] font-bold text-neutral-300 hover:text-white bg-neutral-900 hover:bg-blue-600 px-2 py-1.5 rounded transition-colors text-left truncate">{p.name}</button>
+                                  <button key={p.id} onClick={() => addEffect(track.id, p)} className="w-full text-[10px] font-bold text-neutral-300 hover:text-white bg-neutral-950 border border-neutral-800 hover:border-blue-500 hover:bg-blue-600/20 px-3 py-2 rounded-lg transition-colors text-left whitespace-nowrap">{p.name}</button>
                                ))}
                             </div>
                         </div>
