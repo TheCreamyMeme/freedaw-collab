@@ -17,7 +17,7 @@ const API_BASE_URL = 'https://api.sprig.cc';
 // ==========================================
 const initDB = () => {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open('FreeDaw_DB', 1);
+    const request = indexedDB.open('FreeDaw_DB', 2);
     request.onerror = () => reject(request.error);
     request.onsuccess = () => resolve(request.result);
     request.onupgradeneeded = (e) => {
@@ -1451,6 +1451,7 @@ function DAWStudio() {
   const [currentUser, setCurrentUser] = useState(null);
   const [authToken, setAuthToken] = useState(null);
   const [authName, setAuthName] = useState('');
+  const [authPassword, setAuthPassword] = useState('');
   const [showSettings, setShowSettings] = useState(false);
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [cropImageSrc, setCropImageSrc] = useState(null);
@@ -3467,10 +3468,12 @@ function DAWStudio() {
 
   const handleAuthSubmit = async (e) => {
     e.preventDefault();
-    if (!authName.trim()) return;
+    if (!authName.trim() || !authPassword.trim()) return;
+    const uname = authName.trim();
+    
     try {
         const res = await fetch(`${API_BASE_URL}/api/auth/login`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: authName.trim() })
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: uname, password: authPassword })
         });
         const data = await res.json();
         if (data.token) {
@@ -3483,14 +3486,39 @@ function DAWStudio() {
             loadProjects(data.token); 
             connectSocket(data.token, userObj);
             showToast("Authenticated successfully.", "success");
+            return;
         }
     } catch (err) {
-        showToast("Server unreachable. Starting Offline.", "error");
-        const userObj = { id: `u_${Date.now()}`, username: authName.trim(), offline: true, color: 'bg-purple-500' };
-        setCurrentUser(userObj);
-        setAppView('home'); 
-        loadProjects(null);
+        console.warn("API Auth failed, using Local Auth fallback.");
     }
+
+    // Local Persistent Auth Fallback
+    let localUsers = JSON.parse(localStorage.getItem('freedaw_local_users') || '{}');
+    let userRecord = localUsers[uname];
+    
+    if (userRecord) {
+        if (userRecord.password !== authPassword) {
+            showToast("Incorrect password.", "error");
+            return;
+        }
+        showToast("Logged in locally.", "success");
+    } else {
+        userRecord = {
+            password: authPassword,
+            userObj: { id: `u_local_${Date.now()}`, username: uname, offline: true, color: 'bg-purple-500' }
+        };
+        localUsers[uname] = userRecord;
+        localStorage.setItem('freedaw_local_users', JSON.stringify(localUsers));
+        showToast("Local account created.", "success");
+    }
+    
+    const token = `local_token_${uname}`;
+    setCurrentUser(userRecord.userObj);
+    setAuthToken(token);
+    setAppView('home'); 
+    localStorage.setItem('freedaw_token', token);
+    localStorage.setItem('freedaw_user', JSON.stringify(userRecord.userObj));
+    loadProjects(token);
   };
 
   const handleSignOut = () => {
@@ -4311,7 +4339,7 @@ function DAWStudio() {
           </div>
           <form onSubmit={handleAuthSubmit} className="flex flex-col gap-4">
             <input type="text" value={authName} onChange={(e) => setAuthName(e.target.value)} required className="bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-2 text-white outline-none focus:border-blue-500 transition-colors" placeholder="Username" />
-            <input type="password" required className="bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-2 text-white outline-none focus:border-blue-500 transition-colors" placeholder="Password" />
+            <input type="password" value={authPassword} onChange={(e) => setAuthPassword(e.target.value)} required className="bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-2 text-white outline-none focus:border-blue-500 transition-colors" placeholder="Password" />
             <button type="submit" className="w-full bg-blue-600 hover:bg-blue-500 text-white font-medium py-2 rounded-lg mt-2 shadow-lg flex items-center justify-center gap-2 transition-colors"><Network size={16} /> Connect</button>
           </form>
         </div>
@@ -4321,14 +4349,15 @@ function DAWStudio() {
   }
 
   // --- RENDER: HOME ---
-  if (appView === 'home') {
-      const allProjects = Array.from(new Map([...localProjects, ...serverProjects].map(p => [p.id, p])).values());
-      const personalProjects = allProjects.filter(p => !p.ownerId || p.ownerId === currentUser?.id);
-      const sharedProjects = allProjects.filter(p => 
-          p.ownerId && 
-          p.ownerId !== currentUser?.id && 
-          (p.isPublic || (p.sharedWith && p.sharedWith.includes(currentUser?.username)))
-      );
+      if (appView === 'home') {
+          const allProjects = Array.from(new Map([...localProjects, ...serverProjects].map(p => [p.id, p])).values());
+          const personalProjects = allProjects.filter(p => !p.ownerId || p.ownerId === currentUser?.id || p.ownerName === currentUser?.username);
+          const sharedProjects = allProjects.filter(p => 
+              p.ownerId && 
+              p.ownerId !== currentUser?.id && 
+              p.ownerName !== currentUser?.username &&
+              (p.isPublic || (p.sharedWith && p.sharedWith.includes(currentUser?.username)))
+          );
 
       return (
         <div className="flex flex-col w-screen h-screen overflow-y-auto overflow-x-hidden bg-neutral-950 text-neutral-300 p-8 custom-scrollbar select-none">
