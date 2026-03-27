@@ -107,15 +107,18 @@ FROM node:20-alpine
 # Install 'serve', a lightweight static web server perfect for SPAs
 RUN npm install -g serve
 
-# Set working directory DIRECTLY to the static files to prevent path resolution bugs
-WORKDIR /app/dist
+# Set working directory back to /app
+WORKDIR /app
 
-# Copy ONLY the compiled static files from Stage 1
-COPY --from=builder /app/webdaw/dist .
+# Copy the compiled static files from Stage 1 into /app/dist
+COPY --from=builder /app/webdaw/dist ./dist
 
-# Generate the serve.json with Cache headers safely inside the working directory
-RUN cat <<EOF > serve.json
+# Generate serve.json WITH explicit rewrites INSIDE the dist folder
+RUN cat <<EOF > dist/serve.json
 {
+  "rewrites": [
+    { "source": "**", "destination": "/index.html" }
+  ],
   "headers": [
     {
       "source": "**/*",
@@ -130,5 +133,5 @@ EOF
 # Expose port 3000
 EXPOSE 3000
 
-# Start the server (-s handles the React SPA routing, and it natively reads serve.json from '.')
-CMD ["serve", "-s", ".", "-l", "3000"]
+# Start the server pointing strictly to dist. serve.json handles SPA routing natively.
+CMD ["serve", "dist", "-l", "3000"]
