@@ -80,7 +80,8 @@ EOF
 RUN sed -i 's/<head>/<head>\n    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">\n    <meta http-equiv="Pragma" content="no-cache">\n    <meta http-equiv="Expires" content="0">/' index.html
 
 # 7. Create a serve.json to defeat aggressive browser caching for the SPA
-RUN cat <<EOF > serve.json
+# Placing it in public/ ensures Vite copies it directly into the dist/ output natively
+RUN cat <<EOF > public/serve.json
 {
   "headers": [
     {
@@ -127,12 +128,11 @@ WORKDIR /app
 # Install 'serve', a lightweight static web server perfect for SPAs
 RUN npm install -g serve
 
-# Copy ONLY the compiled static files and server config from Stage 1
+# Copy ONLY the compiled static files from Stage 1 (serve.json is already inside dist/ now)
 COPY --from=builder /app/webdaw/dist ./dist
-COPY --from=builder /app/webdaw/serve.json ./dist/serve.json
 
 # Expose port 3000
 EXPOSE 3000
 
-# Start the server with the cache-busting configuration
-CMD ["serve", "-s", "dist", "-l", "3000", "-c", "serve.json"]
+# Start the server (serve automatically detects serve.json in the hosted directory)
+CMD ["serve", "-s", "dist", "-l", "3000"]
