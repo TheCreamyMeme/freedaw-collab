@@ -366,7 +366,7 @@ const getInterpolatedValue = (points, time) => {
 const getParamConstraints = (param) => {
     const p = param.toLowerCase();
     if (p === 'size') return { min: 0.1, max: 3.0, step: 0.1 };
-    if (p.includes('freq') || p === 'cutoff' || p === 'damping') return { min: 20, max: 20000, step: 1, isLog: true };
+    if (p.includes('freq') || p === 'cutoff' || p === 'damping' || p === 'tone') return { min: 20, max: 20000, step: 1, isLog: true };
     if (p.includes('gain') || p === 'low' || p === 'mid' || p === 'high') return { min: -24, max: 24, step: 0.1 };
     if (p.includes('q') || p === 'res') return { min: 0.1, max: 20, step: 0.1 };
     if (p === 'amount') return { min: 0, max: 100, step: 1 };
@@ -374,12 +374,16 @@ const getParamConstraints = (param) => {
     if (p === 'ratio') return { min: 0.1, max: 20, step: 0.1 };
     if (p === 'bitdepth') return { min: 1, max: 16, step: 1 };
     if (p === 'sprayrate') return { min: 1, max: 50, step: 0.1 };
-    if (p === 'delaytime') return { min: 0.001, max: 0.02, step: 0.001 };
-    if (p === 'time' || p === 'decay' || p === 'attack' || p === 'release') return { min: 0.001, max: 10, step: 0.01, isLog: true };
+    if (p === 'delaytime') return { min: 0.001, max: 0.1, step: 0.001 };
+    if (p === 'decay') return { min: 0.1, max: 10, step: 0.1, isLog: true };
+    if (p === 'time' || p === 'attack' || p === 'release') return { min: 0.001, max: 10, step: 0.01, isLog: true };
     if (p === 'rate') return { min: 0.1, max: 20, step: 0.1, isLog: true };
     if (p === 'modindex') return { min: 0, max: 100, step: 1 };
     if (p === 'detune') return { min: 0, max: 100, step: 1 };
     if (p === 'envmod') return { min: 0, max: 10000, step: 10 };
+    if (p === 'moddepth') return { min: 0.0001, max: 0.05, step: 0.0001 };
+    if (p === 'freqdepth') return { min: 10, max: 2000, step: 1 };
+    if (p === 'pandepth' || p === 'ampdepth') return { min: 0, max: 1, step: 0.01 };
     return { min: 0, max: 1, step: 0.01 }; 
 };
 
@@ -411,21 +415,21 @@ const TRACK_COLOR_GRADIENTS = {
 };
 
 const INTERNAL_PLUGINS = [
-  { id: 'fx-delay', name: 'Digital Delay', category: 'effect', type: 'delay', vendor: 'FreeDaw-Collab', params: { time: 0.3, feedback: 0.4, mix: 0.5 } },
+  { id: 'fx-delay', name: 'Digital Delay', category: 'effect', type: 'delay', vendor: 'FreeDaw-Collab', params: { time: 0.3, feedback: 0.4, cutoff: 2000, mix: 0.5 } },
   { id: 'fx-pareq', name: 'Parametric EQ', category: 'effect', type: 'parametric-eq', vendor: 'FreeDaw-Collab', params: { lowFreq: 100, lowGain: 0, mid1Freq: 500, mid1Q: 1.0, mid1Gain: 0, mid2Freq: 2000, mid2Q: 1.0, mid2Gain: 0, highFreq: 5000, highGain: 0 } },
-  { id: 'fx-reverb-room', name: 'Room Reverb', category: 'effect', type: 'reverb-room', vendor: 'FreeDaw-Collab', params: { mix: 0.3 } },
-  { id: 'fx-reverb-plate', name: 'Plate Reverb', category: 'effect', type: 'reverb-plate', vendor: 'FreeDaw-Collab', params: { mix: 0.4 } },
-  { id: 'fx-reverb-hall', name: 'Hall Reverb', category: 'effect', type: 'reverb-hall', vendor: 'FreeDaw-Collab', params: { mix: 0.5 } },
-  { id: 'fx-distortion', name: 'Tube Distortion', category: 'effect', type: 'distortion', vendor: 'FreeDaw-Collab', params: { amount: 50, mix: 1.0 } },
-  { id: 'fx-chorus', name: 'Stereo Chorus', category: 'effect', type: 'chorus', vendor: 'FreeDaw-Collab', params: { rate: 1.5, depth: 0.003, mix: 0.5 } },
-  { id: 'fx-phaser', name: 'Phaser', category: 'effect', type: 'phaser', vendor: 'FreeDaw-Collab', params: { rate: 0.5, depth: 800, feedback: 0.5, mix: 0.5 } },
-  { id: 'fx-flanger', name: 'Flanger', category: 'effect', type: 'flanger', vendor: 'FreeDaw-Collab', params: { rate: 0.25, delayTime: 0.005, depth: 0.002, feedback: 0.5, mix: 0.5 } },
+  { id: 'fx-reverb-room', name: 'Room Reverb', category: 'effect', type: 'reverb-room', vendor: 'FreeDaw-Collab', params: { decay: 0.8, damping: 8000, mix: 0.3 } },
+  { id: 'fx-reverb-plate', name: 'Plate Reverb', category: 'effect', type: 'reverb-plate', vendor: 'FreeDaw-Collab', params: { decay: 1.5, damping: 6000, mix: 0.4 } },
+  { id: 'fx-reverb-hall', name: 'Hall Reverb', category: 'effect', type: 'reverb-hall', vendor: 'FreeDaw-Collab', params: { decay: 2.5, damping: 4000, mix: 0.5 } },
+  { id: 'fx-distortion', name: 'Tube Distortion', category: 'effect', type: 'distortion', vendor: 'FreeDaw-Collab', params: { amount: 50, tone: 4000, mix: 1.0 } },
+  { id: 'fx-chorus', name: 'Stereo Chorus', category: 'effect', type: 'chorus', vendor: 'FreeDaw-Collab', params: { rate: 1.5, delayTime: 0.03, modDepth: 0.003, mix: 0.5 } },
+  { id: 'fx-phaser', name: 'Phaser', category: 'effect', type: 'phaser', vendor: 'FreeDaw-Collab', params: { rate: 0.5, freqDepth: 800, feedback: 0.5, mix: 0.5 } },
+  { id: 'fx-flanger', name: 'Flanger', category: 'effect', type: 'flanger', vendor: 'FreeDaw-Collab', params: { rate: 0.25, delayTime: 0.005, modDepth: 0.002, feedback: 0.5, mix: 0.5 } },
   { id: 'fx-graindelay', name: 'Grain Delay', category: 'effect', type: 'grain-delay', vendor: 'FreeDaw-Collab', params: { time: 0.2, feedback: 0.4, sprayRate: 15.0, mix: 0.5 } },
   { id: 'fx-filter', name: 'Pro-Q Filter', category: 'effect', type: 'filter', vendor: 'FreeDaw-Collab', params: { freq: 1200, res: 1.5 } },
   { id: 'fx-compressor', name: 'Bus Compressor', category: 'effect', type: 'compressor', vendor: 'FreeDaw-Collab', params: { threshold: -24, ratio: 4 } },
   { id: 'fx-bitcrusher', name: 'Lo-Fi Bitcrusher', category: 'effect', type: 'bitcrusher', vendor: 'FreeDaw-Collab', params: { bitDepth: 4, mix: 1.0 } },
-  { id: 'fx-autopan', name: 'Auto-Pan LFO', category: 'effect', type: 'autopan', vendor: 'FreeDaw-Collab', params: { rate: 2.0, depth: 1.0 } },
-  { id: 'fx-tremolo', name: 'Tremolo', category: 'effect', type: 'tremolo', vendor: 'FreeDaw-Collab', params: { rate: 5.0, depth: 0.8 } },
+  { id: 'fx-autopan', name: 'Auto-Pan LFO', category: 'effect', type: 'autopan', vendor: 'FreeDaw-Collab', params: { rate: 2.0, panDepth: 1.0 } },
+  { id: 'fx-tremolo', name: 'Tremolo', category: 'effect', type: 'tremolo', vendor: 'FreeDaw-Collab', params: { rate: 5.0, ampDepth: 0.8 } },
   { id: 'fx-ringmod', name: 'Ring Modulator', category: 'effect', type: 'ringmod', vendor: 'FreeDaw-Collab', params: { freq: 400, mix: 0.5 } },
   { id: 'fx-eq3', name: '3-Band EQ', category: 'effect', type: 'eq3', vendor: 'FreeDaw-Collab', params: { low: 0, mid: 0, high: 0 } },
   
@@ -477,10 +481,12 @@ const formatAutoName = (track, paramKey) => {
 // ==========================================
 
 const reverbIRCache = {};
-const getReverbIR = async (ctx, type) => {
-    if (reverbIRCache[type]) return reverbIRCache[type];
+const getReverbIR = async (ctx, type, decayTime = null) => {
+    const duration = decayTime || (type === 'reverb-hall' ? 2.5 : type === 'reverb-plate' ? 1.5 : 0.8);
+    const cacheKey = `${type}_${duration}`;
+    if (reverbIRCache[cacheKey]) return reverbIRCache[cacheKey];
+    
     const sampleRate = ctx.sampleRate || 44100;
-    const duration = type === 'reverb-hall' ? 2.5 : type === 'reverb-plate' ? 1.5 : 0.8;
     
     // CRITICAL FIX: OfflineAudioContext.startRendering() causes hard "Page Unresponsive" lockups on some browsers.
     // A simple math array fill is sub-5ms and completely bypasses the browser's audio-thread bottlenecks safely.
@@ -495,7 +501,7 @@ const getReverbIR = async (ctx, type) => {
         right[i] = (Math.random() * 2 - 1) * decay;
     }
     
-    reverbIRCache[type] = buffer;
+    reverbIRCache[cacheKey] = buffer;
     return buffer;
 };
 
@@ -681,19 +687,20 @@ const createFXNode = async (ctx, fx) => {
 
   if (fx.type === 'delay') {
     const delay = ctx.createDelay(5.0); delay.delayTime.value = fx.params?.time || 0.3;
-    const fb = ctx.createGain(); fb.gain.value = fx.params?.feedback || 0.3;
-    input.connect(delay); delay.connect(fb); fb.connect(delay); delay.connect(wet); wet.connect(output);
-    return { input, output, delay, feedback: fb, wet, dry, fxType: 'delay' };
+    const fb = ctx.createGain(); fb.gain.value = fx.params?.feedback || 0.4;
+    const filter = ctx.createBiquadFilter(); filter.type = 'lowpass'; filter.frequency.value = fx.params?.cutoff || 2000;
+    input.connect(delay); delay.connect(filter); filter.connect(fb); fb.connect(delay); delay.connect(wet); wet.connect(output);
+    return { input, output, delay, feedback: fb, filter, wet, dry, fxType: 'delay' };
   } else if (fx.type.startsWith('reverb')) {
     // ASYNC NATIVE CONVOLVER REVERB
     // Guaranteed crash-proof: eliminates topological sort lagging by replacing cyclical Comb graphs 
     // with a lightning-fast, pre-rendered C++ Impulse Response buffer generated asynchronously.
     const conv = ctx.createConvolver();
-    conv.buffer = await getReverbIR(ctx, fx.type);
+    conv.buffer = await getReverbIR(ctx, fx.type, fx.params?.decay);
 
     const filter = ctx.createBiquadFilter();
     filter.type = 'lowpass';
-    filter.frequency.value = fx.type === 'reverb-hall' ? 4000 : fx.type === 'reverb-plate' ? 6000 : 8000;
+    filter.frequency.value = fx.params?.damping || (fx.type === 'reverb-hall' ? 4000 : fx.type === 'reverb-plate' ? 6000 : 8000);
 
     input.connect(filter);
     filter.connect(conv);
@@ -709,12 +716,13 @@ const createFXNode = async (ctx, fx) => {
     const node = ctx.createWaveShaper(); const amount = fx.params?.amount || 50; const curve = new Float32Array(44100); const deg = Math.PI / 180;
     for (let i = 0; i < 44100; ++i) { const x = (i * 2) / 44100 - 1; curve[i] = ((3 + amount) * x * 20 * deg) / (Math.PI + amount * Math.abs(x)); }
     node.curve = curve; node.oversample = '4x';
-    input.connect(node); node.connect(wet); wet.connect(output);
-    return { input, output, node, wet, dry, fxType: 'distortion' };
+    const filter = ctx.createBiquadFilter(); filter.type = 'lowpass'; filter.frequency.value = fx.params?.tone || 4000;
+    input.connect(node); node.connect(filter); filter.connect(wet); wet.connect(output);
+    return { input, output, node, filter, wet, dry, fxType: 'distortion' };
   } else if (fx.type === 'chorus') {
-    const delay = ctx.createDelay(); delay.delayTime.value = 0.03;
+    const delay = ctx.createDelay(); delay.delayTime.value = fx.params?.delayTime || 0.03;
     const osc = ctx.createOscillator(); osc.type = 'sine'; osc.frequency.value = fx.params?.rate || 1.5;
-    const modGain = ctx.createGain(); modGain.gain.value = fx.params?.depth || 0.003;
+    const modGain = ctx.createGain(); modGain.gain.value = fx.params?.modDepth || 0.003;
     osc.connect(modGain); modGain.connect(delay.delayTime); osc.start();
     input.connect(delay); delay.connect(wet); wet.connect(output);
     return { input, output, delay, lfo: osc, lfoGain: modGain, wet, dry, fxType: 'chorus' };
@@ -723,7 +731,7 @@ const createFXNode = async (ctx, fx) => {
     const ap2 = ctx.createBiquadFilter(); ap2.type = 'allpass'; ap2.frequency.value = 1000;
     const ap3 = ctx.createBiquadFilter(); ap3.type = 'allpass'; ap3.frequency.value = 1000;
     const lfo = ctx.createOscillator(); lfo.type = 'sine'; lfo.frequency.value = fx.params?.rate || 0.5;
-    const lfoGain = ctx.createGain(); lfoGain.gain.value = fx.params?.depth || 800;
+    const lfoGain = ctx.createGain(); lfoGain.gain.value = fx.params?.freqDepth || 800;
     lfo.connect(lfoGain); lfoGain.connect(ap1.frequency); lfoGain.connect(ap2.frequency); lfoGain.connect(ap3.frequency);
     lfo.start();
     input.connect(ap1); ap1.connect(ap2); ap2.connect(ap3); ap3.connect(wet); wet.connect(output);
@@ -733,7 +741,7 @@ const createFXNode = async (ctx, fx) => {
   } else if (fx.type === 'flanger') {
     const delay = ctx.createDelay(1.0); delay.delayTime.value = fx.params?.delayTime || 0.005;
     const lfo = ctx.createOscillator(); lfo.type = 'sine'; lfo.frequency.value = fx.params?.rate || 0.25;
-    const lfoGain = ctx.createGain(); lfoGain.gain.value = fx.params?.depth || 0.002;
+    const lfoGain = ctx.createGain(); lfoGain.gain.value = fx.params?.modDepth || 0.002;
     lfo.connect(lfoGain); lfoGain.connect(delay.delayTime); lfo.start();
     const fb = ctx.createGain(); fb.gain.value = fx.params?.feedback || 0.5;
     input.connect(delay); delay.connect(fb); fb.connect(delay); delay.connect(wet); wet.connect(output);
@@ -759,12 +767,12 @@ const createFXNode = async (ctx, fx) => {
   } else if (fx.type === 'autopan') {
     const panner = ctx.createStereoPanner ? ctx.createStereoPanner() : ctx.createPanner();
     const osc = ctx.createOscillator(); osc.type = 'sine'; osc.frequency.value = fx.params?.rate || 2.0;
-    const depthGain = ctx.createGain(); depthGain.gain.value = fx.params?.depth || 1.0;
+    const depthGain = ctx.createGain(); depthGain.gain.value = fx.params?.panDepth || 1.0;
     osc.connect(depthGain); if (panner.pan) depthGain.connect(panner.pan); osc.start();
     input.connect(panner); panner.connect(output);
     return { input, output, panner, lfo: osc, lfoGain: depthGain, fxType: 'autopan' };
   } else if (fx.type === 'tremolo') {
-    const amp = ctx.createGain(); const depth = fx.params?.depth !== undefined ? fx.params.depth : 0.8;
+    const amp = ctx.createGain(); const depth = fx.params?.ampDepth !== undefined ? fx.params.ampDepth : 0.8;
     amp.gain.value = 1.0 - (depth / 2);
     const osc = ctx.createOscillator(); osc.type = 'sine'; osc.frequency.value = fx.params?.rate || 5.0;
     const depthGain = ctx.createGain(); depthGain.gain.value = depth / 2;
@@ -2486,28 +2494,42 @@ function DAWStudio() {
       if (nodeObj.fxType === 'delay') {
       if (param === 'time') nodeObj.delay.delayTime.setTargetAtTime(numVal, now, 0.05);
       if (param === 'feedback') nodeObj.feedback.gain.setTargetAtTime(numVal, now, 0.05);
+      if (param === 'cutoff' && nodeObj.filter) nodeObj.filter.frequency.setTargetAtTime(numVal, now, 0.05);
       if (param === 'mix') { nodeObj.wet.gain.setTargetAtTime(numVal, now, 0.05); nodeObj.dry.gain.setTargetAtTime(1-numVal, now, 0.05); }
   } else if (nodeObj.fxType === 'reverb') {
+      if (param === 'decay') {
+          getReverbIR(audioCtxRef.current, synth.fxNodes[fxId].type, numVal).then(buffer => {
+              if (nodeObj.conv) nodeObj.conv.buffer = buffer;
+          });
+      }
+      if (param === 'damping' && nodeObj.filter) nodeObj.filter.frequency.setTargetAtTime(numVal, now, 0.05);
       if (param === 'mix') { nodeObj.wet.gain.setTargetAtTime(numVal, now, 0.05); nodeObj.dry.gain.setTargetAtTime(1-numVal, now, 0.05); }
   } else if (nodeObj.fxType === 'distortion' || nodeObj.fxType === 'bitcrusher') {
       if (param === 'mix') { nodeObj.wet.gain.setTargetAtTime(numVal, now, 0.05); nodeObj.dry.gain.setTargetAtTime(1-numVal, now, 0.05); }
       if (nodeObj.fxType === 'bitcrusher' && param === 'bitDepth') nodeObj.node.curve = getBitcrusherCurve(numVal);
+      if (nodeObj.fxType === 'distortion' && param === 'amount') {
+          const curve = new Float32Array(44100); const deg = Math.PI / 180;
+          for (let i = 0; i < 44100; ++i) { const x = (i * 2) / 44100 - 1; curve[i] = ((3 + numVal) * x * 20 * deg) / (Math.PI + numVal * Math.abs(x)); }
+          nodeObj.node.curve = curve;
+      }
+      if (nodeObj.fxType === 'distortion' && param === 'tone' && nodeObj.filter) nodeObj.filter.frequency.setTargetAtTime(numVal, now, 0.05);
   } else if (nodeObj.fxType === 'filter') {
       if (param === 'freq') nodeObj.node.frequency.setTargetAtTime(numVal, now, 0.05);
           if (param === 'res') nodeObj.node.Q.setTargetAtTime(numVal, now, 0.05);
       } else if (nodeObj.fxType === 'chorus' || nodeObj.fxType === 'autopan') {
           if (param === 'rate') nodeObj.lfo.frequency.setTargetAtTime(numVal, now, 0.05);
-          if (param === 'depth') nodeObj.lfoGain.gain.setTargetAtTime(numVal, now, 0.05);
+          if (param === 'modDepth' || param === 'panDepth') nodeObj.lfoGain.gain.setTargetAtTime(numVal, now, 0.05);
+          if (nodeObj.fxType === 'chorus' && param === 'delayTime') nodeObj.delay.delayTime.setTargetAtTime(numVal, now, 0.05);
           if (nodeObj.fxType === 'chorus' && param === 'mix') { nodeObj.wet.gain.setTargetAtTime(numVal, now, 0.05); nodeObj.dry.gain.setTargetAtTime(1-numVal, now, 0.05); }
       } else if (nodeObj.fxType === 'phaser') {
           if (param === 'rate') nodeObj.lfo.frequency.setTargetAtTime(numVal, now, 0.05);
-          if (param === 'depth') nodeObj.lfoGain.gain.setTargetAtTime(numVal, now, 0.05);
+          if (param === 'freqDepth') nodeObj.lfoGain.gain.setTargetAtTime(numVal, now, 0.05);
           if (param === 'feedback') nodeObj.fb.gain.setTargetAtTime(numVal, now, 0.05);
           if (param === 'mix') { nodeObj.wet.gain.setTargetAtTime(numVal, now, 0.05); nodeObj.dry.gain.setTargetAtTime(1-numVal, now, 0.05); }
       } else if (nodeObj.fxType === 'flanger') {
           if (param === 'rate') nodeObj.lfo.frequency.setTargetAtTime(numVal, now, 0.05);
           if (param === 'delayTime') nodeObj.delay.delayTime.setTargetAtTime(numVal, now, 0.05);
-          if (param === 'depth') nodeObj.lfoGain.gain.setTargetAtTime(numVal, now, 0.05);
+          if (param === 'modDepth') nodeObj.lfoGain.gain.setTargetAtTime(numVal, now, 0.05);
           if (param === 'feedback') nodeObj.fb.gain.setTargetAtTime(numVal, now, 0.05);
           if (param === 'mix') { nodeObj.wet.gain.setTargetAtTime(numVal, now, 0.05); nodeObj.dry.gain.setTargetAtTime(1-numVal, now, 0.05); }
       } else if (nodeObj.fxType === 'grain-delay') {
@@ -2520,7 +2542,7 @@ function DAWStudio() {
           if (param === 'ratio') nodeObj.comp.ratio.setTargetAtTime(numVal, now, 0.05);
       } else if (nodeObj.fxType === 'tremolo') {
           if (param === 'rate') nodeObj.lfo.frequency.setTargetAtTime(numVal, now, 0.05);
-          if (param === 'depth') { nodeObj.amp.gain.setTargetAtTime(1.0 - numVal / 2, now, 0.05); nodeObj.lfoGain.gain.setTargetAtTime(numVal / 2, now, 0.05); }
+          if (param === 'ampDepth') { nodeObj.amp.gain.setTargetAtTime(1.0 - numVal / 2, now, 0.05); nodeObj.lfoGain.gain.setTargetAtTime(numVal / 2, now, 0.05); }
       } else if (nodeObj.fxType === 'ringmod') {
           if (param === 'freq') nodeObj.osc.frequency.setTargetAtTime(numVal, now, 0.05);
           if (param === 'mix') { nodeObj.wet.gain.setTargetAtTime(numVal, now, 0.05); nodeObj.dry.gain.setTargetAtTime(1-numVal, now, 0.05); }
