@@ -4557,7 +4557,7 @@ function DAWStudio() {
 
             <div className="flex -space-x-2 mr-2">
                 <div className="relative z-50">
-                    <div onClick={() => setShowProfileMenu(p => !p)} className="w-8 h-8 bg-neutral-800 rounded-full border-2 border-neutral-900 overflow-hidden relative group cursor-pointer shadow-sm">
+                    <div onClick={() => setShowProfileMenu(true)} className="w-8 h-8 bg-neutral-800 rounded-full border-2 border-neutral-900 overflow-hidden relative group cursor-pointer shadow-sm">
                         {currentUser?.avatar ? (
                             <img src={currentUser.avatar} alt="Me" className="w-full h-full object-cover" />
                         ) : (
@@ -4566,46 +4566,6 @@ function DAWStudio() {
                             </div>
                         )}
                     </div>
-                    {showProfileMenu && (
-                        <div className="absolute top-10 right-0 w-72 bg-neutral-900 border border-neutral-700 rounded-xl shadow-2xl p-4 flex flex-col gap-4 z-[150] max-h-[80vh] overflow-y-auto custom-scrollbar">
-                            <div className="flex flex-col gap-2">
-                                <label className="text-[10px] text-neutral-400 font-bold uppercase tracking-wider">Profile Picture</label>
-                                <label className="bg-neutral-800 hover:bg-neutral-700 text-white px-3 py-2 rounded-lg text-xs font-bold cursor-pointer transition-colors border border-neutral-700 text-center">
-                                    Upload Image
-                                    <input type="file" accept="image/*" onChange={handleAvatarUpload} className="hidden" />
-                                </label>
-                            </div>
-                            <div className="mt-1">
-                                <label className="text-[10px] text-neutral-400 font-bold mb-2 block uppercase tracking-wider">User Bio</label>
-                                <textarea 
-                                    defaultValue={currentUser?.bio || ''} 
-                                    onBlur={(e) => handleProfileUpdate('bio', e.target.value)}
-                                    placeholder="Tell collaborators about your style..." 
-                                    className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-blue-500 custom-scrollbar resize-none"
-                                    rows="3"
-                                />
-                            </div>
-                            <div className="flex flex-col gap-2">
-                                <label className="text-[10px] text-neutral-400 font-bold block uppercase tracking-wider">Contact & Socials</label>
-                                <div className="flex items-center bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-1.5 focus-within:border-blue-500 transition-colors">
-                                    <Mail size={14} className="text-neutral-500 mr-2 shrink-0" />
-                                    <input type="email" placeholder="Email Address" defaultValue={currentUser?.email || ''} onBlur={(e) => handleProfileUpdate('email', e.target.value)} className="bg-transparent text-sm text-white w-full outline-none" />
-                                </div>
-                                <div className="flex items-center bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-1.5 focus-within:border-blue-500 transition-colors">
-                                    <Globe size={14} className="text-neutral-500 mr-2 shrink-0" />
-                                    <input type="url" placeholder="Website" defaultValue={currentUser?.website || ''} onBlur={(e) => handleProfileUpdate('website', e.target.value)} className="bg-transparent text-sm text-white w-full outline-none" />
-                                </div>
-                                <div className="flex items-center bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-1.5 focus-within:border-blue-500 transition-colors">
-                                    <Instagram size={14} className="text-neutral-500 mr-2 shrink-0" />
-                                    <input type="text" placeholder="Instagram Handle" defaultValue={currentUser?.instagram || ''} onBlur={(e) => handleProfileUpdate('instagram', e.target.value)} className="bg-transparent text-sm text-white w-full outline-none" />
-                                </div>
-                                <div className="flex items-center bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-1.5 focus-within:border-blue-500 transition-colors">
-                                    <Twitter size={14} className="text-neutral-500 mr-2 shrink-0" />
-                                    <input type="text" placeholder="X/Twitter Handle" defaultValue={currentUser?.twitter || ''} onBlur={(e) => handleProfileUpdate('twitter', e.target.value)} className="bg-transparent text-sm text-white w-full outline-none" />
-                                </div>
-                            </div>
-                        </div>
-                    )}
                 </div>
                 {Object.values(peers).map((peer, idx) => (
                     <div key={idx} onClick={() => setViewProfileUser(peer)} className={`w-8 h-8 ${peer.avatar ? '' : (peer.color || 'bg-blue-600')} rounded-full border-2 border-neutral-900 overflow-hidden flex items-center justify-center text-xs font-bold text-white relative group shadow-sm cursor-pointer hover:ring-2 hover:ring-neutral-700 transition-all`} title={peer.username}>
@@ -5564,6 +5524,67 @@ function DAWStudio() {
                                     )}
                                 </div>
                             </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Current User Edit Profile Modal */}
+            {showProfileMenu && (
+                <div className="fixed inset-0 z-[200] bg-black/80 backdrop-blur-sm flex items-center justify-center">
+                    <div className="bg-neutral-900 border border-neutral-700 rounded-2xl w-full max-w-sm p-6 shadow-2xl">
+                        <div className="flex justify-between items-center mb-6">
+                            <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                                <Users size={18}/> Edit Profile
+                            </h2>
+                            <button onClick={() => setShowProfileMenu(false)} className="text-neutral-500 hover:text-white transition-colors"><X size={18}/></button>
+                        </div>
+                        <div className="flex flex-col gap-4 max-h-[70vh] overflow-y-auto custom-scrollbar pr-2">
+                            <div className="flex flex-col gap-2">
+                                <label className="text-[10px] text-neutral-400 font-bold uppercase tracking-wider">Profile Picture</label>
+                                <div className="flex items-center gap-4">
+                                    <div className={`w-12 h-12 rounded-full border-2 border-neutral-800 overflow-hidden flex items-center justify-center text-lg font-bold text-white shadow-lg shrink-0 ${currentUser?.color || 'bg-blue-600'}`}>
+                                        {currentUser?.avatar ? (
+                                            <img src={currentUser?.avatar} alt="Me" className="w-full h-full object-cover" />
+                                        ) : (
+                                            currentUser?.username?.charAt(0).toUpperCase()
+                                        )}
+                                    </div>
+                                    <label className="bg-neutral-800 hover:bg-neutral-700 text-white px-4 py-2 rounded-lg text-xs font-bold cursor-pointer transition-colors border border-neutral-700 flex-1 text-center">
+                                        Upload New Image
+                                        <input type="file" accept="image/*" onChange={handleAvatarUpload} className="hidden" />
+                                    </label>
+                                </div>
+                            </div>
+                            <div className="mt-2">
+                                <label className="text-[10px] text-neutral-400 font-bold mb-2 block uppercase tracking-wider">User Bio</label>
+                                <textarea 
+                                    defaultValue={currentUser?.bio || ''} 
+                                    onBlur={(e) => handleProfileUpdate('bio', e.target.value)}
+                                    placeholder="Tell collaborators about your style..." 
+                                    className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-blue-500 custom-scrollbar resize-none"
+                                    rows="3"
+                                />
+                            </div>
+                            <div className="flex flex-col gap-2 mt-2">
+                                <label className="text-[10px] text-neutral-400 font-bold block uppercase tracking-wider">Contact & Socials</label>
+                                <div className="flex items-center bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-1.5 focus-within:border-blue-500 transition-colors">
+                                    <Mail size={14} className="text-neutral-500 mr-2 shrink-0" />
+                                    <input type="email" placeholder="Email Address" defaultValue={currentUser?.email || ''} onBlur={(e) => handleProfileUpdate('email', e.target.value)} className="bg-transparent text-sm text-white w-full outline-none" />
+                                </div>
+                                <div className="flex items-center bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-1.5 focus-within:border-blue-500 transition-colors">
+                                    <Globe size={14} className="text-neutral-500 mr-2 shrink-0" />
+                                    <input type="url" placeholder="Website" defaultValue={currentUser?.website || ''} onBlur={(e) => handleProfileUpdate('website', e.target.value)} className="bg-transparent text-sm text-white w-full outline-none" />
+                                </div>
+                                <div className="flex items-center bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-1.5 focus-within:border-blue-500 transition-colors">
+                                    <Instagram size={14} className="text-neutral-500 mr-2 shrink-0" />
+                                    <input type="text" placeholder="Instagram Handle" defaultValue={currentUser?.instagram || ''} onBlur={(e) => handleProfileUpdate('instagram', e.target.value)} className="bg-transparent text-sm text-white w-full outline-none" />
+                                </div>
+                                <div className="flex items-center bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-1.5 focus-within:border-blue-500 transition-colors">
+                                    <Twitter size={14} className="text-neutral-500 mr-2 shrink-0" />
+                                    <input type="text" placeholder="X/Twitter Handle" defaultValue={currentUser?.twitter || ''} onBlur={(e) => handleProfileUpdate('twitter', e.target.value)} className="bg-transparent text-sm text-white w-full outline-none" />
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             )}
