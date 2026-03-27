@@ -3691,7 +3691,8 @@ function DAWStudio() {
                       ...c, 
                       start: action.payload.start, 
                       duration: action.payload.duration,
-                      ...(action.payload.sampleOffset !== undefined ? { sampleOffset: action.payload.sampleOffset } : {})
+                      ...(action.payload.sampleOffset !== undefined ? { sampleOffset: action.payload.sampleOffset } : {}),
+                      ...(action.payload.notes !== undefined ? { notes: action.payload.notes } : {})
                   } : c) 
               } : t)); 
               break;
@@ -3937,30 +3938,41 @@ function DAWStudio() {
               let newStart = draggingEdge.initialStart;
               let newDuration = draggingEdge.initialDuration;
               let newSampleOffset = draggingEdge.initialSampleOffset || 0;
+              let newNotes = draggingEdge.initialNotes;
               
               if (draggingEdge.edge === 'right') {
                   newDuration = Math.max(0.25, draggingEdge.initialDuration + deltaBeats);
               } else {
-                  const maxLeftPull = -(draggingEdge.initialSampleOffset || 0);
+                  const track = tracksRef.current.find(t => t.id === draggingEdge.trackId);
+                  const isAudio = track?.type === 'audio';
+                  
+                  const maxLeftPull = isAudio ? -(draggingEdge.initialSampleOffset || 0) : -Infinity;
                   const constrainedDelta = Math.max(maxLeftPull, deltaBeats);
                   
                   newStart = Math.min(draggingEdge.initialStart + draggingEdge.initialDuration - 0.25, draggingEdge.initialStart + constrainedDelta);
                   newDuration = draggingEdge.initialStart + draggingEdge.initialDuration - newStart;
-                  newSampleOffset = (draggingEdge.initialSampleOffset || 0) + (newStart - draggingEdge.initialStart);
+                  
+                  const timeShift = newStart - draggingEdge.initialStart;
+                  newSampleOffset = (draggingEdge.initialSampleOffset || 0) + timeShift;
+                  
+                  if (!isAudio && newNotes) {
+                      // Shift all MIDI notes in the opposite direction of the clip start so they stay anchored in absolute time
+                      newNotes = newNotes.map(n => ({ ...n, start: n.start - timeShift }));
+                  }
               }
-              dragValuesRef.current = { start: newStart, duration: newDuration, sampleOffset: newSampleOffset };
+              dragValuesRef.current = { start: newStart, duration: newDuration, sampleOffset: newSampleOffset, notes: newNotes };
               
               setTracks(prev => prev.map(t => t.id === draggingEdge.trackId ? {
                   ...t, clips: t.clips.map(c => {
                       if (c.id !== draggingEdge.clipId) return c;
-                      return { ...c, start: newStart, duration: newDuration, sampleOffset: newSampleOffset };
+                      return { ...c, start: newStart, duration: newDuration, sampleOffset: newSampleOffset, ...(newNotes ? { notes: newNotes } : {}) };
                   })
               } : t));
 
               // Trigger Live Collaborative Preview
               broadcastLivePreview({
                   type: 'UPDATE_CLIP_BOUNDS',
-                  payload: { trackId: draggingEdge.trackId, clipId: draggingEdge.clipId, start: newStart, duration: newDuration, sampleOffset: newSampleOffset }
+                  payload: { trackId: draggingEdge.trackId, clipId: draggingEdge.clipId, start: newStart, duration: newDuration, sampleOffset: newSampleOffset, notes: newNotes }
               });
 
           } else if (draggingNote) {
@@ -4082,7 +4094,8 @@ function DAWStudio() {
           const finalStart = dragValuesRef.current.start ?? draggingEdge.initialStart;
           const finalDuration = dragValuesRef.current.duration ?? draggingEdge.initialDuration;
           const finalSampleOffset = dragValuesRef.current.sampleOffset ?? draggingEdge.initialSampleOffset;
-          dispatchDawAction({ type: 'UPDATE_CLIP_BOUNDS', payload: { trackId: draggingEdge.trackId, clipId: draggingEdge.clipId, start: finalStart, duration: finalDuration, sampleOffset: finalSampleOffset } });
+          const finalNotes = dragValuesRef.current.notes ?? draggingEdge.initialNotes;
+          dispatchDawAction({ type: 'UPDATE_CLIP_BOUNDS', payload: { trackId: draggingEdge.trackId, clipId: draggingEdge.clipId, start: finalStart, duration: finalDuration, sampleOffset: finalSampleOffset, notes: finalNotes } });
           setDraggingEdge(null);
       }
       if (draggingNote) {
@@ -4831,13 +4844,13 @@ function DAWStudio() {
                                           style={{ left: `${c.start * BEAT_WIDTH}px`, width: `${c.duration * BEAT_WIDTH}px`, zIndex: draggingClip?.clipId === c.id || selectedClipIds.includes(c.id) ? 50 : 10 }}
                                         >
                                             {/* Resize Handles */}
-                                            <div className="absolute left-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-white/30 z-10" onMouseDown={(e) => { e.stopPropagation(); setDraggingEdge({ trackId: t.id, clipId: c.id, edge: 'left', startX: e.clientX, initialStart: c.start, initialDuration: c.duration, initialSampleOffset: c.sampleOffset || 0 }); }} data-edge="left" />
-                                            <div className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-white/30 z-10" onMouseDown={(e) => { e.stopPropagation(); setDraggingEdge({ trackId: t.id, clipId: c.id, edge: 'right', startX: e.clientX, initialStart: c.start, initialDuration: c.duration, initialSampleOffset: c.sampleOffset || 0 }); }} data-edge="right" />
+                                            <div className="absolute left-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-white/30 z-10" onMouseDown={(e) => { e.stopPropagation(); setDraggingEdge({ trackId: t.id, clipId: c.id, edge: 'left', startX: e.clientX, initialStart: c.start, initialDuration: c.duration, initialSampleOffset: c.sampleOffset || 0, initialNotes: c.notes }); }} data-edge="left" />
+                                            <div className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-white/30 z-10" onMouseDown={(e) => { e.stopPropagation(); setDraggingEdge({ trackId: t.id, clipId: c.id, edge: 'right', startX: e.clientX, initialStart: c.start, initialDuration: c.duration, initialSampleOffset: c.sampleOffset || 0, initialNotes: c.notes }); }} data-edge="right" />
 
                                             <div className="px-2 pt-1 text-[9px] font-bold text-white/90 truncate pointer-events-none select-none relative z-10">{t.type === 'midi' ? 'MIDI Clip' : 'Audio Clip'}</div>
                                             {t.type === 'midi' && c.notes && (
-                                              <div className="absolute inset-x-0 bottom-0 top-4 opacity-50 pointer-events-none">
-                                                {c.notes.map(n => <div key={n.id} className="absolute bg-white rounded-sm h-[2px]" style={{ left: `${(n.start / c.duration) * 100}%`, width: `${(n.duration / c.duration) * 100}%`, top: `${100 - ((n.pitch - 24) / (108 - 24) * 100)}%` }} />)}
+                                              <div className="absolute inset-x-0 bottom-0 top-4 opacity-50 pointer-events-none overflow-hidden">
+                                                {c.notes.map(n => <div key={n.id} className="absolute bg-white rounded-sm h-[2px]" style={{ left: `${n.start * BEAT_WIDTH}px`, width: `${n.duration * BEAT_WIDTH}px`, top: `${100 - ((n.pitch - 24) / (108 - 24) * 100)}%` }} />)}
                                               </div>
                                             )}
                                             {t.type === 'audio' && c.sampleId && globalAudioBufferCache.has(c.sampleId) && (
