@@ -79,25 +79,7 @@ EOF
 # 6.5 HARD CACHE BUSTING: Inject meta tags directly into the index.html so browsers NEVER cache the old UI
 RUN sed -i 's/<head>/<head>\n    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">\n    <meta http-equiv="Pragma" content="no-cache">\n    <meta http-equiv="Expires" content="0">/' index.html
 
-# 7. Create a serve.json to defeat aggressive browser caching for the SPA
-# Placing it in public/ ensures Vite copies it directly into the dist/ output natively
-RUN cat <<EOF > public/serve.json
-{
-  "headers": [
-    {
-      "source": "**/*.@(html|htm|css|js)",
-      "headers": [
-        {
-          "key": "Cache-Control",
-          "value": "no-cache, no-store, must-revalidate"
-        }
-      ]
-    }
-  ]
-}
-EOF
-
-# 8. Copy your local React file into the container
+# 7. Copy your local React file into the container
 COPY DAW_WEBAPP.jsx src/App.jsx
 
 # 8.5 SANITY CHECK: Force the build to crash if it detects the old ghost code!
@@ -128,11 +110,28 @@ WORKDIR /app
 # Install 'serve', a lightweight static web server perfect for SPAs
 RUN npm install -g serve
 
-# Copy ONLY the compiled static files from Stage 1 (serve.json is already inside dist/ now)
+# Copy ONLY the compiled static files from Stage 1
 COPY --from=builder /app/webdaw/dist ./dist
+
+# Generate the serve.json with BOTH SPA routing and Cache headers safely in the final root
+RUN cat <<EOF > serve.json
+{
+  "rewrites": [
+    { "source": "**", "destination": "/index.html" }
+  ],
+  "headers": [
+    {
+      "source": "**/*.@(html|htm|css|js)",
+      "headers": [
+        { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" }
+      ]
+    }
+  ]
+}
+EOF
 
 # Expose port 3000
 EXPOSE 3000
 
-# Start the server (serve automatically detects serve.json in the hosted directory)
-CMD ["serve", "-s", "dist", "-l", "3000"]
+# Start the server using the explicit config file
+CMD ["serve", "-s", "dist", "-l", "3000", "-c", "serve.json"]
