@@ -82,7 +82,7 @@ RUN sed -i 's/<head>/<head>\n    <meta http-equiv="Cache-Control" content="no-ca
 # 7. Copy your local React file into the container
 COPY DAW_WEBAPP.jsx src/App.jsx
 
-# 8.5 SANITY CHECK: Force the build to crash if it detects the old ghost code!
+# 8. SANITY CHECK: Force the build to crash if it detects the old ghost code!
 RUN if grep -qi "coming soon" src/App.jsx; then \
       echo "======================================================="; \
       echo "❌ FATAL ERROR: DOCKER IS COPYING AN OLD FILE!"; \
@@ -113,8 +113,8 @@ RUN npm install -g serve
 # Copy ONLY the compiled static files from Stage 1
 COPY --from=builder /app/webdaw/dist ./dist
 
-# Generate the serve.json with BOTH SPA routing and Cache headers safely in the final root
-RUN cat <<EOF > serve.json
+# Generate the serve.json with BOTH SPA routing and Cache headers safely inside the dist folder
+RUN cat <<EOF > dist/serve.json
 {
   "rewrites": [
     { "source": "**", "destination": "/index.html" }
@@ -133,5 +133,5 @@ EOF
 # Expose port 3000
 EXPOSE 3000
 
-# Start the server using the explicit config file
-CMD ["serve", "-s", "dist", "-l", "3000", "-c", "serve.json"]
+# Start the server (serve automatically detects serve.json in the hosted directory)
+CMD ["serve", "-s", "dist", "-l", "3000"]
