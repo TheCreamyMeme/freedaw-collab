@@ -12,14 +12,15 @@ RUN npm init -y && npm install express cors jsonwebtoken socket.io multer
 COPY server.js .
 
 # Create directories for persistent storage
-RUN mkdir -p projects samples users
+RUN mkdir -p projects samples users plugins
 
 # Expose the port the server runs on
 EXPOSE 3000
 
-# Define volumes so that the saved projects and samples map out of the container
+# Define volumes so that the saved projects, samples, users, and plugins map out of the container
 # and are not lost when the container is stopped or removed.
-VOLUME ["/app/projects", "/app/samples", "/app/users"]
+VOLUME ["/app/projects", "/app/samples", "/app/users", "/app/plugins"]
+
 
 # Start the Node backend
 CMD ["node", "server.js"]

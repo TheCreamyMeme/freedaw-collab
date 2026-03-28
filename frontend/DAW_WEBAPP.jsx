@@ -1893,25 +1893,39 @@ function DAWStudio() {
   };
 
   const handleCropComplete = async (croppedDataUrl) => {
-      const next = { ...currentUser, avatar: croppedDataUrl };
-      setCurrentUser(next);
-      localStorage.setItem('freedaw_user', JSON.stringify(next));
-      if (socketRef.current) socketRef.current.emit('presence-update', { 
-          username: next.username, avatar: croppedDataUrl, color: next.color, 
-          bio: next.bio, email: next.email, website: next.website, instagram: next.instagram, twitter: next.twitter 
-      });
       setCropImageSrc(null);
-      showToast("Profile picture updated", "success");
+      showToast("Uploading profile picture...", "info");
+      
+      let finalAvatar = croppedDataUrl;
       
       if (authTokenRef.current) {
           try {
-              await fetch(`${API_BASE_URL}/api/users/profile`, {
+              const res = await fetch(`${API_BASE_URL}/api/users/profile`, {
                   method: 'PUT',
                   headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authTokenRef.current}` },
                   body: JSON.stringify({ avatar: croppedDataUrl })
               });
+              if (res.ok) {
+                  const data = await res.json();
+                  if (data.user?.avatar) {
+                      // Prepend the backend host to the relative avatar URL
+                      finalAvatar = data.user.avatar.startsWith('http') ? data.user.avatar : `${API_BASE_URL}${data.user.avatar}`;
+                  }
+              }
           } catch(e) {}
       }
+
+      const next = { ...currentUser, avatar: finalAvatar };
+      setCurrentUser(next);
+      localStorage.setItem('freedaw_user', JSON.stringify(next));
+      
+      // Efficiently broadcast just the URL URL over WebSockets instead of a massive Base64 payload
+      if (socketRef.current) socketRef.current.emit('presence-update', { 
+          username: next.username, avatar: finalAvatar, color: next.color, 
+          bio: next.bio, email: next.email, website: next.website, instagram: next.instagram, twitter: next.twitter 
+      });
+      
+      showToast("Profile picture updated", "success");
   };
 
   const handleProfileUpdate = async (field, value) => {
@@ -3659,7 +3673,8 @@ function DAWStudio() {
         });
         const data = await res.json();
         if (data.token) {
-            const userObj = { ...data.user, activeTrack: null, color: 'bg-emerald-500' };
+            const parsedAvatar = data.user.avatar && data.user.avatar.startsWith('/api') ? `${API_BASE_URL}${data.user.avatar}` : data.user.avatar;
+            const userObj = { ...data.user, avatar: parsedAvatar, activeTrack: null, color: 'bg-emerald-500' };
             setAuthToken(data.token); 
             setCurrentUser(userObj); 
             setAppView('home');
@@ -3839,7 +3854,6 @@ function DAWStudio() {
       }
       e.target.value = null; // Reset input
   };
-
   const loadProjects = async (token) => {
       try {
           const offlineProjs = await idb.getAll('projects');
@@ -4942,8 +4956,8 @@ function DAWStudio() {
                   </label>
               </div>
               <div className="flex-1 overflow-y-auto p-2 pr-3 custom-scrollbar">
-                <div className="text-[10px] font-bold text-neutral-500 mb-2 mt-2 uppercase tracking-wider px-2">Engines & Effects</div>
-                {[...INTERNAL_PLUGINS, ...customPlugins].map(vst => (
+                <div className="text-[10px] font-bold text-neutral-500 mb-2 mt-2 uppercase tracking-wider px-2">Internal Engines</div>
+                {INTERNAL_PLUGINS.map(vst => (
                   <div 
                       key={vst.id} 
                       onClick={() => handleBrowserPluginClick(vst)}
@@ -4954,10 +4968,31 @@ function DAWStudio() {
                     </div>
                     <div className="flex flex-col overflow-hidden">
                       <span className="font-medium text-white text-xs truncate">{vst.name}</span>
-                      <span className="text-[9px] text-neutral-500 truncate">{vst.vendor || 'Custom'} &bull; {vst.category?.toUpperCase()}</span>
+                      <span className="text-[9px] text-neutral-500 truncate">{vst.vendor || 'FreeDaw-Collab'} &bull; {vst.category?.toUpperCase()}</span>
                     </div>
                   </div>
                 ))}
+                
+                {customPlugins.length > 0 && (
+                    <>
+                        <div className="text-[10px] font-bold text-blue-400 mb-2 mt-4 uppercase tracking-wider px-2 border-t border-neutral-800 pt-4">Custom Plugins</div>
+                        {customPlugins.map(vst => (
+                          <div 
+                              key={vst.id} 
+                              onClick={() => handleBrowserPluginClick(vst)}
+                              className={`flex items-center gap-3 p-2 rounded-lg text-sm text-neutral-300 border transition-colors cursor-pointer ${selectedBrowserPlugin?.id === vst.id ? 'bg-blue-900/30 border-blue-500/50 shadow-sm' : 'hover:bg-neutral-800/50 border-transparent hover:border-neutral-700'}`}
+                          >
+                            <div className={`w-8 h-8 rounded bg-neutral-800 flex items-center justify-center shadow-sm shrink-0 ${vst.category === 'instrument' ? 'text-purple-400' : 'text-blue-400'}`}>
+                              {vst.category === 'instrument' ? <Piano size={14} /> : <Plug size={14} />}
+                            </div>
+                            <div className="flex flex-col overflow-hidden">
+                              <span className="font-medium text-white text-xs truncate">{vst.name}</span>
+                              <span className="text-[9px] text-blue-400 truncate">{vst.vendor || 'Custom'} &bull; {vst.category?.toUpperCase()}</span>
+                            </div>
+                          </div>
+                        ))}
+                    </>
+                )}
               </div>
             </div>
             

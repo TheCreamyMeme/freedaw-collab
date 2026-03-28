@@ -104,6 +104,8 @@ app.delete('/api/samples/:sampleId', authenticateToken, (req, res) => {
 });
 
 // --- 3. USERS API ---
+app.use('/api/users/avatars', express.static(AVATARS_DIR));
+
 app.get('/api/users', authenticateToken, (req, res) => {
     const users = [];
     const files = fs.readdirSync(USERS_DIR).filter(f => f.endsWith('.json'));
@@ -122,12 +124,26 @@ app.put('/api/users/profile', authenticateToken, (req, res) => {
     const filePath = path.join(USERS_DIR, `${req.user.id}.json`);
     if (fs.existsSync(filePath)) {
         let user = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
-        const allowedFields = ['avatar', 'bio', 'color', 'email', 'website', 'instagram', 'twitter'];
+        const allowedFields = ['bio', 'color', 'email', 'website', 'instagram', 'twitter'];
         
         for (const field of allowedFields) {
             if (req.body[field] !== undefined) {
                 user[field] = req.body[field];
             }
+        }
+        
+        // Handle Base64 Profile Picture -> Physical Image File Conversion
+        if (req.body.avatar && req.body.avatar.startsWith('data:image')) {
+            const matches = req.body.avatar.match(/^data:image\/([A-Za-z-+\/]+);base64,(.+)$/);
+            if (matches && matches.length === 3) {
+                const ext = matches[1] === 'jpeg' ? 'jpg' : matches[1];
+                const buffer = Buffer.from(matches[2], 'base64');
+                const filename = `${req.user.id}_${Date.now()}.${ext}`;
+                fs.writeFileSync(path.join(AVATARS_DIR, filename), buffer);
+                user.avatar = `/api/users/avatars/${filename}`;
+            }
+        } else if (req.body.avatar) {
+            user.avatar = req.body.avatar; // Keep existing external URLs
         }
         
         fs.writeFileSync(filePath, JSON.stringify(user, null, 2));
