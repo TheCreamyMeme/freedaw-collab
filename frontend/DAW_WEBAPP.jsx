@@ -929,7 +929,9 @@ const createFXNode = async (ctx, fx) => {
       const customPlugin = window.FreeDawPlugins?.find(p => p.id === fx.id || p.id === fx.pluginId);
       if (customPlugin && typeof customPlugin.processAudio === 'function') {
           try {
-              return await customPlugin.processAudio(ctx, input, output, wet, dry, fx.params);
+              const customNodes = await customPlugin.processAudio(ctx, input, output, wet, dry, fx.params);
+              // CRITICAL FIX: Ensure the input and output container nodes are returned so the DAW can chain the track!
+              return { input, output, ...customNodes, fxType: 'custom' };
           } catch(err) {
               console.error(`Custom Plugin ${fx.name} crashed during audio routing`, err);
           }
@@ -2949,6 +2951,13 @@ function DAWStudio() {
       if (!synth || !synth.fxNodes[fxId]) return;
       const nodeObj = synth.fxNodes[fxId];
       const now = time !== null ? time : (audioCtxRef.current?.currentTime || 0);
+
+      if (nodeObj.fxType === 'custom') {
+          if (typeof nodeObj.updateParam === 'function') {
+              nodeObj.updateParam(param, numVal, now);
+          }
+          return;
+      }
 
       if (nodeObj.fxType === 'delay') {
       if (param === 'time') nodeObj.delay.delayTime.setTargetAtTime(numVal, now, 0.05);
