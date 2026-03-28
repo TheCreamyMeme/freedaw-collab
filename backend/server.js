@@ -24,11 +24,13 @@ app.use(express.json({ limit: '100mb' }));
 const PROJECTS_DIR = path.join(__dirname, 'projects');
 const SAMPLES_DIR = path.join(__dirname, 'samples');
 const USERS_DIR = path.join(__dirname, 'users');
+const AVATARS_DIR = path.join(USERS_DIR, 'avatars');
 const PLUGINS_DIR = path.join(__dirname, 'plugins');
 
 if (!fs.existsSync(PROJECTS_DIR)) fs.mkdirSync(PROJECTS_DIR, { recursive: true });
 if (!fs.existsSync(SAMPLES_DIR)) fs.mkdirSync(SAMPLES_DIR, { recursive: true });
 if (!fs.existsSync(USERS_DIR)) fs.mkdirSync(USERS_DIR, { recursive: true });
+if (!fs.existsSync(AVATARS_DIR)) fs.mkdirSync(AVATARS_DIR, { recursive: true });
 if (!fs.existsSync(PLUGINS_DIR)) fs.mkdirSync(PLUGINS_DIR, { recursive: true });
 
 // Multer Storage Configuration for Audio Samples
