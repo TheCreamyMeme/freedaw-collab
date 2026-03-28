@@ -3745,7 +3745,30 @@ function DAWStudio() {
       
       // Handle Internal Plugins
       if (INTERNAL_PLUGINS.some(p => p.id === plugin.id)) {
-          setBrowserPluginCode(`/**\n * Internal Plugin: ${plugin.name}\n * \n * This is an internal DSP node compiled directly into the DAW core engine.\n * \n * To create your own custom plugins, simply write a .js file that pushes a configuration \n * object into the window.FreeDawPlugins array. Custom plugins use standard Web Audio API \n * node connections and feature auto-generated UIs via a simple JSON parameter schema!\n */`);
+          if (plugin.category === 'instrument') {
+              let triggerCode = '(ctx, bus, pitch, time, vol, dur, p={}, vel=100, pbNode) => {\n        // Custom DSP...\n    }';
+              
+              // Dynamically stringify the raw source code for the selected instrument
+              if (plugin.type === 'subtractive') triggerCode = triggerSubtractive.toString();
+              else if (plugin.type === 'fm') triggerCode = triggerFMSynth.toString();
+              else if (plugin.type === 'supersaw') triggerCode = triggerSupersaw.toString();
+              else if (plugin.type === 'pluck') triggerCode = triggerPluck.toString();
+              else if (plugin.type === 'acid') triggerCode = triggerAcid.toString();
+              else if (plugin.type === 'organ') triggerCode = triggerOrgan.toString();
+              else if (plugin.type === 'drum') triggerCode = triggerDrum.toString();
+              
+              setBrowserPluginCode(`/**\n * Internal Plugin: ${plugin.name}\n * \n * Save this snippet as a .js file, edit the DSP,\n * and upload it via the Browser to create your own instrument!\n */\nwindow.FreeDawPlugins.push({\n    id: "custom-${plugin.id}",\n    name: "${plugin.name} (Custom)",\n    category: "instrument",\n    vendor: "My Studio",\n    defaultParams: ${JSON.stringify(plugin.params || { cutoff: 2000, res: 1.5, attack: 0.01, release: 0.2 }, null, 4).replace(/\n/g, '\n    ')},\n    triggerNote: ${triggerCode}\n});`);
+          } else {
+              let setupCode = `// Basic passthrough example\n        const passthrough = ctx.createGain(); \n        input.connect(passthrough); \n        passthrough.connect(wet); \n        wet.connect(output);\n\n        // Return the required structure for the DAW engine\n        return {\n            fxType: 'custom',\n            passthrough, wet, dry,\n            updateParam: (paramName, value, time) => {\n                if (paramName === 'mix') {\n                    wet.gain.setTargetAtTime(value, time, 0.05);\n                    dry.gain.setTargetAtTime(1-value, time, 0.05);\n                }\n            }\n        };`;
+
+              if (plugin.type === 'delay') {
+                  setupCode = `const delay = ctx.createDelay(5.0); delay.delayTime.value = params?.time || 0.3;\n        const fb = ctx.createGain(); fb.gain.value = params?.feedback || 0.4;\n        const filter = ctx.createBiquadFilter(); filter.type = 'lowpass'; filter.frequency.value = params?.cutoff || 2000;\n        \n        input.connect(delay); \n        delay.connect(filter); \n        filter.connect(fb); \n        fb.connect(delay); \n        delay.connect(wet); \n        wet.connect(output);\n\n        return {\n            fxType: 'custom',\n            delay, fb, filter, wet, dry,\n            updateParam: (paramName, value, time) => {\n                if (paramName === 'time' && typeof delay !== 'undefined') delay.delayTime.setTargetAtTime(value, time, 0.05);\n                if (paramName === 'feedback' && typeof fb !== 'undefined') fb.gain.setTargetAtTime(value, time, 0.05);\n                if (paramName === 'cutoff' && typeof filter !== 'undefined') filter.frequency.setTargetAtTime(value, time, 0.05);\n                if (paramName === 'mix') { \n                    wet.gain.setTargetAtTime(value, time, 0.05); \n                    dry.gain.setTargetAtTime(1-value, time, 0.05); \n                }\n            }\n        };`;
+              } else if (plugin.type === 'distortion') {
+                  setupCode = `const node = ctx.createWaveShaper();\n        const amount = params?.amount || 50; \n        const curve = new Float32Array(44100); const deg = Math.PI / 180;\n        for (let i = 0; i < 44100; ++i) { \n            const x = (i * 2) / 44100 - 1; \n            curve[i] = ((3 + amount) * x * 20 * deg) / (Math.PI + amount * Math.abs(x)); \n        }\n        node.curve = curve; node.oversample = '4x';\n        \n        const filter = ctx.createBiquadFilter(); \n        filter.type = 'lowpass'; filter.frequency.value = params?.tone || 4000;\n        \n        input.connect(node); \n        node.connect(filter); \n        filter.connect(wet); \n        wet.connect(output);\n\n        return {\n            fxType: 'custom',\n            node, filter, wet, dry,\n            updateParam: (paramName, value, time) => {\n                if (paramName === 'amount') {\n                    const curve = new Float32Array(44100); const deg = Math.PI / 180;\n                    for (let i = 0; i < 44100; ++i) { \n                        const x = (i * 2) / 44100 - 1; \n                        curve[i] = ((3 + value) * x * 20 * deg) / (Math.PI + value * Math.abs(x)); \n                    }\n                    node.curve = curve;\n                }\n                if (paramName === 'tone') filter.frequency.setTargetAtTime(value, time, 0.05);\n                if (paramName === 'mix') { \n                    wet.gain.setTargetAtTime(value, time, 0.05); \n                    dry.gain.setTargetAtTime(1-value, time, 0.05); \n                }\n            }\n        };`;
+              }
+
+              setBrowserPluginCode(`/**\n * Internal Plugin: ${plugin.name}\n * \n * Save this snippet as a .js file, edit the DSP,\n * and upload it via the Browser to create your own effect!\n */\nwindow.FreeDawPlugins.push({\n    id: "custom-${plugin.id}",\n    name: "${plugin.name} (Custom)",\n    category: "effect",\n    vendor: "My Studio",\n    defaultParams: ${JSON.stringify(plugin.params || { mix: 0.5 }, null, 4).replace(/\n/g, '\n    ')},\n    \n    processAudio: async (ctx, input, output, wet, dry, params) => {\n        ${setupCode}\n    }\n});`);
+          }
           return;
       }
 
