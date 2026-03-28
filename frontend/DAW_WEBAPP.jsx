@@ -3738,6 +3738,46 @@ function DAWStudio() {
       } catch(e) { console.warn("Failed to load custom plugins", e); }
   }, []);
 
+  const handleBrowserPluginClick = async (plugin) => {
+      setSelectedBrowserPlugin(plugin);
+      
+      // Handle Internal Plugins
+      if (INTERNAL_PLUGINS.some(p => p.id === plugin.id)) {
+          setBrowserPluginCode(`/**\n * Internal Plugin: ${plugin.name}\n * \n * This is an internal DSP node compiled directly into the DAW core engine.\n * \n * To create your own custom plugins, simply write a .js file that pushes a configuration \n * object into the window.FreeDawPlugins array. Custom plugins use standard Web Audio API \n * node connections and feature auto-generated UIs via a simple JSON parameter schema!\n */`);
+          return;
+      }
+
+      // Handle Custom Uploaded Plugins (Fetch the raw source code dynamically)
+      setBrowserPluginCode("/* Loading raw source code... */");
+      try {
+          const res = await fetch(`${API_BASE_URL}/api/plugins`, {
+              headers: { 'Authorization': `Bearer ${authTokenRef.current}` }
+          });
+          
+          if (res.ok) {
+              const files = await res.json();
+              let foundCode = "/* Plugin source code could not be located on the server */";
+              
+              // Iterate through the uploaded plugin files to find the one matching this ID
+              for (const file of files) {
+                  const codeRes = await fetch(`${API_BASE_URL}${file.url}`);
+                  if (codeRes.ok) {
+                      const code = await codeRes.text();
+                      if (code.includes(plugin.id)) {
+                          foundCode = code;
+                          break;
+                      }
+                  }
+              }
+              setBrowserPluginCode(foundCode);
+          } else {
+              setBrowserPluginCode("/* Failed to index plugin directory */");
+          }
+      } catch (e) {
+          setBrowserPluginCode("/* Error fetching plugin source code from network */");
+      }
+  };
+
   const handlePluginUpload = async (e) => {
       const file = e.target.files[0];
       if (!file || !file.name.endsWith('.js')) {
