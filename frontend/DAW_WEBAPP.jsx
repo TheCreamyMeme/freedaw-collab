@@ -3713,6 +3713,61 @@ function DAWStudio() {
       showToast("Signed out successfully.");
   };
 
+  const loadCustomPlugins = useCallback(async (token) => {
+      try {
+          const res = await fetch(`${API_BASE_URL}/api/plugins`, {
+              headers: { 'Authorization': `Bearer ${token}` }
+          });
+          if (res.ok) {
+              const plugins = await res.json();
+              let loadedCount = 0;
+              if (plugins.length === 0) return;
+              
+              for (const plugin of plugins) {
+                  const script = document.createElement('script');
+                  script.src = `${API_BASE_URL}${plugin.url}`;
+                  script.onload = () => {
+                      loadedCount++;
+                      if (loadedCount === plugins.length) {
+                          setCustomPlugins([...window.FreeDawPlugins]);
+                      }
+                  };
+                  document.head.appendChild(script);
+              }
+          }
+      } catch(e) { console.warn("Failed to load custom plugins", e); }
+  }, []);
+
+  const handlePluginUpload = async (e) => {
+      const file = e.target.files[0];
+      if (!file || !file.name.endsWith('.js')) {
+          showToast("Please upload a valid .js plugin file.", "error");
+          return;
+      }
+      const formData = new FormData();
+      formData.append('plugin', file);
+      try {
+          const res = await fetch(`${API_BASE_URL}/api/plugins/upload`, {
+              method: 'POST',
+              headers: { 'Authorization': `Bearer ${authTokenRef.current}` },
+              body: formData
+          });
+          if (res.ok) {
+              const data = await res.json();
+              showToast("Plugin uploaded!", "success");
+              const script = document.createElement('script');
+              script.src = `${API_BASE_URL}${data.url}`;
+              script.onload = () => setCustomPlugins([...window.FreeDawPlugins]);
+              document.head.appendChild(script);
+          } else {
+              showToast("Upload failed.", "error");
+          }
+      } catch (err) {
+          showToast("Failed to upload plugin.", "error");
+      }
+      e.target.value = null; // Reset input
+  };
+
   const loadProjects = async (token) => {
       try {
           const offlineProjs = await idb.getAll('projects');
