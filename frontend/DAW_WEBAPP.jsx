@@ -3717,7 +3717,7 @@ function DAWStudio() {
 
   const loadCustomPlugins = useCallback(async (token) => {
       try {
-          const res = await fetch(`${API_BASE_URL}/api/plugins`, {
+          const res = await fetch(`${API_BASE_URL}/api/plugins?_t=${Date.now()}`, {
               headers: { 'Authorization': `Bearer ${token}` }
           });
           if (res.ok) {
@@ -3727,11 +3727,14 @@ function DAWStudio() {
               
               for (const plugin of plugins) {
                   const script = document.createElement('script');
-                  script.src = `${API_BASE_URL}${plugin.url}`;
+                  script.src = `${API_BASE_URL}${plugin.url}?_t=${Date.now()}`; // Aggressive Cache Busting
                   script.onload = () => {
                       loadedCount++;
                       if (loadedCount === plugins.length) {
-                          setCustomPlugins([...window.FreeDawPlugins]);
+                          // Deduplicate the global array to prevent React render loop issues
+                          const unique = Array.from(new Map(window.FreeDawPlugins.map(p => [p.id, p])).values());
+                          window.FreeDawPlugins = unique;
+                          setCustomPlugins([...unique]);
                       }
                   };
                   document.head.appendChild(script);
@@ -3775,7 +3778,7 @@ function DAWStudio() {
       // Handle Custom Uploaded Plugins (Fetch the raw source code dynamically)
       setBrowserPluginCode("/* Loading raw source code... */");
       try {
-          const res = await fetch(`${API_BASE_URL}/api/plugins`, {
+          const res = await fetch(`${API_BASE_URL}/api/plugins?_t=${Date.now()}`, {
               headers: { 'Authorization': `Bearer ${authTokenRef.current}` }
           });
           
@@ -3785,7 +3788,7 @@ function DAWStudio() {
               
               // Iterate through the uploaded plugin files to find the one matching this ID
               for (const file of files) {
-                  const codeRes = await fetch(`${API_BASE_URL}${file.url}`);
+                  const codeRes = await fetch(`${API_BASE_URL}${file.url}?_t=${Date.now()}`); // CACHE BUST
                   if (codeRes.ok) {
                       const code = await codeRes.text();
                       if (code.includes(plugin.id)) {
@@ -3821,8 +3824,12 @@ function DAWStudio() {
               const data = await res.json();
               showToast("Plugin uploaded!", "success");
               const script = document.createElement('script');
-              script.src = `${API_BASE_URL}${data.url}`;
-              script.onload = () => setCustomPlugins([...window.FreeDawPlugins]);
+              script.src = `${API_BASE_URL}${data.url}?_t=${Date.now()}`; // CACHE BUST
+              script.onload = () => {
+                  const unique = Array.from(new Map(window.FreeDawPlugins.map(p => [p.id, p])).values());
+                  window.FreeDawPlugins = unique;
+                  setCustomPlugins([...unique]);
+              };
               document.head.appendChild(script);
           } else {
               showToast("Upload failed.", "error");
