@@ -701,6 +701,34 @@ const Knob = React.memo(({ id, param, value, min, max, step, isLog, onChange, on
         }
         nextValue = Math.max(min, Math.min(max, nextValue));
         if (step && !isLog) nextValue = Math.round(nextValue / step) * step;
+
+        let nextPercent;
+        if (isLog) {
+            nextPercent = (Math.log(Math.max(0.001, nextValue)) - Math.log(Math.max(0.001, min))) / (Math.log(max) - Math.log(Math.max(0.001, min)));
+        } else {
+            nextPercent = (nextValue - min) / (max - min);
+        }
+        
+        const deltaPercent = nextPercent - (percent || 0);
+
+        if (onRangeAdjustRef.current && mappedRange) {
+            const currentSpread = mappedRange.max - mappedRange.min;
+            let newMin = mappedRange.min + deltaPercent;
+            let newMax = mappedRange.max + deltaPercent;
+            if (newMin < 0) { newMin = 0; newMax = currentSpread; }
+            else if (newMax > 1) { newMax = 1; newMin = 1 - currentSpread; }
+            onRangeAdjustRef.current(param, newMin, newMax);
+        }
+
+        if (onLfoRangeAdjustRef.current && lfoMappedRange) {
+            const currentSpread = lfoMappedRange.max - lfoMappedRange.min;
+            let newMin = lfoMappedRange.min + deltaPercent;
+            let newMax = lfoMappedRange.max + deltaPercent;
+            if (newMin < 0) { newMin = 0; newMax = currentSpread; }
+            else if (newMax > 1) { newMax = 1; newMin = 1 - currentSpread; }
+            onLfoRangeAdjustRef.current(param, newMin, newMax);
+        }
+
         onChangeRef.current(param, nextValue);
     };
 
