@@ -378,7 +378,8 @@ const getInterpolatedValue = (points, time) => {
 };
 
 const getParamConstraints = (param) => {
-    const p = param.toLowerCase();
+    if (!param) return { min: 0, max: 1, step: 0.01 };
+    const p = String(param).toLowerCase();
     if (p === 'size') return { min: 0.1, max: 3.0, step: 0.1 };
     if (p.includes('freq') || p === 'cutoff' || p === 'damping' || p === 'tone') return { min: 20, max: 20000, step: 1, isLog: true };
     if (p.includes('gain') || p === 'low' || p === 'mid' || p === 'high') return { min: -24, max: 24, step: 0.1 };
