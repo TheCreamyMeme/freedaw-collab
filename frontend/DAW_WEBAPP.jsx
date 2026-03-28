@@ -5624,19 +5624,33 @@ function DAWStudio() {
                                         onChange={(e) => {
                                             const newInstId = e.target.value;
                                             let newParams = {};
-                                            if (newInstId === 'inst-subtractive') newParams = { cutoff: 2000, res: 1.5, attack: 0.01, release: 0.2 };
+                                            const customInst = window.FreeDawPlugins?.find(p => p.id === newInstId);
+                                            
+                                            if (customInst) {
+                                                newParams = customInst.defaultParams || customInst.params || {};
+                                            } else if (newInstId === 'inst-subtractive') newParams = { cutoff: 2000, res: 1.5, attack: 0.01, release: 0.2 };
                                             else if (newInstId === 'inst-fm') newParams = { ratio: 2, modIndex: 5, attack: 0.01, release: 0.2 };
                                             else if (newInstId === 'inst-supersaw') newParams = { detune: 25, attack: 0.05, release: 0.5 };
                                             else if (newInstId === 'inst-pluck') newParams = { damping: 4000, decay: 0.95 };
                                             else if (newInstId === 'inst-acid') newParams = { oscType: 'square', cutoff: 150, envMod: 2500, decay: 0.3, res: 5 };
                                             else if (newInstId === 'inst-organ') newParams = { sub: 0.8, fund: 1.0, fifth: 0.5, oct: 0.5 };
+                                            
                                             dispatchDawAction({ type: 'CHANGE_INSTRUMENT', payload: { trackId: track.id, instrumentId: newInstId, instrumentParams: newParams } });
                                         }}
                                         className="w-full bg-neutral-900 border border-neutral-700 rounded-lg p-2 text-xs text-white outline-none focus:border-purple-500 cursor-pointer"
                                     >
-                                        {INTERNAL_PLUGINS.filter(p => p.category === 'instrument').map(p => (
-                                            <option key={p.id} value={p.id}>{p.name}</option>
-                                        ))}
+                                        <optgroup label="Internal Engines">
+                                            {INTERNAL_PLUGINS.filter(p => p.category === 'instrument').map(p => (
+                                                <option key={p.id} value={p.id}>{p.name}</option>
+                                            ))}
+                                        </optgroup>
+                                        {customPlugins.filter(p => p.category === 'instrument').length > 0 && (
+                                            <optgroup label="Custom Plugins">
+                                                {customPlugins.filter(p => p.category === 'instrument').map(p => (
+                                                    <option key={p.id} value={p.id}>{p.name}</option>
+                                                ))}
+                                            </optgroup>
+                                        )}
                                     </select>
                                 </div>
 
