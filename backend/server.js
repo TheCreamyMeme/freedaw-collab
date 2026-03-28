@@ -25,24 +25,27 @@ const PROJECTS_DIR = path.join(__dirname, 'projects');
 const SAMPLES_DIR = path.join(__dirname, 'samples');
 const USERS_DIR = path.join(__dirname, 'users');
 const PLUGINS_DIR = path.join(__dirname, 'plugins');
+
 if (!fs.existsSync(PROJECTS_DIR)) fs.mkdirSync(PROJECTS_DIR, { recursive: true });
 if (!fs.existsSync(SAMPLES_DIR)) fs.mkdirSync(SAMPLES_DIR, { recursive: true });
 if (!fs.existsSync(USERS_DIR)) fs.mkdirSync(USERS_DIR, { recursive: true });
 if (!fs.existsSync(PLUGINS_DIR)) fs.mkdirSync(PLUGINS_DIR, { recursive: true });
 
 // Multer Storage Configuration for Audio Samples
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => cb(null, SAMPLES_DIR),
+    filename: (req, file, cb) => cb(null, `${req.params.sampleId}.wav`)
+});
+const upload = multer({ storage });
 
+// Multer Storage Configuration for Custom Plugins
+const pluginStorage = multer.diskStorage({
+    destination: (req, file, cb) => cb(null, PLUGINS_DIR),
+    filename: (req, file, cb) => cb(null, `${Date.now()}_${file.originalname.replace(/[^a-zA-Z0-9.-]/g, '_')}`)
+});
+const uploadPlugin = multer({ storage: pluginStorage });
 
 // --- 1. AUTHENTICATION ---
-app.post('/api/auth/login', (req, res) => {
-    const { username } = req.body;
-    if (!username) return res.status(400).json({ error: 'Username required' });
-
-    // In production, verify passwords against a database here.
-    const user = { id: `u_${username}_${Date.now()}`, username };
-    const token = jwt.sign(user, JWT_SECRET, { expiresIn: '7d' });
-
-    res.js// --- 1. AUTHENTICATION ---
 app.post('/api/auth/login', (req, res) => {
     const { username } = req.body;
     if (!username) return res.status(400).json({ error: 'Username required' });
@@ -62,25 +65,6 @@ app.post('/api/auth/login', (req, res) => {
         fs.writeFileSync(path.join(USERS_DIR, `${user.id}.json`), JSON.stringify(user, null, 2));
     }
 
-    const token = jwt.sign(user, JWT_SECRET, { expiresIn: '7d' });
-
-    res.json({ token, user });
-});
-on({ token, user });
-});
-const storage = multer.diskStorage({
-    destination: (req, file, cb) => cb(null, SAMPLES_DIR),
-    filename: (req, file, cb) => cb(null, `${req.params.sampleId}.wav`)
-});
-const upload = multer({ storage });
-
-// --- 1. AUTHENTICATION ---
-app.post('/api/auth/login', (req, res) => {
-    const { username } = req.body;
-    if (!username) return res.status(400).json({ error: 'Username required' });
-
-    // In production, verify passwords against a database here.
-    const user = { id: `u_${username}_${Date.now()}`, username };
     const token = jwt.sign(user, JWT_SECRET, { expiresIn: '7d' });
 
     res.json({ token, user });
@@ -119,7 +103,7 @@ app.delete('/api/samples/:sampleId', authenticateToken, (req, res) => {
     }
 });
 
-// User Lookup API
+// --- 3. USERS API ---
 app.get('/api/users', authenticateToken, (req, res) => {
     const users = [];
     const files = fs.readdirSync(USERS_DIR).filter(f => f.endsWith('.json'));
@@ -153,7 +137,7 @@ app.put('/api/users/profile', authenticateToken, (req, res) => {
     }
 });
 
-// --- 3. PLUGINS API (Custom JavaScript Plugins) ---
+// --- 4. PLUGINS API (Custom JavaScript Plugins) ---
 app.use('/api/plugins/files', express.static(PLUGINS_DIR));
 
 app.get('/api/plugins', authenticateToken, (req, res) => {
@@ -170,7 +154,7 @@ app.post('/api/plugins/upload', authenticateToken, uploadPlugin.single('plugin')
     res.json({ status: 'saved', filename: req.file.filename, url: `/api/plugins/files/${req.file.filename}` });
 });
 
-// --- 4. PROJECTS API (Protected Upload/Delete) ---
+// --- 5. PROJECTS API (Protected Upload/Delete) ---
 app.get('/api/projects', authenticateToken, (req, res) => {
     try {
         const files = fs.readdirSync(PROJECTS_DIR).filter(f => f.endsWith('.json'));
@@ -226,7 +210,7 @@ app.delete('/api/projects/:projectId', authenticateToken, (req, res) => {
     }
 });
 
-// --- 4. REAL-TIME SIGNALING & COLLABORATION (Socket.io) ---
+// --- 6. REAL-TIME SIGNALING & COLLABORATION (Socket.io) ---
 io.on('connection', (socket) => {
     console.log('Client connected:', socket.id);
     let currentRoom = null;
