@@ -458,7 +458,7 @@ const INTERNAL_PLUGINS = [
 ];
 
 const INITIAL_TRACKS = [
-  { id: 1, name: 'Drum Kit', type: 'midi', instrument: 'inst-drum', color: 'bg-orange-500', volume: 90, pan: 0, muted: false, solo: false, armed: false, automation: {}, activeAutomationParam: 'volume', effects: [], clips: [
+  { id: 1, name: 'Drum Kit', type: 'midi', instrument: 'inst-drum', instrumentParams: { samples: {} }, color: 'bg-orange-500', volume: 90, pan: 0, muted: false, solo: false, armed: false, automation: {}, activeAutomationParam: 'volume', effects: [], clips: [
     { id: 101, start: 0, duration: 4, notes: [
       { id: 'n1', pitch: 36, start: 0, duration: 0.25, velocity: 120 }, { id: 'n2', pitch: 42, start: 0.5, duration: 0.25, velocity: 80 },
       { id: 'n3', pitch: 38, start: 1, duration: 0.25, velocity: 110 }, { id: 'n4', pitch: 42, start: 1.5, duration: 0.25, velocity: 80 }
@@ -5739,7 +5739,7 @@ function DAWStudio() {
                                                 </div>
                                             </div>
                                         )}
-                                        {Object.keys(track.instrumentParams).map(param => {
+                                        {Object.keys(track.instrumentParams || {}).map(param => {
                                             if (param === 'samples') return null; // Handled dynamically above
                                             if (param === 'oscType') {
                                                 return (
