@@ -15,16 +15,27 @@ const API_BASE_URL = 'https://api.sprig.cc';
 // ==========================================
 // OFFLINE-FIRST INDEXED DB WRAPPER
 // ==========================================
+let isIdbAvailable = true;
+
 const initDB = () => {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open('FreeDaw_DB', 2);
-    request.onerror = () => reject(request.error);
-    request.onsuccess = () => resolve(request.result);
-    request.onupgradeneeded = (e) => {
-      const db = e.target.result;
-      if (!db.objectStoreNames.contains('projects')) db.createObjectStore('projects', { keyPath: 'id' });
-      if (!db.objectStoreNames.contains('samples')) db.createObjectStore('samples', { keyPath: 'id' });
-    };
+    if (!isIdbAvailable) return reject(new Error("IDB_DISABLED"));
+    try {
+        const request = indexedDB.open('FreeDaw_DB', 2);
+        request.onerror = () => {
+            isIdbAvailable = false; // Browser denied access (Privacy Mode). Disable future attempts.
+            reject(request.error);
+        };
+        request.onsuccess = () => resolve(request.result);
+        request.onupgradeneeded = (e) => {
+          const db = e.target.result;
+          if (!db.objectStoreNames.contains('projects')) db.createObjectStore('projects', { keyPath: 'id' });
+          if (!db.objectStoreNames.contains('samples')) db.createObjectStore('samples', { keyPath: 'id' });
+        };
+    } catch (e) {
+        isIdbAvailable = false;
+        reject(e);
+    }
   });
 };
 
@@ -3941,7 +3952,11 @@ function DAWStudio() {
       try {
           const offlineProjs = await idb.getAll('projects');
           setLocalProjects(offlineProjs || []);
-      } catch(e) { console.warn("Failed to load local projects", e); }
+      } catch(e) { 
+          if (e.message !== 'IDB_DISABLED' && !e?.message?.includes('denied permission')) {
+              console.warn("Failed to load local projects", e); 
+          }
+      }
       
       if (token && !token.startsWith('local_token_')) {
           try {
