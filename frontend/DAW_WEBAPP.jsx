@@ -4962,7 +4962,7 @@ function DAWStudio() {
                             {selectedBrowserPlugin.name} Source
                         </span>
                     </div>
-                    <div className="flex-1 overflow-auto p-4 custom-scrollbar">
+                    <div className="flex-1 overflow-auto p-4 custom-scrollbar select-text cursor-text">
                         <pre className="text-[11px] leading-[1.6] font-mono text-[#9cdcfe]"><code>{browserPluginCode}</code></pre>
                     </div>
                 </div>
