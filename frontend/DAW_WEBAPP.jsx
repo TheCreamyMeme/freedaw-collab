@@ -1814,30 +1814,35 @@ function DAWStudio() {
   // Auto-fetch missing audio clips on project load/sync
   useEffect(() => {
       tracks.forEach(t => {
+          const fetchSample = (sampleId) => {
+              if (sampleId && !globalAudioBufferCache.has(sampleId) && !globalAudioBufferCache.has(`loading_${sampleId}`)) {
+                  globalAudioBufferCache.set(`loading_${sampleId}`, true);
+                  fetch(`${API_BASE_URL}/api/samples/${sampleId}.wav`)
+                      .then(res => {
+                          if (!res.ok) throw new Error("Audio missing on server");
+                          return res.arrayBuffer();
+                      })
+                      .then(ab => {
+                          const ctx = audioCtxRef.current || new (window.AudioContext || window.webkitAudioContext)();
+                          return ctx.decodeAudioData(ab);
+                      })
+                      .then(buffer => {
+                          globalAudioBufferCache.set(sampleId, { buffer, duration: buffer.duration });
+                          globalAudioBufferCache.delete(`loading_${sampleId}`);
+                          setTracks(prev => [...prev]); // Trigger re-render to show waveform
+                      })
+                      .catch(err => {
+                          console.error("Missing or failed audio sample", sampleId);
+                          globalAudioBufferCache.delete(`loading_${sampleId}`);
+                      });
+              }
+          };
+
           if (t.type === 'audio') {
-              t.clips.forEach(c => {
-                  if (c.sampleId && !globalAudioBufferCache.has(c.sampleId) && !globalAudioBufferCache.has(`loading_${c.sampleId}`)) {
-                      globalAudioBufferCache.set(`loading_${c.sampleId}`, true);
-                      fetch(`${API_BASE_URL}/api/samples/${c.sampleId}.wav`)
-                          .then(res => {
-                              if (!res.ok) throw new Error("Audio missing on server");
-                              return res.arrayBuffer();
-                          })
-                          .then(ab => {
-                              const ctx = audioCtxRef.current || new (window.AudioContext || window.webkitAudioContext)();
-                              return ctx.decodeAudioData(ab);
-                          })
-                          .then(buffer => {
-                              globalAudioBufferCache.set(c.sampleId, { buffer, duration: buffer.duration });
-                              globalAudioBufferCache.delete(`loading_${c.sampleId}`);
-                              setTracks(prev => [...prev]); // Trigger re-render to show waveform
-                          })
-                          .catch(err => {
-                              console.error("Missing or failed audio sample", c.sampleId);
-                              globalAudioBufferCache.delete(`loading_${c.sampleId}`);
-                          });
-                  }
-              });
+              t.clips.forEach(c => fetchSample(c.sampleId));
+          }
+          if (t.instrument === 'inst-drum' && t.instrumentParams?.samples) {
+              Object.values(t.instrumentParams.samples).forEach(fetchSample);
           }
       });
   }, [tracks]);
@@ -3015,9 +3020,42 @@ function DAWStudio() {
   };
 
   const handleInstrumentParamChange = (trackId, param, val) => {
-      if (param !== 'oscType' && isNaN(Number(val))) return; // Protect against NaN crashes
-      const finalVal = param === 'oscType' ? String(val) : Number(val);
+      if (param !== 'oscType' && param !== 'samples' && isNaN(Number(val))) return; // Protect against NaN crashes
+      const finalVal = param === 'oscType' || param === 'samples' ? val : Number(val);
       dispatchDawAction({ type: 'UPDATE_INSTRUMENT_PARAM', payload: { trackId, param, value: finalVal } });
+  };
+
+  const handleDrumSampleUpload = async (e, trackId, note) => {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      const isAudio = file.type.startsWith('audio/') || file.name.toLowerCase().match(/\.(wav|mp3|ogg|flac|m4a)$/);
+      if (!isAudio) { showToast("Unsupported audio format.", "error"); return; }
+
+      try {
+          const sampleId = `drum_${Date.now()}_${Math.floor(Math.random()*1000)}`;
+          const formData = new FormData(); formData.append('audio', file);
+
+          if (authTokenRef.current && !authTokenRef.current.startsWith('local_token_')) {
+              fetch(`${API_BASE_URL}/api/samples/upload/${sampleId}`, { method: 'POST', headers: { 'Authorization': `Bearer ${authTokenRef.current}` }, body: formData }).catch(() => {});
+          }
+
+          const arrayBuffer = await file.arrayBuffer();
+          if (!audioCtxRef.current) await initAudioEngine();
+          const audioBuffer = await audioCtxRef.current.decodeAudioData(arrayBuffer);
+          globalAudioBufferCache.set(sampleId, { buffer: audioBuffer, duration: audioBuffer.duration });
+
+          const track = tracksRef.current.find(t => t.id === trackId);
+          if (track) {
+              const currentSamples = track.instrumentParams?.samples || {};
+              const newSamples = { ...currentSamples, [note]: sampleId };
+              dispatchDawAction({ type: 'UPDATE_INSTRUMENT_PARAM', payload: { trackId, param: 'samples', value: newSamples } });
+          }
+          showToast(`Loaded sample to pad ${note}`, 'success');
+      } catch (err) {
+          showToast("Failed to load drum sample.", "error");
+      }
+      e.target.value = null; // Reset input
   };
 
   const applyAudioEffectParam = (trackId, fxId, param, val, time = null) => {
@@ -5634,6 +5672,7 @@ function DAWStudio() {
                                             else if (newInstId === 'inst-pluck') newParams = { damping: 4000, decay: 0.95 };
                                             else if (newInstId === 'inst-acid') newParams = { oscType: 'square', cutoff: 150, envMod: 2500, decay: 0.3, res: 5 };
                                             else if (newInstId === 'inst-organ') newParams = { sub: 0.8, fund: 1.0, fifth: 0.5, oct: 0.5 };
+                                            else if (newInstId === 'inst-drum') newParams = { samples: {} };
                                             
                                             dispatchDawAction({ type: 'CHANGE_INSTRUMENT', payload: { trackId: track.id, instrumentId: newInstId, instrumentParams: newParams } });
                                         }}
@@ -5656,7 +5695,52 @@ function DAWStudio() {
 
                                 {track.instrumentParams && Object.keys(track.instrumentParams).length > 0 && (
                                     <div className="flex-1 flex flex-wrap gap-x-6 gap-y-4 overflow-y-auto custom-scrollbar pr-2 content-start border-t border-neutral-800/50 pt-4">
+                                        {track.instrument === 'inst-drum' && (
+                                            <div className="w-full flex flex-col gap-3">
+                                                <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider mb-1">Custom Drum Pads</span>
+                                                <div className="grid grid-cols-4 sm:grid-cols-8 gap-2">
+                                                    {Array.from({length: 16}).map((_, i) => {
+                                                        const note = 36 + i;
+                                                        const sampleId = track.instrumentParams?.samples?.[note];
+                                                        const noteName = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'][note % 12] + (Math.floor(note / 12) - 1);
+                                                        
+                                                        return (
+                                                            <div key={note} className="flex flex-col items-center justify-center bg-neutral-900 border border-neutral-700 rounded-lg p-2 relative group cursor-pointer hover:border-blue-500 transition-colors shadow-inner min-w-[3rem]" onMouseDown={(e) => { e.stopPropagation(); previewNote(track.id, note, 100); }}>
+                                                                <span className="text-[9px] font-mono text-neutral-400 mb-1 pointer-events-none">{noteName}</span>
+                                                                <div className={`w-full aspect-square rounded flex items-center justify-center text-[10px] font-bold shadow-sm pointer-events-none ${sampleId ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/50' : 'bg-neutral-800 text-neutral-600'}`}>
+                                                                    {sampleId ? 'WAV' : '+'}
+                                                                </div>
+                                                                <input
+                                                                    type="file"
+                                                                    accept="audio/*"
+                                                                    className="absolute inset-0 opacity-0 cursor-pointer"
+                                                                    onClick={(e) => e.stopPropagation()}
+                                                                    onChange={(e) => handleDrumSampleUpload(e, track.id, note)}
+                                                                    title={`Upload sample for ${noteName}`}
+                                                                />
+                                                                {sampleId && (
+                                                                    <button
+                                                                        className="absolute -top-1.5 -right-1.5 bg-red-500 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity z-10 shadow-[0_0_8px_rgba(239,68,68,0.8)] hover:scale-110"
+                                                                        onClick={(e) => {
+                                                                            e.preventDefault();
+                                                                            e.stopPropagation();
+                                                                            const newSamples = { ...(track.instrumentParams?.samples || {}) };
+                                                                            delete newSamples[note];
+                                                                            handleInstrumentParamChange(track.id, 'samples', newSamples);
+                                                                        }}
+                                                                        title="Remove custom sample"
+                                                                    >
+                                                                        <X size={10} />
+                                                                    </button>
+                                                                )}
+                                                            </div>
+                                                        );
+                                                    })}
+                                                </div>
+                                            </div>
+                                        )}
                                         {Object.keys(track.instrumentParams).map(param => {
+                                            if (param === 'samples') return null; // Handled dynamically above
                                             if (param === 'oscType') {
                                                 return (
                                                     <div key={param} className="flex flex-col items-center gap-1 w-16 shrink-0 mt-1">
