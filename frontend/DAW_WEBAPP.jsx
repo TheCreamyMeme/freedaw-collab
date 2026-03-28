@@ -2100,8 +2100,12 @@ function DAWStudio() {
           await idb.set('projects', p); 
           if (!isAuto) showToast("Saved locally.", "info");
       } catch (err) {
-          console.error("Local save failed:", err);
-          if (!isAuto) showToast("Failed to save locally.", "error");
+          // Suppress known privacy mode blocks from spamming the console on autosave
+          const errMsg = err?.message || String(err);
+          if (!errMsg.includes('IDB_DISABLED') && !errMsg.includes('denied permission')) {
+              console.error("Local save failed:", err);
+              if (!isAuto) showToast("Failed to save locally.", "error");
+          }
       }
 
       if (authTokenRef.current && !authTokenRef.current.startsWith('local_token_')) {
@@ -3997,7 +4001,10 @@ function DAWStudio() {
       try {
           await idb.delete('projects', projectId);
       } catch(err) {
-          console.warn("Local DB delete skipped", err);
+          const errMsg = err?.message || String(err);
+          if (!errMsg.includes('IDB_DISABLED') && !errMsg.includes('denied permission')) {
+              console.warn("Local DB delete skipped", err);
+          }
       }
       
       // 2. Delete from remote cloud database
