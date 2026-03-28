@@ -4812,8 +4812,8 @@ function DAWStudio() {
              <h2 className="text-xl font-bold text-white">FreeDaw-Collab <span className="text-sm text-blue-400">Secure</span></h2>
           </div>
           <form onSubmit={handleAuthSubmit} className="flex flex-col gap-4">
-            <input type="text" value={authName} onChange={(e) => setAuthName(e.target.value)} required className="bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-2 text-white outline-none focus:border-blue-500 transition-colors" placeholder="Username" />
-            <input type="password" value={authPassword} onChange={(e) => setAuthPassword(e.target.value)} required className="bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-2 text-white outline-none focus:border-blue-500 transition-colors" placeholder="Password" />
+            <input id="auth-username" name="username" autoComplete="username" type="text" value={authName} onChange={(e) => setAuthName(e.target.value)} required className="bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-2 text-white outline-none focus:border-blue-500 transition-colors" placeholder="Username" />
+            <input id="auth-password" name="password" autoComplete="current-password" type="password" value={authPassword} onChange={(e) => setAuthPassword(e.target.value)} required className="bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-2 text-white outline-none focus:border-blue-500 transition-colors" placeholder="Password" />
             <button type="submit" className="w-full bg-blue-600 hover:bg-blue-500 text-white font-medium py-2 rounded-lg mt-2 shadow-lg flex items-center justify-center gap-2 transition-colors"><Network size={16} /> Connect</button>
           </form>
         </div>
@@ -4978,7 +4978,7 @@ function DAWStudio() {
                </div>
                <div className="flex items-center gap-1.5 text-neutral-400 border-l border-neutral-700 pl-4"><span className="uppercase text-[9px] font-bold text-neutral-600">Time</span> <span ref={timeDisplayRef} className="text-white w-14">{formatTime(currentTime, bpm)}</span></div>
                <div className="flex items-center gap-1.5 text-neutral-400"><span className="uppercase text-[9px] font-bold text-neutral-600">Pos</span> <span ref={posDisplayRef} className="text-white">{Math.floor(currentTime / 4) + 1}.{Math.floor(currentTime % 4) + 1}.1</span></div>
-               <div className="flex items-center gap-1 text-neutral-400"><span className="uppercase text-[9px] font-bold text-neutral-600">BPM</span> <input type="number" value={bpm} onChange={(e) => dispatchDawAction({ type: 'SYNC_STATE', payload: { tracks, bpm: Number(e.target.value) } })} className="bg-transparent w-8 text-white focus:outline-none" min="40" max="300" /></div>
+               <div className="flex items-center gap-1 text-neutral-400"><span className="uppercase text-[9px] font-bold text-neutral-600">BPM</span> <input id="bpm-input" name="bpm" autoComplete="off" type="number" value={bpm} onChange={(e) => dispatchDawAction({ type: 'SYNC_STATE', payload: { tracks, bpm: Number(e.target.value) } })} className="bg-transparent w-8 text-white focus:outline-none" min="40" max="300" /></div>
                
                {/* Global Master Volume & VU Meter in the Header */}
                <div className="flex items-center gap-2 border-l border-neutral-700 pl-4 ml-1">
@@ -6046,13 +6046,15 @@ function DAWStudio() {
                                     </div>
                                     <label className="bg-neutral-800 hover:bg-neutral-700 text-white px-4 py-2 rounded-lg text-xs font-bold cursor-pointer transition-colors border border-neutral-700 flex-1 text-center">
                                         Upload New Image
-                                        <input type="file" accept="image/*" onChange={handleAvatarUpload} className="hidden" />
+                                        <input id="avatar-upload" name="avatarUpload" type="file" accept="image/*" onChange={handleAvatarUpload} className="hidden" />
                                     </label>
                                 </div>
                             </div>
                             <div className="mt-2">
                                 <label className="text-[10px] text-neutral-400 font-bold mb-2 block uppercase tracking-wider">User Bio</label>
                                 <textarea 
+                                    id="profile-bio"
+                                    name="bio"
                                     defaultValue={currentUser?.bio || ''} 
                                     onBlur={(e) => handleProfileUpdate('bio', e.target.value)}
                                     placeholder="Tell collaborators about your style..." 
@@ -6064,19 +6066,19 @@ function DAWStudio() {
                                 <label className="text-[10px] text-neutral-400 font-bold block uppercase tracking-wider">Contact & Socials</label>
                                 <div className="flex items-center bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-1.5 focus-within:border-blue-500 transition-colors">
                                     <Mail size={14} className="text-neutral-500 mr-2 shrink-0" />
-                                    <input type="email" placeholder="Email Address" defaultValue={currentUser?.email || ''} onBlur={(e) => handleProfileUpdate('email', e.target.value)} className="bg-transparent text-sm text-white w-full outline-none" />
+                                    <input id="profile-email" name="email" autoComplete="email" type="email" placeholder="Email Address" defaultValue={currentUser?.email || ''} onBlur={(e) => handleProfileUpdate('email', e.target.value)} className="bg-transparent text-sm text-white w-full outline-none" />
                                 </div>
                                 <div className="flex items-center bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-1.5 focus-within:border-blue-500 transition-colors">
                                     <Globe size={14} className="text-neutral-500 mr-2 shrink-0" />
-                                    <input type="url" placeholder="Website" defaultValue={currentUser?.website || ''} onBlur={(e) => handleProfileUpdate('website', e.target.value)} className="bg-transparent text-sm text-white w-full outline-none" />
+                                    <input id="profile-website" name="website" autoComplete="url" type="url" placeholder="Website" defaultValue={currentUser?.website || ''} onBlur={(e) => handleProfileUpdate('website', e.target.value)} className="bg-transparent text-sm text-white w-full outline-none" />
                                 </div>
                                 <div className="flex items-center bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-1.5 focus-within:border-blue-500 transition-colors">
                                     <Instagram size={14} className="text-neutral-500 mr-2 shrink-0" />
-                                    <input type="text" placeholder="Instagram Handle" defaultValue={currentUser?.instagram || ''} onBlur={(e) => handleProfileUpdate('instagram', e.target.value)} className="bg-transparent text-sm text-white w-full outline-none" />
+                                    <input id="profile-instagram" name="instagram" autoComplete="username" type="text" placeholder="Instagram Handle" defaultValue={currentUser?.instagram || ''} onBlur={(e) => handleProfileUpdate('instagram', e.target.value)} className="bg-transparent text-sm text-white w-full outline-none" />
                                 </div>
                                 <div className="flex items-center bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-1.5 focus-within:border-blue-500 transition-colors">
                                     <Twitter size={14} className="text-neutral-500 mr-2 shrink-0" />
-                                    <input type="text" placeholder="X/Twitter Handle" defaultValue={currentUser?.twitter || ''} onBlur={(e) => handleProfileUpdate('twitter', e.target.value)} className="bg-transparent text-sm text-white w-full outline-none" />
+                                    <input id="profile-twitter" name="twitter" autoComplete="username" type="text" placeholder="X/Twitter Handle" defaultValue={currentUser?.twitter || ''} onBlur={(e) => handleProfileUpdate('twitter', e.target.value)} className="bg-transparent text-sm text-white w-full outline-none" />
                                 </div>
                             </div>
                         </div>
