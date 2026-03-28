@@ -1898,7 +1898,7 @@ function DAWStudio() {
       
       let finalAvatar = croppedDataUrl;
       
-      if (authTokenRef.current) {
+      if (authTokenRef.current && !authTokenRef.current.startsWith('local_token_')) {
           try {
               const res = await fetch(`${API_BASE_URL}/api/users/profile`, {
                   method: 'PUT',
@@ -1939,7 +1939,7 @@ function DAWStudio() {
       });
       showToast(`${field.charAt(0).toUpperCase() + field.slice(1)} updated`, "success");
       
-      if (authTokenRef.current) {
+      if (authTokenRef.current && !authTokenRef.current.startsWith('local_token_')) {
           try {
               await fetch(`${API_BASE_URL}/api/users/profile`, {
                   method: 'PUT',
@@ -2031,7 +2031,7 @@ function DAWStudio() {
           if (!isAuto) showToast("Failed to save locally.", "error");
       }
 
-      if (authTokenRef.current) {
+      if (authTokenRef.current && !authTokenRef.current.startsWith('local_token_')) {
           try { 
               const res = await fetch(`${API_BASE_URL}/api/projects`, { 
                   method: 'POST', 
@@ -3024,7 +3024,16 @@ function DAWStudio() {
   };
 
   const addEffect = async (trackId, fxDef) => {
-    const newFx = { id: `fx-${Date.now()}`, type: fxDef.type, name: fxDef.name, params: fxDef.params ? { ...fxDef.params } : {} };
+    const isCustom = window.FreeDawPlugins?.some(p => p.id === fxDef.id);
+    const effectParams = fxDef.defaultParams || fxDef.params || {};
+
+    const newFx = { 
+        id: `fx-${Date.now()}`, 
+        pluginId: fxDef.id, 
+        type: isCustom ? 'custom' : fxDef.type, 
+        name: fxDef.name, 
+        params: { ...effectParams } 
+    };
     
     setIsProcessingAudio(true);
     await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))); // Force loader paint
@@ -3731,6 +3740,7 @@ function DAWStudio() {
   };
 
   const loadCustomPlugins = useCallback(async (token) => {
+      if (!token || token.startsWith('local_token_')) return;
       try {
           const res = await fetch(`${API_BASE_URL}/api/plugins?_t=${Date.now()}`, {
               headers: { 'Authorization': `Bearer ${token}` }
@@ -3825,6 +3835,10 @@ function DAWStudio() {
       const file = e.target.files[0];
       if (!file || !file.name.endsWith('.js')) {
           showToast("Please upload a valid .js plugin file.", "error");
+          return;
+      }
+      if (!authTokenRef.current || authTokenRef.current.startsWith('local_token_')) {
+          showToast("Must be connected to server to upload plugins.", "error");
           return;
       }
       const formData = new FormData();
