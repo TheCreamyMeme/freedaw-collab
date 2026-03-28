@@ -24,9 +24,11 @@ app.use(express.json({ limit: '100mb' }));
 const PROJECTS_DIR = path.join(__dirname, 'projects');
 const SAMPLES_DIR = path.join(__dirname, 'samples');
 const USERS_DIR = path.join(__dirname, 'users');
+const PLUGINS_DIR = path.join(__dirname, 'plugins');
 if (!fs.existsSync(PROJECTS_DIR)) fs.mkdirSync(PROJECTS_DIR, { recursive: true });
 if (!fs.existsSync(SAMPLES_DIR)) fs.mkdirSync(SAMPLES_DIR, { recursive: true });
 if (!fs.existsSync(USERS_DIR)) fs.mkdirSync(USERS_DIR, { recursive: true });
+if (!fs.existsSync(PLUGINS_DIR)) fs.mkdirSync(PLUGINS_DIR, { recursive: true });
 
 // Multer Storage Configuration for Audio Samples
 
@@ -151,7 +153,24 @@ app.put('/api/users/profile', authenticateToken, (req, res) => {
     }
 });
 
-// --- 3. PROJECTS API (Protected Upload/Delete) ---
+// --- 3. PLUGINS API (Custom JavaScript Plugins) ---
+app.use('/api/plugins/files', express.static(PLUGINS_DIR));
+
+app.get('/api/plugins', authenticateToken, (req, res) => {
+    try {
+        const files = fs.readdirSync(PLUGINS_DIR).filter(f => f.endsWith('.js'));
+        res.json(files.map(f => ({ url: `/api/plugins/files/${f}`, filename: f })));
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to load plugins' });
+    }
+});
+
+app.post('/api/plugins/upload', authenticateToken, uploadPlugin.single('plugin'), (req, res) => {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+    res.json({ status: 'saved', filename: req.file.filename, url: `/api/plugins/files/${req.file.filename}` });
+});
+
+// --- 4. PROJECTS API (Protected Upload/Delete) ---
 app.get('/api/projects', authenticateToken, (req, res) => {
     try {
         const files = fs.readdirSync(PROJECTS_DIR).filter(f => f.endsWith('.json'));

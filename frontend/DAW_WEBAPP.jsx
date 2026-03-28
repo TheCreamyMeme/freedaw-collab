@@ -69,6 +69,9 @@ const idb = {
 
 const globalAudioBufferCache = new Map();
 
+// Establish global namespace for custom imported plugins
+window.FreeDawPlugins = window.FreeDawPlugins || [];
+
 // --- Time Formatter ---
 const formatTime = (currentTime, bpm) => {
     const timeInSeconds = currentTime * (60/bpm);
@@ -921,6 +924,18 @@ const createFXNode = async (ctx, fx) => {
     return { input, output, low, mid1, mid2, high, analyser, wet, dry, fxType: 'parametric-eq' };
   }
   
+  // Custom Plugin Routing Support
+  if (fx.type === 'custom') {
+      const customPlugin = window.FreeDawPlugins?.find(p => p.id === fx.id || p.id === fx.pluginId);
+      if (customPlugin && typeof customPlugin.processAudio === 'function') {
+          try {
+              return await customPlugin.processAudio(ctx, input, output, wet, dry, fx.params);
+          } catch(err) {
+              console.error(`Custom Plugin ${fx.name} crashed during audio routing`, err);
+          }
+      }
+  }
+
   const passthrough = ctx.createGain(); input.connect(passthrough); passthrough.connect(wet); wet.connect(output);
   return { input, output, wet, dry, fxType: 'passthrough' };
 };
@@ -1583,6 +1598,7 @@ function DAWStudio() {
 
   const [localProjects, setLocalProjects] = useState([]);
   const [serverProjects, setServerProjects] = useState([]); 
+  const [customPlugins, setCustomPlugins] = useState([]);
 
   const [contextMenu, setContextMenu] = useState(null);
   const [editingTrackId, setEditingTrackId] = useState(null);
@@ -1849,7 +1865,11 @@ function DAWStudio() {
       if (audioCtxRef.current.state === 'suspended') audioCtxRef.current.resume();
 
       const pbNode = synth.pitchBendNode;
-      if (track.instrument === 'inst-drum') triggerDrum(audioCtxRef.current, synth.inputBus, pitch, now, 1, track.instrumentParams, velocity);
+      const customInst = window.FreeDawPlugins?.find(p => p.id === track.instrument);
+      
+      if (customInst && typeof customInst.triggerNote === 'function') {
+          customInst.triggerNote(audioCtxRef.current, synth.inputBus, pitch, now, 1, dur, track.instrumentParams, velocity, pbNode);
+      } else if (track.instrument === 'inst-drum') triggerDrum(audioCtxRef.current, synth.inputBus, pitch, now, 1, track.instrumentParams, velocity);
       else if (track.instrument === 'inst-fm') triggerFMSynth(audioCtxRef.current, synth.inputBus, pitch, now, 1, dur, track.instrumentParams, velocity, pbNode);
       else if (track.instrument === 'inst-supersaw') triggerSupersaw(audioCtxRef.current, synth.inputBus, pitch, now, 1, dur, track.instrumentParams, velocity, pbNode);
       else if (track.instrument === 'inst-pluck') triggerPluck(audioCtxRef.current, synth.inputBus, pitch, now, 1, dur, track.instrumentParams, velocity, pbNode);
@@ -2731,7 +2751,12 @@ function DAWStudio() {
               synth.activeNoteIds.add(note.id);
               const durSeconds = note.duration * (60/bpm);
               const pbNode = synth.pitchBendNode;
-              if (track.instrument === 'inst-drum') triggerDrum(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, dynamicInstParams, note.velocity);
+              const customInst = window.FreeDawPlugins?.find(p => p.id === track.instrument);
+              if (customInst && typeof customInst.triggerNote === 'function') {
+                  try {
+                      customInst.triggerNote(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, note.velocity, pbNode);
+                  } catch(e) { console.error("Custom Instrument crashed", e); }
+              } else if (track.instrument === 'inst-drum') triggerDrum(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, dynamicInstParams, note.velocity);
               else if (track.instrument === 'inst-fm') triggerFMSynth(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, note.velocity, pbNode);
               else if (track.instrument === 'inst-supersaw') triggerSupersaw(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, note.velocity, pbNode);
               else if (track.instrument === 'inst-pluck') triggerPluck(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, note.velocity, pbNode);
@@ -3616,6 +3641,7 @@ function DAWStudio() {
           setCurrentUser(user);
           setAppView('home');
           loadProjects(token);
+          loadCustomPlugins(token);
           connectSocket(token, user);
       }
   }, []);
@@ -3638,6 +3664,7 @@ function DAWStudio() {
             localStorage.setItem('freedaw_token', data.token);
             localStorage.setItem('freedaw_user', JSON.stringify(userObj));
             loadProjects(data.token); 
+            loadCustomPlugins(data.token);
             connectSocket(data.token, userObj);
             showToast("Authenticated successfully.", "success");
             return;
@@ -4780,10 +4807,16 @@ function DAWStudio() {
         {activeView === 'browser' ? (
           <div className="flex-1 flex overflow-hidden bg-neutral-900 z-10">
             <div className="w-72 bg-neutral-950 border-r border-neutral-800 flex flex-col shrink-0">
-              <div className="p-4 border-b border-neutral-800"><h3 className="text-white font-semibold flex items-center gap-2"><Folder size={18} className="text-blue-400"/> Browser</h3></div>
+              <div className="p-4 border-b border-neutral-800 flex justify-between items-center">
+                  <h3 className="text-white font-semibold flex items-center gap-2"><Folder size={18} className="text-blue-400"/> Browser</h3>
+                  <label className="bg-neutral-800 hover:bg-neutral-700 text-neutral-300 px-2 py-1 rounded text-xs cursor-pointer flex items-center gap-1 transition-colors">
+                     <Upload size={12}/> Import .js
+                     <input type="file" accept=".js" className="hidden" onChange={handlePluginUpload} />
+                  </label>
+              </div>
               <div className="flex-1 overflow-y-auto p-2 pr-3 custom-scrollbar">
                 <div className="text-[10px] font-bold text-neutral-500 mb-2 mt-2 uppercase tracking-wider px-2">Engines & Effects</div>
-                {INTERNAL_PLUGINS.map(vst => (
+                {[...INTERNAL_PLUGINS, ...customPlugins].map(vst => (
                   <div key={vst.id} className="flex items-center gap-3 p-2 hover:bg-neutral-800/50 rounded-lg text-sm text-neutral-300 border border-transparent hover:border-neutral-700 transition-colors cursor-pointer">
                     <div className={`w-8 h-8 rounded bg-neutral-800 flex items-center justify-center shadow-sm ${vst.category === 'instrument' ? 'text-purple-400' : 'text-blue-400'}`}>
                       {vst.category === 'instrument' ? <Piano size={14} /> : <Plug size={14} />}
@@ -5450,7 +5483,7 @@ function DAWStudio() {
                                 style={{ maxHeight: `${Math.max(160, dockHeight - 64)}px` }}
                             >
                                <div className="text-[9px] font-bold text-neutral-500 mb-1 uppercase tracking-wider px-1 mt-1 shrink-0">Engines</div>
-                               {INTERNAL_PLUGINS.filter(p => p.category === 'effect').map(p => (
+                               {[...INTERNAL_PLUGINS, ...customPlugins].filter(p => p.category === 'effect').map(p => (
                                   <button key={p.id} onClick={() => addEffect(track.id, p)} className="w-full text-[10px] font-bold text-neutral-300 hover:text-white bg-neutral-950 border border-neutral-800 hover:border-blue-500 hover:bg-blue-600/20 px-3 py-2 rounded-lg transition-colors text-left truncate shrink-0">{p.name}</button>
                                ))}
                             </div>
