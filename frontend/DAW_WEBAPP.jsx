@@ -4912,22 +4912,41 @@ function DAWStudio() {
               <div className="flex-1 overflow-y-auto p-2 pr-3 custom-scrollbar">
                 <div className="text-[10px] font-bold text-neutral-500 mb-2 mt-2 uppercase tracking-wider px-2">Engines & Effects</div>
                 {[...INTERNAL_PLUGINS, ...customPlugins].map(vst => (
-                  <div key={vst.id} className="flex items-center gap-3 p-2 hover:bg-neutral-800/50 rounded-lg text-sm text-neutral-300 border border-transparent hover:border-neutral-700 transition-colors cursor-pointer">
-                    <div className={`w-8 h-8 rounded bg-neutral-800 flex items-center justify-center shadow-sm ${vst.category === 'instrument' ? 'text-purple-400' : 'text-blue-400'}`}>
+                  <div 
+                      key={vst.id} 
+                      onClick={() => handleBrowserPluginClick(vst)}
+                      className={`flex items-center gap-3 p-2 rounded-lg text-sm text-neutral-300 border transition-colors cursor-pointer ${selectedBrowserPlugin?.id === vst.id ? 'bg-neutral-800/80 border-neutral-700 shadow-sm' : 'hover:bg-neutral-800/50 border-transparent hover:border-neutral-700'}`}
+                  >
+                    <div className={`w-8 h-8 rounded bg-neutral-800 flex items-center justify-center shadow-sm shrink-0 ${vst.category === 'instrument' ? 'text-purple-400' : 'text-blue-400'}`}>
                       {vst.category === 'instrument' ? <Piano size={14} /> : <Plug size={14} />}
                     </div>
-                    <div className="flex flex-col">
-                      <span className="font-medium text-white text-xs">{vst.name}</span>
-                      <span className="text-[9px] text-neutral-500">{vst.vendor} &bull; {vst.category?.toUpperCase()}</span>
+                    <div className="flex flex-col overflow-hidden">
+                      <span className="font-medium text-white text-xs truncate">{vst.name}</span>
+                      <span className="text-[9px] text-neutral-500 truncate">{vst.vendor || 'Custom'} &bull; {vst.category?.toUpperCase()}</span>
                     </div>
                   </div>
                 ))}
               </div>
             </div>
-            <div className="flex-1 flex flex-col items-center justify-center text-neutral-500 opacity-30">
-                <Plug size={64} className="mb-4" />
-                <p className="max-w-xs text-center text-sm font-medium">Browse internal effects and generative synth engines. WebAudio Module (WAM) drag-and-drop loading is running via remote API.</p>
-            </div>
+            
+            {selectedBrowserPlugin ? (
+                <div className="flex-1 flex flex-col overflow-hidden bg-[#0d0d0d] shadow-[inset_4px_0_24px_rgba(0,0,0,0.4)]">
+                    <div className="h-10 bg-neutral-900 border-b border-neutral-800 flex items-center px-4 shrink-0 shadow-sm">
+                        <span className="text-xs font-bold text-neutral-300 flex items-center gap-2">
+                            <FileCode size={14} className="text-blue-400" /> 
+                            {selectedBrowserPlugin.name} Source
+                        </span>
+                    </div>
+                    <div className="flex-1 overflow-auto p-4 custom-scrollbar">
+                        <pre className="text-[11px] leading-[1.6] font-mono text-[#9cdcfe]"><code>{browserPluginCode}</code></pre>
+                    </div>
+                </div>
+            ) : (
+                <div className="flex-1 flex flex-col items-center justify-center text-neutral-500 opacity-30 shadow-[inset_4px_0_24px_rgba(0,0,0,0.4)]">
+                    <Plug size={64} className="mb-4" />
+                    <p className="max-w-xs text-center text-sm font-medium">Select a plugin from the list to preview its architecture or upload a .js file to mount a custom DSP node.</p>
+                </div>
+            )}
           </div>
         ) : activeView === 'mixer' ? (
           <div className="flex-1 bg-neutral-900 flex p-4 gap-2 overflow-x-auto relative custom-scrollbar pb-6">
