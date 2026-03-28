@@ -3479,8 +3479,8 @@ function DAWStudio() {
       const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
       const cmd = isMac ? e.metaKey : e.ctrlKey;
       const shift = e.shiftKey;
-      const key = e.key.toLowerCase();
-      const code = e.code;
+      const key = (e.key || '').toLowerCase();
+      const code = e.code || '';
       
       // 1. GLOBAL OVERRIDE: Always prevent default browser actions for these keys (Save, Undo, Select All, Duplicate, etc.)
       if (cmd && ['s', 'z', 'y', 'd', 'e', 'l', 'a', '=', '-', '+'].includes(key)) {
