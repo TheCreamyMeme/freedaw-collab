@@ -1817,27 +1817,34 @@ function DAWStudio() {
   // Auto-fetch missing audio clips on project load/sync
   useEffect(() => {
       tracks.forEach(t => {
-          const fetchSample = (sampleId) => {
+          const fetchSample = async (sampleId) => {
               if (sampleId && !globalAudioBufferCache.has(sampleId) && !globalAudioBufferCache.has(`loading_${sampleId}`)) {
                   globalAudioBufferCache.set(`loading_${sampleId}`, true);
-                  fetch(`${API_BASE_URL}/api/samples/${sampleId}.wav`)
-                      .then(res => {
+                  
+                  try {
+                      let ab;
+                      // 1. Try fetching from Local Offline Database first!
+                      const cached = await idb.get('samples', sampleId).catch(() => null);
+                      if (cached && cached.data) {
+                          ab = cached.data;
+                      } else {
+                          // 2. If not local, fetch from server
+                          const res = await fetch(`${API_BASE_URL}/api/samples/${sampleId}.wav`);
                           if (!res.ok) throw new Error("Audio missing on server");
-                          return res.arrayBuffer();
-                      })
-                      .then(ab => {
-                          const ctx = audioCtxRef.current || new (window.AudioContext || window.webkitAudioContext)();
-                          return ctx.decodeAudioData(ab);
-                      })
-                      .then(buffer => {
-                          globalAudioBufferCache.set(sampleId, { buffer, duration: buffer.duration });
-                          globalAudioBufferCache.delete(`loading_${sampleId}`);
-                          setTracks(prev => [...prev]); // Trigger re-render to show waveform
-                      })
-                      .catch(err => {
-                          console.error("Missing or failed audio sample", sampleId);
-                          globalAudioBufferCache.delete(`loading_${sampleId}`);
-                      });
+                          ab = await res.arrayBuffer();
+                          // Save to local DB so it survives offline and server restarts
+                          await idb.set('samples', { id: sampleId, data: ab.slice(0) }).catch(() => {});
+                      }
+
+                      const ctx = audioCtxRef.current || new (window.AudioContext || window.webkitAudioContext)();
+                      const buffer = await ctx.decodeAudioData(ab);
+                      globalAudioBufferCache.set(sampleId, { buffer, duration: buffer.duration });
+                      globalAudioBufferCache.delete(`loading_${sampleId}`);
+                      setTracks(prev => [...prev]); // Trigger re-render to show waveform
+                  } catch (err) {
+                      console.error("Missing or failed audio sample", sampleId);
+                      globalAudioBufferCache.delete(`loading_${sampleId}`);
+                  }
               }
           };
 
@@ -2211,6 +2218,10 @@ function DAWStudio() {
               }
 
               const arrayBuffer = await blob.arrayBuffer();
+              
+              // Cache locally so the recording persists offline
+              try { await idb.set('samples', { id: sampleId, data: arrayBuffer.slice(0) }); } catch(e){}
+
               if (!audioCtxRef.current) return;
               const audioBuffer = await audioCtxRef.current.decodeAudioData(arrayBuffer);
               
@@ -4280,14 +4291,20 @@ function DAWStudio() {
           case 'ADD_CLIP': {
               const clipToAdd = action.payload.clip;
               if (clipToAdd.sampleId && !globalAudioBufferCache.has(clipToAdd.sampleId)) {
-                  fetch(`${API_BASE_URL}/api/samples/${clipToAdd.sampleId}.wav`)
-                      .then(res => res.arrayBuffer())
-                      .then(ab => audioCtxRef.current.decodeAudioData(ab))
-                      .then(buffer => {
-                          globalAudioBufferCache.set(clipToAdd.sampleId, { buffer, duration: buffer.duration });
-                          setTracks(prev => [...prev]); 
-                      })
-                      .catch(err => console.error("Error fetching synced audio asset:", err));
+                  // Try IDB first for immediate sync restore
+                  idb.get('samples', clipToAdd.sampleId).then(cached => {
+                      if (cached && cached.data) return cached.data;
+                      return fetch(`${API_BASE_URL}/api/samples/${clipToAdd.sampleId}.wav`).then(res => res.arrayBuffer());
+                  })
+                  .then(ab => {
+                      try { idb.set('samples', { id: clipToAdd.sampleId, data: ab.slice(0) }); } catch(e){}
+                      return audioCtxRef.current.decodeAudioData(ab);
+                  })
+                  .then(buffer => {
+                      globalAudioBufferCache.set(clipToAdd.sampleId, { buffer, duration: buffer.duration });
+                      setTracks(prev => [...prev]); 
+                  })
+                  .catch(err => console.error("Error fetching synced audio asset:", err));
               }
               setTracks(prev => prev.map(t => t.id === action.payload.trackId ? { ...t, clips: [...t.clips, clipToAdd] } : t)); 
               break;
