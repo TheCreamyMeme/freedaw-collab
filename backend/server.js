@@ -88,6 +88,25 @@ const authenticateToken = (req, res, next) => {
 // --- 2. SAMPLES API (Protected Upload/Delete) ---
 app.use('/api/samples', express.static(SAMPLES_DIR));
 
+app.get('/api/samples', authenticateToken, (req, res) => {
+    try {
+        const files = fs.readdirSync(SAMPLES_DIR).filter(f => f.endsWith('.wav') || f.endsWith('.mp3') || f.endsWith('.ogg'));
+        const samples = files.map(f => {
+            const id = f.replace(/\.[^/.]+$/, "");
+            const parts = id.split('_');
+            let name = id;
+            // Extract original filename if it matches our pattern sample_timestamp_rand_filename
+            if (parts.length >= 4 && parts[0] === 'sample') {
+                name = parts.slice(3).join('_');
+            }
+            return { id, name };
+        });
+        res.json(samples);
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to load samples' });
+    }
+});
+
 app.post('/api/samples/upload/:sampleId', authenticateToken, upload.single('audio'), (req, res) => {
     res.json({ status: 'saved', url: `/api/samples/${req.params.sampleId}.wav` });
 });

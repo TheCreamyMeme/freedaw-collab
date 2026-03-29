@@ -3790,6 +3790,7 @@ function DAWStudio() {
           setAppView('home');
           loadProjects(token);
           loadCustomPlugins(token);
+          loadSamples(token);
           connectSocket(token, user);
       }
   }, []);
@@ -3861,6 +3862,18 @@ function DAWStudio() {
       socketRef.current = null;
       showToast("Signed out successfully.");
   };
+
+  const loadSamples = useCallback(async (token) => {
+      if (!token || token.startsWith('local_token_')) return;
+      try {
+          const res = await fetch(`${API_BASE_URL}/api/samples?_t=${Date.now()}`, {
+              headers: { 'Authorization': `Bearer ${token}` }
+          });
+          if (res.ok) {
+              setUserSamples(await res.json());
+          }
+      } catch(e) { console.warn("Failed to load user samples", e); }
+  }, []);
 
   const loadCustomPlugins = useCallback(async (token) => {
       if (!token || token.startsWith('local_token_')) return;
@@ -5137,6 +5150,35 @@ function DAWStudio() {
                         ))}
                     </>
                 )}
+
+                <div className="text-[10px] font-bold text-emerald-400 mb-2 mt-4 uppercase tracking-wider px-2 border-t border-neutral-800 pt-4 flex justify-between items-center">
+                    <span>Audio Samples</span>
+                    <label className="cursor-pointer hover:text-white transition-colors" title="Upload Audio">
+                         <Plus size={12}/>
+                         <input type="file" multiple accept="audio/*" className="hidden" onChange={e => handleBulkSampleUpload(e)} />
+                    </label>
+                </div>
+                {userSamples.map(s => (
+                  <div 
+                      key={s.id} 
+                      onClick={() => {
+                          if (globalAudioBufferCache.has(s.id)) {
+                              const buf = globalAudioBufferCache.get(s.id).buffer;
+                              const src = audioCtxRef.current.createBufferSource();
+                              src.buffer = buf;
+                              if (masterGainRef.current) src.connect(masterGainRef.current);
+                              src.start(0);
+                          }
+                      }}
+                      className="flex items-center gap-3 p-2 rounded-lg text-sm text-neutral-300 border border-transparent hover:bg-neutral-800/50 cursor-pointer transition-colors"
+                  >
+                    <div className="w-8 h-8 rounded bg-neutral-800 flex items-center justify-center text-emerald-400 shadow-sm shrink-0"><FileAudio size={14}/></div>
+                    <div className="flex flex-col overflow-hidden">
+                      <span className="font-medium text-white text-xs truncate" title={s.name}>{s.name}</span>
+                      <span className="text-[9px] text-emerald-400 truncate">Audio File</span>
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
             
@@ -6264,6 +6306,62 @@ function DAWStudio() {
                                     </div>
                                 </>
                             )}
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Sample Picker & Bulk Upload Modal */}
+            {samplePickerTarget && (
+                <div className="fixed inset-0 z-[400] bg-black/80 backdrop-blur-sm flex items-center justify-center">
+                    <div className="bg-neutral-900 border border-neutral-700 rounded-2xl w-full max-w-3xl h-[60vh] p-0 shadow-2xl flex flex-col overflow-hidden">
+                        <div className="flex justify-between items-center p-4 border-b border-neutral-800 shrink-0">
+                            <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                                <FileAudio size={18}/> Assign Sample to Pad {samplePickerTarget.note}
+                            </h2>
+                            <button onClick={() => setSamplePickerTarget(null)} className="text-neutral-500 hover:text-white transition-colors"><X size={18}/></button>
+                        </div>
+                        <div className="flex flex-1 overflow-hidden">
+                            {/* Left: Library */}
+                            <div className="w-1/2 md:w-2/3 border-r border-neutral-800 flex flex-col p-4 bg-neutral-950">
+                                <h3 className="text-xs font-bold text-neutral-500 uppercase tracking-wider mb-3">Sample Library</h3>
+                                <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col gap-2 pr-2">
+                                    {userSamples.map(s => (
+                                        <div key={s.id} className="flex items-center justify-between bg-neutral-900 border border-neutral-800 p-2 rounded-lg group hover:border-emerald-500/50 transition-colors">
+                                            <div className="flex items-center gap-3 overflow-hidden flex-1">
+                                                <button 
+                                                    className="text-emerald-400 hover:text-white shrink-0 bg-neutral-800 p-1.5 rounded transition-colors"
+                                                    onClick={() => {
+                                                        if (globalAudioBufferCache.has(s.id)) {
+                                                            const buf = globalAudioBufferCache.get(s.id).buffer;
+                                                            const src = audioCtxRef.current.createBufferSource();
+                                                            src.buffer = buf;
+                                                            if (masterGainRef.current) src.connect(masterGainRef.current);
+                                                            src.start(0);
+                                                        }
+                                                    }}
+                                                ><Play size={10} /></button>
+                                                <span className="text-xs text-neutral-300 truncate font-mono" title={s.name}>{s.name}</span>
+                                            </div>
+                                            <button onClick={() => assignSampleToPad(samplePickerTarget.trackId, samplePickerTarget.note, s.id)} className="bg-neutral-800 hover:bg-emerald-600 text-white px-3 py-1.5 ml-2 text-[10px] rounded font-bold uppercase transition-colors shrink-0">Assign</button>
+                                        </div>
+                                    ))}
+                                    {userSamples.length === 0 && <p className="text-xs text-neutral-500 italic mt-4 text-center">No samples found. Upload some!</p>}
+                                </div>
+                            </div>
+                            {/* Right: Upload Dropzone */}
+                            <div 
+                                className="flex-1 flex flex-col items-center justify-center p-6 bg-neutral-900"
+                                onDragOver={e => {e.preventDefault(); e.stopPropagation();}}
+                                onDrop={e => {e.preventDefault(); e.stopPropagation(); handleBulkSampleUpload(e, samplePickerTarget); }}
+                            >
+                                <label className="w-full h-full border-2 border-dashed border-neutral-700 hover:border-emerald-500 rounded-xl flex flex-col items-center justify-center text-neutral-500 group transition-colors relative cursor-pointer bg-neutral-950/50 hover:bg-emerald-500/5">
+                                    <Upload size={32} className="mb-2 group-hover:text-emerald-400 transition-colors" />
+                                    <span className="text-xs font-bold uppercase tracking-wider group-hover:text-emerald-400 transition-colors">Drag & Drop</span>
+                                    <span className="text-[10px] mt-1 text-center px-4 leading-relaxed">Audio Files (.wav, .mp3)<br/>or click to browse</span>
+                                    <input type="file" multiple accept="audio/*" onChange={e => handleBulkSampleUpload(e, samplePickerTarget)} className="hidden" />
+                                </label>
+                            </div>
                         </div>
                     </div>
                 </div>
