@@ -6010,7 +6010,7 @@ function DAWStudio() {
                             >
                                <div className="text-[9px] font-bold text-neutral-500 mb-1 uppercase tracking-wider px-1 mt-1 shrink-0">Engines</div>
                                {[...INTERNAL_PLUGINS, ...customPlugins].filter(p => p.category === 'effect').map(p => (
-                                  <button key={p.id} onClick={() => addEffect(track.id, p)} className="w-full text-[10px] font-bold text-neutral-300 hover:text-white bg-neutral-950 border border-neutral-800 hover:border-blue-500 hover:bg-blue-600/20 px-3 py-2 rounded-lg transition-colors text-left truncate shrink-0">{p.name}</button>
+                                    <button key={p.id} onClick={() => addEffect(track.id, p)} className="w-full text-[10px] font-bold text-neutral-300 hover:text-white bg-neutral-950 border border-neutral-800 hover:border-blue-500 hover:bg-blue-600/20 px-3 py-2 rounded-lg transition-colors text-left truncate shrink-0">{p.name}</button>
                                ))}
                             </div>
                         </div>
@@ -6018,9 +6018,12 @@ function DAWStudio() {
                 </div>
                 );
             })()}
+
+          </div>
+        )}
             
-            {/* Global Context Menus */}
-            {contextMenu && (
+        {/* Global Context Menus */}
+        {contextMenu && (
               <div className="fixed z-[100] bg-neutral-900 border border-neutral-700 rounded-lg shadow-xl py-1 min-w-[180px] max-h-[80vh] overflow-y-auto custom-scrollbar" style={{ left: contextMenu.x, top: contextMenu.y }}>
                 {contextMenu.type === 'track' && (
                   <>
@@ -6565,9 +6568,6 @@ function DAWStudio() {
                     </div>
                 </div>
             )}
-
-          </div>
-        )}
       </div>
     </div>
   );
