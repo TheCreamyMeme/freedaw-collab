@@ -1238,6 +1238,20 @@ const getNoiseBuffer = (ctx, duration) => {
 
 const triggerDrum = (ctx, bus, pitch, time, vol, p={}, vel=100) => {
   const realVol = vol * (vel / 127);
+
+  // Check for custom MPC-style sample mapping first
+  if (p.samples && p.samples[pitch] && globalAudioBufferCache.has(p.samples[pitch])) {
+      const sampleData = globalAudioBufferCache.get(p.samples[pitch]);
+      const source = ctx.createBufferSource();
+      source.buffer = sampleData.buffer;
+      const gainNode = ctx.createGain();
+      gainNode.gain.setValueAtTime(realVol, time);
+      source.connect(gainNode);
+      gainNode.connect(bus);
+      source.start(time);
+      return; // Skip default synthesized drum generation if a custom sample overrides it
+  }
+
   if (pitch === 36) { // Kick
     const osc = ctx.createOscillator(), env = ctx.createGain();
     osc.frequency.setValueAtTime(150, time); osc.frequency.exponentialRampToValueAtTime(0.001, time + 0.5);
