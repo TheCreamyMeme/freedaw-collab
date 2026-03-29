@@ -1,2 +1,7 @@
 .continue
 NUL
+backend/webdaw-plugins
+backend/webdaw-projects
+backend/webdaw-samples
+backend/webdaw-users
+frontend/data
