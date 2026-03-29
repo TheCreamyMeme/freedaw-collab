@@ -1692,6 +1692,7 @@ function DAWStudio() {
   
   const [userSamples, setUserSamples] = useState([]);
   const [samplePickerTarget, setSamplePickerTarget] = useState(null);
+  const [isBrowserDragOver, setIsBrowserDragOver] = useState(false);
 
   const [contextMenu, setContextMenu] = useState(null);
   const [editingTrackId, setEditingTrackId] = useState(null);
@@ -5156,7 +5157,25 @@ function DAWStudio() {
         {/* Main Content Area */}
         {activeView === 'browser' ? (
           <div className="flex-1 flex overflow-hidden bg-neutral-900 z-10">
-            <div className="w-72 bg-neutral-950 border-r border-neutral-800 flex flex-col shrink-0">
+            <div 
+                className="w-72 bg-neutral-950 border-r border-neutral-800 flex flex-col shrink-0 relative"
+                onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setIsBrowserDragOver(true); }}
+                onDragLeave={(e) => { e.preventDefault(); e.stopPropagation(); setIsBrowserDragOver(false); }}
+                onDrop={(e) => {
+                    e.preventDefault(); e.stopPropagation(); setIsBrowserDragOver(false);
+                    const files = Array.from(e.dataTransfer?.files || []);
+                    const jsFiles = files.filter(f => f.name.endsWith('.js'));
+                    const audioFiles = files.filter(f => f.type.startsWith('audio/') || f.name.toLowerCase().match(/\.(wav|mp3|ogg|flac|m4a)$/));
+                    
+                    if (jsFiles.length) jsFiles.forEach(processPluginUpload);
+                    if (audioFiles.length) handleBulkSampleUpload({ target: { files: audioFiles } });
+                }}
+            >
+              {isBrowserDragOver && (
+                  <div className="absolute inset-0 z-50 bg-blue-500/10 border-2 border-blue-500 border-dashed m-2 rounded-xl flex items-center justify-center pointer-events-none backdrop-blur-sm">
+                      <div className="bg-neutral-900 px-4 py-2 rounded-lg font-bold text-blue-400 shadow-xl flex items-center gap-2"><Upload size={16}/> Drop Plugins or Audio</div>
+                  </div>
+              )}
               <div className="p-4 border-b border-neutral-800 flex justify-between items-center">
                   <h3 className="text-white font-semibold flex items-center gap-2"><Folder size={18} className="text-blue-400"/> Browser</h3>
                   <label className="bg-neutral-800 hover:bg-neutral-700 text-neutral-300 px-2 py-1 rounded text-xs cursor-pointer flex items-center gap-1 transition-colors">
@@ -5222,13 +5241,14 @@ function DAWStudio() {
                               src.start(0);
                           }
                       }}
-                      className="flex items-center gap-3 p-2 rounded-lg text-sm text-neutral-300 border border-transparent hover:bg-neutral-800/50 cursor-pointer transition-colors"
+                      className="group flex items-center gap-3 p-2 rounded-lg text-sm text-neutral-300 border border-transparent hover:bg-neutral-800/50 cursor-pointer transition-colors"
                   >
                     <div className="w-8 h-8 rounded bg-neutral-800 flex items-center justify-center text-emerald-400 shadow-sm shrink-0"><FileAudio size={14}/></div>
-                    <div className="flex flex-col overflow-hidden">
+                    <div className="flex flex-col overflow-hidden flex-1">
                       <span className="font-medium text-white text-xs truncate" title={s.name}>{s.name}</span>
                       <span className="text-[9px] text-emerald-400 truncate">Audio File</span>
                     </div>
+                    <button onClick={(e) => handleDeleteSample(e, s.id)} className="text-neutral-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity p-1 shrink-0" title="Delete Sample"><Trash2 size={14}/></button>
                   </div>
                 ))}
               </div>

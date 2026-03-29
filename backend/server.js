@@ -191,6 +191,26 @@ app.post('/api/plugins/upload', authenticateToken, uploadPlugin.single('plugin')
     res.json({ status: 'saved', filename: req.file.filename, url: `/api/plugins/files/${req.file.filename}` });
 });
 
+app.delete('/api/plugins/:pluginId', authenticateToken, (req, res) => {
+    try {
+        const files = fs.readdirSync(PLUGINS_DIR).filter(f => f.endsWith('.js'));
+        let deleted = false;
+        for (const file of files) {
+            const filePath = path.join(PLUGINS_DIR, file);
+            const content = fs.readFileSync(filePath, 'utf-8');
+            // Check if the plugin id matches the file contents (to safely find which file to delete)
+            if (content.includes(`id: "${req.params.pluginId}"`) || content.includes(`id: '${req.params.pluginId}'`) || content.includes(`id: \`${req.params.pluginId}\``)) {
+                fs.unlinkSync(filePath);
+                deleted = true;
+            }
+        }
+        if (deleted) return res.json({ status: 'deleted' });
+        res.status(404).json({ error: 'Plugin not found' });
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to delete plugin' });
+    }
+});
+
 // --- 5. PROJECTS API (Protected Upload/Delete) ---
 app.get('/api/projects', authenticateToken, (req, res) => {
     try {
