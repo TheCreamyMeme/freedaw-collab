@@ -5770,17 +5770,14 @@ function DAWStudio() {
                                                         return (
                                                             <div key={note} className="flex flex-col items-center justify-center bg-neutral-900 border border-neutral-700 rounded-lg p-2 relative group cursor-pointer hover:border-blue-500 transition-colors shadow-inner min-w-[3rem]" onMouseDown={(e) => { e.stopPropagation(); previewNote(track.id, note, 100); }}>
                                                                 <span className="text-[9px] font-mono text-neutral-400 mb-1 pointer-events-none">{noteName}</span>
-                                                                <div className={`w-full aspect-square rounded flex items-center justify-center text-[10px] font-bold shadow-sm pointer-events-none ${sampleId ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/50' : 'bg-neutral-800 text-neutral-600'}`}>
+                                                                <button 
+                                                                    onMouseDown={(e) => e.stopPropagation()}
+                                                                    onClick={(e) => { e.stopPropagation(); setSamplePickerTarget({ trackId: track.id, note }); }}
+                                                                    className={`w-full aspect-square rounded flex items-center justify-center text-[10px] font-bold shadow-sm cursor-pointer transition-colors ${sampleId ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/50 hover:bg-emerald-500/30' : 'bg-neutral-800 text-neutral-600 hover:text-white hover:bg-neutral-700'}`}
+                                                                    title={`Assign sample to ${noteName}`}
+                                                                >
                                                                     {sampleId ? 'WAV' : '+'}
-                                                                </div>
-                                                                <input
-                                                                    type="file"
-                                                                    accept="audio/*"
-                                                                    className="absolute inset-0 opacity-0 cursor-pointer"
-                                                                    onClick={(e) => e.stopPropagation()}
-                                                                    onChange={(e) => handleDrumSampleUpload(e, track.id, note)}
-                                                                    title={`Upload sample for ${noteName}`}
-                                                                />
+                                                                </button>
                                                                 {sampleId && (
                                                                     <button
                                                                         className="absolute -top-1.5 -right-1.5 bg-red-500 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity z-10 shadow-[0_0_8px_rgba(239,68,68,0.8)] hover:scale-110"
