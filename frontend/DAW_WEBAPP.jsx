@@ -3028,15 +3028,21 @@ function DAWStudio() {
       dispatchDawAction({ type: 'UPDATE_INSTRUMENT_PARAM', payload: { trackId, param, value: finalVal } });
   };
 
-  const handleDrumSampleUpload = async (e, trackId, note) => {
-      const file = e.target.files[0];
-      if (!file) return;
+  const handleBulkSampleUpload = async (e, assignToTarget = null) => {
+      const files = Array.from(e.target?.files || e.dataTransfer?.files || []);
+      if (!files.length) return;
 
-      const isAudio = file.type.startsWith('audio/') || file.name.toLowerCase().match(/\.(wav|mp3|ogg|flac|m4a)$/);
-      if (!isAudio) { showToast("Unsupported audio format.", "error"); return; }
+      const newSamples = [];
+      for (const file of files) {
+          const isAudio = file.type.startsWith('audio/') || file.name.toLowerCase().match(/\.(wav|mp3|ogg|flac|m4a)$/);
+          if (!isAudio) { 
+              showToast(`Skipped unsupported file: ${file.name}`, "error"); 
+              continue; 
+          }
 
-      try {
-          const sampleId = `drum_${Date.now()}_${Math.floor(Math.random()*1000)}`;
+          const safeName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
+          const sampleId = `sample_${Date.now()}_${Math.floor(Math.random()*1000)}_${safeName}`;
+          
           const formData = new FormData(); formData.append('audio', file);
 
           if (authTokenRef.current && !authTokenRef.current.startsWith('local_token_')) {
@@ -3047,18 +3053,30 @@ function DAWStudio() {
           if (!audioCtxRef.current) await initAudioEngine();
           const audioBuffer = await audioCtxRef.current.decodeAudioData(arrayBuffer);
           globalAudioBufferCache.set(sampleId, { buffer: audioBuffer, duration: audioBuffer.duration });
-
-          const track = tracksRef.current.find(t => t.id === trackId);
-          if (track) {
-              const currentSamples = track.instrumentParams?.samples || {};
-              const newSamples = { ...currentSamples, [note]: sampleId };
-              dispatchDawAction({ type: 'UPDATE_INSTRUMENT_PARAM', payload: { trackId, param: 'samples', value: newSamples } });
-          }
-          showToast(`Loaded sample to pad ${note}`, 'success');
-      } catch (err) {
-          showToast("Failed to load drum sample.", "error");
+          
+          newSamples.push({ id: sampleId, name: file.name });
       }
-      e.target.value = null; // Reset input
+
+      if (newSamples.length > 0) {
+          setUserSamples(prev => [...newSamples, ...prev]);
+          showToast(`Uploaded ${newSamples.length} sample(s)`, 'success');
+          
+          if (assignToTarget && newSamples.length === 1) {
+              assignSampleToPad(assignToTarget.trackId, assignToTarget.note, newSamples[0].id);
+          }
+      }
+      if (e.target) e.target.value = null;
+  };
+
+  const assignSampleToPad = (trackId, note, sampleId) => {
+      const track = tracksRef.current.find(t => t.id === trackId);
+      if (track) {
+          const currentSamples = track.instrumentParams?.samples || {};
+          const newSamples = { ...currentSamples, [note]: sampleId };
+          dispatchDawAction({ type: 'UPDATE_INSTRUMENT_PARAM', payload: { trackId, param: 'samples', value: newSamples } });
+      }
+      setSamplePickerTarget(null);
+      showToast(`Assigned sample to pad ${note}`, 'success');
   };
 
   const applyAudioEffectParam = (trackId, fxId, param, val, time = null) => {
