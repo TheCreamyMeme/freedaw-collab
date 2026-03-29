@@ -25,6 +25,40 @@ FreeDaw-Collab is a secure, collaborative, and offline-first web-based Digital A
 
 ---
 
+## #️⃣ Hotkeys
+
+### Playback & Transport
+* **Spacebar**: Play / Pause
+* **Enter**: Return playhead to the beginning (0:00)
+* **Arrow Right / Arrow Left**: Move playhead forward/backward by 1 Bar. (Hold **Shift** to move by the currently selected Snap Grid value instead).
+
+### File & History
+* **Cmd/Ctrl + S**: Save Project
+* **Cmd/Ctrl + Shift + S**: Save Project As... (Creates a copy)
+* **Cmd/Ctrl + Z**: Undo
+* **Cmd/Ctrl + Shift + Z** (or **Cmd/Ctrl + Y**): Redo
+
+### Editing & Arranging
+* **Cmd/Ctrl + C**: Copy selected clip(s)
+* **Cmd/Ctrl + V**: Paste copied clip(s)
+* **Cmd/Ctrl + X**: Cut selected clip(s)
+* **Cmd/Ctrl + D**: Duplicate selected clip(s)
+* **Delete / Backspace**: Delete selected clip(s)
+* **Cmd/Ctrl + A**: Select all clips (on the active track, or globally if no track is focused)
+* **Cmd/Ctrl + E** (or **Cmd/Ctrl + T**): Slice clip(s) exactly at the playhead
+* **Cmd/Ctrl + L**: Set Loop Region to wrap around the current selection (if nothing is selected, it simply toggles the loop on/off)
+
+### Track Controls
+* **M**: Toggle Mute on the currently selected track
+* **S**: Toggle Solo on the currently selected track
+
+### View & UI Interface
+* **Cmd/Ctrl + Shift + A**: Toggle Automation Lanes view
+* **Cmd/Ctrl + [ + ] / [ - ] / [ = ]**: Zoom in and out horizontally on the timeline (also works by holding **Cmd/Ctrl + Mouse Wheel**)
+* **Escape**: Cancel out of an active MIDI Learn mode session
+
+---
+
 ## 🛠️ Custom Plugin SDK Guide
 
 FreeDaw-Collab features a flexible SDK for injecting your own DSP. Plugins are written as standard JavaScript files and pushed to the global `window.FreeDawPlugins` array. 
