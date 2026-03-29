@@ -5237,15 +5237,16 @@ function DAWStudio() {
                           <div 
                               key={vst.id} 
                               onClick={() => handleBrowserPluginClick(vst)}
-                              className={`flex items-center gap-3 p-2 rounded-lg text-sm text-neutral-300 border transition-colors cursor-pointer ${selectedBrowserPlugin?.id === vst.id ? 'bg-blue-900/30 border-blue-500/50 shadow-sm' : 'hover:bg-neutral-800/50 border-transparent hover:border-neutral-700'}`}
+                              className={`group flex items-center gap-3 p-2 rounded-lg text-sm text-neutral-300 border transition-colors cursor-pointer ${selectedBrowserPlugin?.id === vst.id ? 'bg-blue-900/30 border-blue-500/50 shadow-sm' : 'hover:bg-neutral-800/50 border-transparent hover:border-neutral-700'}`}
                           >
                             <div className={`w-8 h-8 rounded bg-neutral-800 flex items-center justify-center shadow-sm shrink-0 ${vst.category === 'instrument' ? 'text-purple-400' : 'text-blue-400'}`}>
                               {vst.category === 'instrument' ? <Piano size={14} /> : <Plug size={14} />}
                             </div>
-                            <div className="flex flex-col overflow-hidden">
+                            <div className="flex flex-col overflow-hidden flex-1">
                               <span className="font-medium text-white text-xs truncate">{vst.name}</span>
                               <span className="text-[9px] text-blue-400 truncate">{vst.vendor || 'Custom'} &bull; {vst.category?.toUpperCase()}</span>
                             </div>
+                            <button onClick={(e) => handleDeletePlugin(e, vst.id)} className="text-neutral-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity p-1 shrink-0" title="Delete Plugin"><Trash2 size={14}/></button>
                           </div>
                         ))}
                     </>
