@@ -1675,6 +1675,9 @@ function DAWStudio() {
   const [customPlugins, setCustomPlugins] = useState([]);
   const [selectedBrowserPlugin, setSelectedBrowserPlugin] = useState(null);
   const [browserPluginCode, setBrowserPluginCode] = useState("");
+  
+  const [userSamples, setUserSamples] = useState([]);
+  const [samplePickerTarget, setSamplePickerTarget] = useState(null);
 
   const [contextMenu, setContextMenu] = useState(null);
   const [editingTrackId, setEditingTrackId] = useState(null);
