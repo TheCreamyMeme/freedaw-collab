@@ -4014,8 +4014,7 @@ function DAWStudio() {
       }
   };
 
-  const handlePluginUpload = async (e) => {
-      const file = e.target.files[0];
+  const processPluginUpload = async (file) => {
       if (!file || !file.name.endsWith('.js')) {
           showToast("Please upload a valid .js plugin file.", "error");
           return;
@@ -4049,7 +4048,37 @@ function DAWStudio() {
       } catch (err) {
           showToast("Failed to upload plugin.", "error");
       }
-      e.target.value = null; // Reset input
+  };
+
+  const handlePluginUpload = (e) => {
+      if (e.target.files.length) processPluginUpload(e.target.files[0]);
+      if (e.target) e.target.value = null; // Reset input
+  };
+
+  const handleDeletePlugin = async (e, pluginId) => {
+      e.stopPropagation();
+      try {
+          if (authTokenRef.current && !authTokenRef.current.startsWith('local_token_')) {
+              await fetch(`${API_BASE_URL}/api/plugins/${pluginId}`, { method: 'DELETE', headers: { 'Authorization': `Bearer ${authTokenRef.current}` } });
+          }
+          setCustomPlugins(prev => prev.filter(p => p.id !== pluginId));
+          window.FreeDawPlugins = window.FreeDawPlugins.filter(p => p.id !== pluginId);
+          if (selectedBrowserPlugin?.id === pluginId) { setSelectedBrowserPlugin(null); setBrowserPluginCode(""); }
+          showToast("Plugin deleted.", "info");
+      } catch(err) { showToast("Failed to delete plugin.", "error"); }
+  };
+
+  const handleDeleteSample = async (e, sampleId) => {
+      e.stopPropagation();
+      try {
+          if (authTokenRef.current && !authTokenRef.current.startsWith('local_token_')) {
+              await fetch(`${API_BASE_URL}/api/samples/${sampleId}`, { method: 'DELETE', headers: { 'Authorization': `Bearer ${authTokenRef.current}` } });
+          }
+          setUserSamples(prev => prev.filter(s => s.id !== sampleId));
+          globalAudioBufferCache.delete(sampleId);
+          try { await idb.delete('samples', sampleId); } catch(err){}
+          showToast("Sample deleted.", "info");
+      } catch(err) { showToast("Failed to delete sample.", "error"); }
   };
   const loadProjects = async (token) => {
       try {
