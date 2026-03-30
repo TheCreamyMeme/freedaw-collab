@@ -13,8 +13,8 @@ docker rmi freedaw
 docker system prune -a -f --volumes
 
 
-docker build --no-cache --progress=plain -t freedaw-api:latest -f /etc/dockercompose/daw_webapp/backend/dockerfile /etc/dockercompose/daw_webapp/backend &&
-docker run -d --name freedaw-api -p 3010:3000 -v /etc/dockercompose/daw_webapp/backend/webdaw-projects:/app/projects -v /etc/dockercompose/daw_webapp/backend/webdaw-samples:/app/samples -v /etc/dockercompose/daw_webapp/backend/webdaw-users:/app/users -v /etc/dockercompose/daw_webapp/backend/webdaw-plugins:/app/plugins --restart unless-stopped freedaw-api:latest
+docker build --no-cache --progress=plain -t freedaw-api:latest -f ./backend/dockerfile ./backend &&
+docker run -d --name freedaw-api -p 3010:3000 -v ./backend/webdaw-projects:/app/projects -v ./backend/webdaw-samples:/app/samples -v ./backend/webdaw-users:/app/users -v ./backend/webdaw-plugins:/app/plugins --restart unless-stopped freedaw-api:latest
 
-docker build --no-cache --progress=plain -t freedaw:latest -f /etc/dockercompose/daw_webapp/frontend/dockerfile /etc/dockercompose/daw_webapp/frontend &&
-docker run -d --name freedaw -p 3009:3000 -v /etc/dockercompose/daw_webapp/frontend/data:/app --restart unless-stopped freedaw:latest
+docker build --no-cache --progress=plain -t freedaw:latest -f ./frontend/dockerfile ./frontend &&
+docker run -d --name freedaw -p 3009:3000 -v ./frontend/data:/app --restart unless-stopped freedaw:latest
