@@ -2746,37 +2746,36 @@ const initAudioEngine = async (explicitTracks = null) => {
                   if (mapping.type === 'fx_param') {
                       const fx = track.effects?.find(f => f.id === mapping.fxId);
                       if (!fx) return;
-                      const baseVal = fx.params[mapping.param];
                       const constraints = getParamConstraints(mapping.param);
-                      const mappingSpread = (mapping.rangeMax !== undefined && mapping.rangeMin !== undefined) ? (mapping.rangeMax - mapping.rangeMin) : 1.0;
+                      const rMin = mapping.rangeMin !== undefined ? mapping.rangeMin : 0;
+                      const rMax = mapping.rangeMax !== undefined ? mapping.rangeMax : 1;
+                      
+                      const scaledOut = 0.5 + (out - 0.5) * depthRatio;
+                      const rawPercent = rMin + scaledOut * (rMax - rMin);
                       
                       let mappedVal;
                       if (constraints.isLog) {
                           const minLog = Math.log(Math.max(0.001, constraints.min));
                           const maxLog = Math.log(constraints.max);
-                          const baseLog = Math.log(Math.max(0.001, baseVal));
-                          const rangeLog = maxLog - minLog;
-                          
-                          let targetLog = baseLog + (lfoSwing * mappingSpread * (rangeLog / 2));
-                          targetLog = Math.max(minLog, Math.min(maxLog, targetLog));
-                          mappedVal = Math.exp(targetLog);
+                          mappedVal = Math.exp(minLog + rawPercent * (maxLog - minLog));
                       } else {
-                          const range = constraints.max - constraints.min;
-                          mappedVal = baseVal + (lfoSwing * mappingSpread * (range / 2));
-                          mappedVal = Math.max(constraints.min, Math.min(constraints.max, mappedVal));
+                          mappedVal = constraints.min + rawPercent * (constraints.max - constraints.min);
                       }
-                      if (constraints.step && !constraints.isLog) mappedVal = Math.round(mappedVal / constraints.step) * constraints.step;
+                      mappedVal = Math.max(constraints.min, Math.min(constraints.max, mappedVal));
+                      if (constraints.step && !constraints.isLog) {
+                          mappedVal = Math.round(mappedVal / constraints.step) * constraints.step;
+                      }
 
-                  const cacheKey = `lastLfo_${mapping.fxId}_${mapping.param}`;
-                      if (synth[cacheKey] !== mappedVal) {
-                          applyAudioEffectParam(mapping.trackId, mapping.fxId, mapping.param, mappedVal, now);
-                          synth[cacheKey] = mappedVal;
+                      const cacheKey = `lastLfo_${mapping.fxId}_${mapping.param}`;
+                      const rawCacheKey = `lastLfoRaw_${mapping.fxId}_${mapping.param}`;
+                      
+                      if (synth[cacheKey] !== mappedVal || synth[rawCacheKey] !== rawPercent) {
+                          if (synth[cacheKey] !== mappedVal) {
+                              applyAudioEffectParam(mapping.trackId, mapping.fxId, mapping.param, mappedVal, now);
+                              synth[cacheKey] = mappedVal;
+                          }
+                          synth[rawCacheKey] = rawPercent;
 
-                          const basePercent = constraints.isLog 
-                              ? (Math.log(Math.max(0.001, baseVal)) - Math.log(Math.max(0.001, constraints.min))) / (Math.log(constraints.max) - Math.log(Math.max(0.001, constraints.min)))
-                              : (baseVal - constraints.min) / (constraints.max - constraints.min);
-                          
-                          const rawPercent = basePercent + (lfoSwing * mappingSpread * 0.5);
                           const clampedPercent = Math.max(-1/6, Math.min(7/6, rawPercent));
                           const angle = -135 + clampedPercent * 270;
 
@@ -2786,37 +2785,33 @@ const initAudioEngine = async (explicitTracks = null) => {
                           if (knobVal) knobVal.innerText = mappedVal >= 1000 ? (mappedVal / 1000).toFixed(1) + 'k' : mappedVal.toFixed(constraints.step < 1 ? 2 : 0);
                       }
                   } else if (mapping.type === 'inst_param') {
-                      const baseVal = track.instrumentParams?.[mapping.param];
-                      if (baseVal === undefined) return;
                       const constraints = getParamConstraints(mapping.param);
-                      const mappingSpread = (mapping.rangeMax !== undefined && mapping.rangeMin !== undefined) ? (mapping.rangeMax - mapping.rangeMin) : 1.0;
+                      const rMin = mapping.rangeMin !== undefined ? mapping.rangeMin : 0;
+                      const rMax = mapping.rangeMax !== undefined ? mapping.rangeMax : 1;
+                      
+                      const scaledOut = 0.5 + (out - 0.5) * depthRatio;
+                      const rawPercent = rMin + scaledOut * (rMax - rMin);
                       
                       let mappedVal;
                       if (constraints.isLog) {
                           const minLog = Math.log(Math.max(0.001, constraints.min));
                           const maxLog = Math.log(constraints.max);
-                          const baseLog = Math.log(Math.max(0.001, baseVal));
-                          const rangeLog = maxLog - minLog;
-                          
-                          let targetLog = baseLog + (lfoSwing * mappingSpread * (rangeLog / 2));
-                          targetLog = Math.max(minLog, Math.min(maxLog, targetLog));
-                          mappedVal = Math.exp(targetLog);
+                          mappedVal = Math.exp(minLog + rawPercent * (maxLog - minLog));
                       } else {
-                          const range = constraints.max - constraints.min;
-                          mappedVal = baseVal + (lfoSwing * mappingSpread * (range / 2));
-                          mappedVal = Math.max(constraints.min, Math.min(constraints.max, mappedVal));
+                          mappedVal = constraints.min + rawPercent * (constraints.max - constraints.min);
                       }
-                      if (constraints.step && !constraints.isLog) mappedVal = Math.round(mappedVal / constraints.step) * constraints.step;
+                      mappedVal = Math.max(constraints.min, Math.min(constraints.max, mappedVal));
+                      if (constraints.step && !constraints.isLog) {
+                          mappedVal = Math.round(mappedVal / constraints.step) * constraints.step;
+                      }
 
                       const cacheKey = `lastLfo_inst_${mapping.param}`;
-                      if (synth[cacheKey] !== mappedVal) {
+                      const rawCacheKey = `lastLfoRaw_inst_${mapping.param}`;
+                      
+                      if (synth[cacheKey] !== mappedVal || synth[rawCacheKey] !== rawPercent) {
                           synth[cacheKey] = mappedVal;
+                          synth[rawCacheKey] = rawPercent;
 
-                          const basePercent = constraints.isLog 
-                              ? (Math.log(Math.max(0.001, baseVal)) - Math.log(Math.max(0.001, constraints.min))) / (Math.log(constraints.max) - Math.log(Math.max(0.001, constraints.min)))
-                              : (baseVal - constraints.min) / (constraints.max - constraints.min);
-                          
-                          const rawPercent = basePercent + (lfoSwing * mappingSpread * 0.5);
                           const clampedPercent = Math.max(-1/6, Math.min(7/6, rawPercent));
                           const angle = -135 + clampedPercent * 270;
                           
