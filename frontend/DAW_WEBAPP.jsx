@@ -2729,36 +2729,46 @@ const initAudioEngine = async (explicitTracks = null) => {
                   const synth = synthsRef.current[mapping.trackId];
                   if (!track || !synth) return;
 
-                              if (mapping.type === 'fx_param') {
-                                  applyAudioEffectParam(mapping.trackId, mapping.fxId, mapping.param, mappedVal);
-                                  const knobLive = document.getElementById(`knob-live-midi-fx-${mapping.trackId}-${mapping.fxId}-${mapping.param}`);
-                                  const knobVal = document.getElementById(`knob-val-fx-${mapping.trackId}-${mapping.fxId}-${mapping.param}`);
-                                  if (knobLive && knobVal) {
-                                      const percent = constraints.isLog 
-                                          ? (Math.log(Math.max(0.001, mappedVal)) - Math.log(Math.max(0.001, constraints.min))) / (Math.log(constraints.max) - Math.log(Math.max(0.001, constraints.min)))
-                                          : (mappedVal - constraints.min) / (constraints.max - constraints.min);
-                                      const clampedPercent = Math.max(-1/6, Math.min(7/6, percent));
-                                      const angle = -135 + clampedPercent * 270;
-                                      knobLive.style.transform = `rotate(${angle}deg)`;
-                                      knobVal.innerText = mappedVal >= 1000 ? (mappedVal / 1000).toFixed(1) + 'k' : mappedVal.toFixed(constraints.step < 1 ? 2 : 0);
-                                  }
-                              } else if (mapping.type === 'inst_param') {
-                                  const synth = synthsRef.current[mapping.trackId];
-                                  if (synth) {
-                                      synth[`lastMidi_inst_${mapping.param}`] = mappedVal;
-                                      const knobLive = document.getElementById(`knob-live-midi-inst-${mapping.trackId}-${mapping.param}`);
-                                      const knobVal = document.getElementById(`knob-val-inst-${mapping.trackId}-${mapping.param}`);
-                                      if (knobLive && knobVal) {
-                                          const percent = constraints.isLog 
-                                              ? (Math.log(Math.max(0.001, mappedVal)) - Math.log(Math.max(0.001, constraints.min))) / (Math.log(constraints.max) - Math.log(Math.max(0.001, constraints.min)))
-                                              : (mappedVal - constraints.min) / (constraints.max - constraints.min);
-                                          const clampedPercent = Math.max(-1/6, Math.min(7/6, percent));
-                                          const angle = -135 + clampedPercent * 270;
-                                          knobLive.style.transform = `rotate(${angle}deg)`;
-                                          knobVal.innerText = mappedVal >= 1000 ? (mappedVal / 1000).toFixed(1) + 'k' : mappedVal.toFixed(constraints.step < 1 ? 2 : 0);
-                                      }
-                                  }
-                              } else if (mapping.type === 'inst_param') {
+                  if (mapping.type === 'fx_param') {
+                      const fx = track.effects?.find(f => f.id === mapping.fxId);
+                      if (!fx) return;
+                      const baseVal = fx.params[mapping.param];
+                      const constraints = getParamConstraints(mapping.param);
+                      const mappingSpread = (mapping.rangeMax !== undefined && mapping.rangeMin !== undefined) ? (mapping.rangeMax - mapping.rangeMin) : 1.0;
+                      
+                      let mappedVal;
+                      if (constraints.isLog) {
+                          const minLog = Math.log(Math.max(0.001, constraints.min));
+                          const maxLog = Math.log(constraints.max);
+                          const baseLog = Math.log(Math.max(0.001, baseVal));
+                          const rangeLog = maxLog - minLog;
+                          
+                          let targetLog = baseLog + (lfoSwing * mappingSpread * (rangeLog / 2));
+                          targetLog = Math.max(minLog, Math.min(maxLog, targetLog));
+                          mappedVal = Math.exp(targetLog);
+                      } else {
+                          const range = constraints.max - constraints.min;
+                          mappedVal = baseVal + (lfoSwing * mappingSpread * (range / 2));
+                          mappedVal = Math.max(constraints.min, Math.min(constraints.max, mappedVal));
+                      }
+                      if (constraints.step && !constraints.isLog) mappedVal = Math.round(mappedVal / constraints.step) * constraints.step;
+
+                      const cacheKey = `lastLfo_${mapping.fxId}_${mapping.param}`;
+                      if (synth[cacheKey] !== mappedVal) {
+                          applyAudioEffectParam(mapping.trackId, mapping.fxId, mapping.param, mappedVal, now);
+                          synth[cacheKey] = mappedVal;
+
+                          const knobLive = document.getElementById(`knob-live-lfo-fx-${mapping.trackId}-${mapping.fxId}-${mapping.param}`);
+                          if (knobLive) {
+                              const percent = constraints.isLog 
+                                  ? (Math.log(Math.max(0.001, mappedVal)) - Math.log(Math.max(0.001, constraints.min))) / (Math.log(constraints.max) - Math.log(Math.max(0.001, constraints.min)))
+                                  : (mappedVal - constraints.min) / (constraints.max - constraints.min);
+                              const clampedPercent = Math.max(-1/6, Math.min(7/6, percent));
+                              const angle = -135 + clampedPercent * 270;
+                              knobLive.style.transform = `rotate(${angle}deg)`;
+                          }
+                      }
+                  } else if (mapping.type === 'inst_param') {
                       const baseVal = track.instrumentParams?.[mapping.param];
                       if (baseVal === undefined) return;
                       const constraints = getParamConstraints(mapping.param);
@@ -2786,17 +2796,17 @@ const initAudioEngine = async (explicitTracks = null) => {
                           synth[cacheKey] = mappedVal;
                           
                           const knobLive = document.getElementById(`knob-live-lfo-inst-${mapping.trackId}-${mapping.param}`);
-                          const knobVal = document.getElementById(`knob-val-inst-${mapping.trackId}-${mapping.param}`);
-                          if (knobLive && knobVal) {
+                          if (knobLive) {
                               const percent = constraints.isLog 
                                   ? (Math.log(Math.max(0.001, mappedVal)) - Math.log(Math.max(0.001, constraints.min))) / (Math.log(constraints.max) - Math.log(Math.max(0.001, constraints.min)))
                                   : (mappedVal - constraints.min) / (constraints.max - constraints.min);
-                              const angle = -135 + (percent || 0) * 270;
+                              const clampedPercent = Math.max(-1/6, Math.min(7/6, percent));
+                              const angle = -135 + clampedPercent * 270;
                               knobLive.style.transform = `rotate(${angle}deg)`;
-                              knobVal.innerText = mappedVal >= 1000 ? (mappedVal / 1000).toFixed(1) + 'k' : mappedVal.toFixed(constraints.step < 1 ? 2 : 0);
                           }
                       }
                   } else if (mapping.type === 'mixer_vol') {
+
                       const baseVal = track.volume / 100;
                       let mappedVal = baseVal + (lfoSwing * 0.5); // Full depth = +/- 50% volume
                       mappedVal = Math.max(0, Math.min(1, mappedVal));
@@ -4284,7 +4294,13 @@ const initAudioEngine = async (explicitTracks = null) => {
   const connectLocalVstBridge = () => {
       try {
           // Connect to lightweight desktop companion app for local VST2/VST3 plugin bridging
-          localVstSocketRef.current = io('http://localhost:8080', { reconnectionAttempts: 3 });
+          localVstSocketRef.current = io('http://localhost:8080', { 
+              reconnectionAttempts: 1,
+              timeout: 1000 
+          });
+          localVstSocketRef.current.on('connect_error', () => {
+              // Suppress connection errors for optional local bridge to prevent console spam
+          });
           localVstSocketRef.current.on('vst-audio-stream', (data) => {
               // Process WebRTC/WebSocket audio stream from local VSTs
           });
