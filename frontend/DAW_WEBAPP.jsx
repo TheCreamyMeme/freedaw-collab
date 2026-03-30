@@ -822,6 +822,16 @@ const Knob = React.memo(({ id, param, value, min, max, step, isLog, onChange, on
                 <div id={id ? `knob-rot-${id}` : undefined} className="absolute inset-0" style={{ transform: `rotate(${angle}deg)` }}>
                     <div className="mx-auto mt-1 w-1 h-3 bg-blue-400 rounded-full shadow-[0_0_6px_rgba(96,165,250,0.8)] group-hover:bg-blue-300 transition-colors pointer-events-none" />
                 </div>
+                {mappedRange && (
+                    <div id={id ? `knob-live-midi-${id}` : undefined} className="absolute inset-0 pointer-events-none z-20" style={{ transform: `rotate(${angle}deg)` }}>
+                        <div className="mx-auto mt-[-4px] w-2 h-2 bg-green-400 rounded-full shadow-[0_0_8px_rgba(74,222,128,0.9)] border border-neutral-900" />
+                    </div>
+                )}
+                {lfoMappedRange && (
+                    <div id={id ? `knob-live-lfo-${id}` : undefined} className="absolute inset-0 pointer-events-none z-30" style={{ transform: `rotate(${angle}deg)` }}>
+                        <div className="mx-auto mt-[-4px] w-2 h-2 bg-purple-400 rounded-full shadow-[0_0_8px_rgba(192,132,252,0.9)] border border-neutral-900" />
+                    </div>
+                )}
             </div>
             <div className="flex flex-col items-center w-full">
                 <span className="text-[10px] text-neutral-300 font-bold uppercase tracking-wider text-center truncate w-full" title={displayName}>{displayName}</span>
@@ -2739,7 +2749,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                           applyAudioEffectParam(mapping.trackId, mapping.fxId, mapping.param, mappedVal, now);
                           synth[cacheKey] = mappedVal;
 
-                          const knobLive = document.getElementById(`knob-live-fx-${mapping.trackId}-${mapping.fxId}-${mapping.param}`);
+                          const knobLive = document.getElementById(`knob-live-lfo-fx-${mapping.trackId}-${mapping.fxId}-${mapping.param}`);
                           const knobVal = document.getElementById(`knob-val-fx-${mapping.trackId}-${mapping.fxId}-${mapping.param}`);
                           if (knobLive && knobVal) {
                               const percent = constraints.isLog 
@@ -2777,7 +2787,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                       if (synth[cacheKey] !== mappedVal) {
                           synth[cacheKey] = mappedVal;
                           
-                          const knobLive = document.getElementById(`knob-live-inst-${mapping.trackId}-${mapping.param}`);
+                          const knobLive = document.getElementById(`knob-live-lfo-inst-${mapping.trackId}-${mapping.param}`);
                           const knobVal = document.getElementById(`knob-val-inst-${mapping.trackId}-${mapping.param}`);
                           if (knobLive && knobVal) {
                               const percent = constraints.isLog 
@@ -3003,7 +3013,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                         const baseVal = fx.params[mapping.param];
                         if (synth) applyAudioEffectParam(mapping.trackId, mapping.fxId, mapping.param, baseVal, audioCtxRef.current?.currentTime || 0);
                         const constraints = getParamConstraints(mapping.param);
-                            const knobLive = document.getElementById(`knob-live-fx-${mapping.trackId}-${mapping.fxId}-${mapping.param}`);
+                            const knobLive = document.getElementById(`knob-live-lfo-fx-${mapping.trackId}-${mapping.fxId}-${mapping.param}`);
                             const knobVal = document.getElementById(`knob-val-fx-${mapping.trackId}-${mapping.fxId}-${mapping.param}`);
                             if (knobLive && knobVal) {
                                 const percent = constraints.isLog 
@@ -3018,7 +3028,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                         const baseVal = track.instrumentParams?.[mapping.param];
                         if (baseVal !== undefined) {
                             const constraints = getParamConstraints(mapping.param);
-                            const knobLive = document.getElementById(`knob-live-inst-${mapping.trackId}-${mapping.param}`);
+                            const knobLive = document.getElementById(`knob-live-lfo-inst-${mapping.trackId}-${mapping.param}`);
                             const knobVal = document.getElementById(`knob-val-inst-${mapping.trackId}-${mapping.param}`);
                             if (knobLive && knobVal) {
                                 const percent = constraints.isLog 
