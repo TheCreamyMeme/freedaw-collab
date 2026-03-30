@@ -548,6 +548,19 @@ const getBitcrusherCurve = (bitDepth) => {
   return curve;
 };
 
+const getDotStyle = (val) => {
+    let radius = 18;
+    // Push the dot outward visually if the mapping extends beyond 0 or 1
+    if (val < 0) radius += (-val) * 12;
+    if (val > 1) radius += (val - 1) * 12;
+    return {
+        left: '50%',
+        top: `${20 - radius}px`,
+        transformOrigin: `50% ${radius}px`,
+        transform: `translate(-50%, 0) rotate(${-135 + val * 270}deg)`
+    };
+};
+
 // --- Reusable DAW Radial Knob Component ---
 const Knob = React.memo(({ id, param, value, min, max, step, isLog, onChange, onContextMenu, mappedRange, onRangeAdjust, lfoMappedRange, onLfoRangeAdjust }) => {
     const [isDragging, setIsDragging] = useState(false);
@@ -611,12 +624,6 @@ const Knob = React.memo(({ id, param, value, min, max, step, isLog, onChange, on
                     let newMin = center - newSpread / 2;
                     let newMax = center + newSpread / 2;
 
-                    // Clamp to strictly stay within normalized 0 and 1 bounds, but allow them to cross/invert
-                    if (newMin < 0) newMin = 0;
-                    if (newMin > 1) newMin = 1;
-                    if (newMax < 0) newMax = 0;
-                    if (newMax > 1) newMax = 1;
-
                     onRangeAdjustRef.current(param, newMin, newMax);
                 }
                 return;
@@ -631,11 +638,6 @@ const Knob = React.memo(({ id, param, value, min, max, step, isLog, onChange, on
                     
                     let newMin = center - newSpread / 2;
                     let newMax = center + newSpread / 2;
-
-                    if (newMin < 0) newMin = 0;
-                    if (newMin > 1) newMin = 1;
-                    if (newMax < 0) newMax = 0;
-                    if (newMax > 1) newMax = 1;
 
                     onLfoRangeAdjustRef.current(param, newMin, newMax);
                 }
@@ -808,14 +810,14 @@ const Knob = React.memo(({ id, param, value, min, max, step, isLog, onChange, on
                 <div className="absolute inset-0 rounded-full bg-gradient-to-b from-neutral-600/20 to-transparent pointer-events-none" />
                 {mappedRange && (
                     <>
-                        <div className="absolute w-[3px] h-[3px] bg-green-400 rounded-full z-10 shadow-[0_0_4px_#4ade80] pointer-events-none" style={{ left: '50%', top: '2px', transformOrigin: '50% 18px', transform: `translate(-50%, 0) rotate(${-135 + mappedRange.min * 270}deg)` }} title="MIDI Min" />
-                        <div className="absolute w-[3px] h-[3px] bg-red-400 rounded-full z-10 shadow-[0_0_4px_#f87171] pointer-events-none" style={{ left: '50%', top: '2px', transformOrigin: '50% 18px', transform: `translate(-50%, 0) rotate(${-135 + mappedRange.max * 270}deg)` }} title="MIDI Max" />
+                        <div className="absolute w-[3px] h-[3px] bg-green-400 rounded-full z-10 shadow-[0_0_4px_#4ade80] pointer-events-none" style={getDotStyle(mappedRange.min)} title="MIDI Min" />
+                        <div className="absolute w-[3px] h-[3px] bg-red-400 rounded-full z-10 shadow-[0_0_4px_#f87171] pointer-events-none" style={getDotStyle(mappedRange.max)} title="MIDI Max" />
                     </>
                 )}
                 {lfoMappedRange && (
                     <>
-                        <div className="absolute w-[3px] h-[3px] bg-purple-400 rounded-full z-10 shadow-[0_0_4px_#c084fc] pointer-events-none" style={{ left: '50%', top: '2px', transformOrigin: '50% 18px', transform: `translate(-50%, 0) rotate(${-135 + lfoMappedRange.min * 270}deg)` }} title="LFO Min" />
-                        <div className="absolute w-[3px] h-[3px] bg-fuchsia-400 rounded-full z-10 shadow-[0_0_4px_#e879f9] pointer-events-none" style={{ left: '50%', top: '2px', transformOrigin: '50% 18px', transform: `translate(-50%, 0) rotate(${-135 + lfoMappedRange.max * 270}deg)` }} title="LFO Max" />
+                        <div className="absolute w-[3px] h-[3px] bg-purple-400 rounded-full z-10 shadow-[0_0_4px_#c084fc] pointer-events-none" style={getDotStyle(lfoMappedRange.min)} title="LFO Min" />
+                        <div className="absolute w-[3px] h-[3px] bg-fuchsia-400 rounded-full z-10 shadow-[0_0_4px_#e879f9] pointer-events-none" style={getDotStyle(lfoMappedRange.max)} title="LFO Max" />
                     </>
                 )}
                 <div id={id ? `knob-rot-${id}` : undefined} className="absolute inset-0" style={{ transform: `rotate(${angle}deg)` }}>
@@ -3436,14 +3438,18 @@ const initAudioEngine = async (explicitTracks = null) => {
                       const rMin = mapping.rangeMin !== undefined ? mapping.rangeMin : 0;
                       const rMax = mapping.rangeMax !== undefined ? mapping.rangeMax : 1;
                       normalizedVal = rMin + (normalizedVal * (rMax - rMin));
-                      normalizedVal = Math.max(0, Math.min(1, normalizedVal));
+                      // We don't clamp normalizedVal here so extended ranges can affect the full DSP limits linearly
+                      // The final output value is safely clamped by getParamConstraints below instead.
 
                       if (mapping.type === 'mixer_vol') {
-                          dispatchDawAction({ type: 'UPDATE_TRACK_VOL', payload: { id: mapping.trackId, volume: Math.round(normalizedVal * 100) } });
+                          const vol = Math.max(0, Math.min(100, Math.round(normalizedVal * 100)));
+                          dispatchDawAction({ type: 'UPDATE_TRACK_VOL', payload: { id: mapping.trackId, volume: vol } });
                       } else if (mapping.type === 'mixer_pan') {
-                          dispatchDawAction({ type: 'UPDATE_TRACK_PAN', payload: { id: mapping.trackId, pan: Math.round(normalizedVal * 100 - 50) } });
+                          const pan = Math.max(-50, Math.min(50, Math.round(normalizedVal * 100 - 50)));
+                          dispatchDawAction({ type: 'UPDATE_TRACK_PAN', payload: { id: mapping.trackId, pan } });
                       } else if (mapping.type === 'master_vol') {
-                          handleMasterVolumeChange(Math.round(normalizedVal * 100));
+                          const vol = Math.max(0, Math.min(100, Math.round(normalizedVal * 100)));
+                          handleMasterVolumeChange(vol);
                       } else if (mapping.type.startsWith('transport_')) {
                           if (velocityOrVal > 0) { // Only trigger on button press
                               const actions = transportActionsRef.current;
@@ -6330,7 +6336,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                                                         <div className="flex items-center gap-3">
                                                             <div className="flex items-center gap-1.5" title="Start Limit">
                                                                 <span>Min:</span>
-                                                                <input type="range" min="0" max="100" value={Math.round((m.rangeMin !== undefined ? m.rangeMin : 0)*100)} onChange={e => {
+                                                                <input type="range" min="-200" max="300" value={Math.round((m.rangeMin !== undefined ? m.rangeMin : 0)*100)} onChange={e => {
                                                                     const val = Number(e.target.value)/100;
                                                                     setMidiMappings(prev => ({
                                                                         ...prev, [ccKey]: (Array.isArray(prev[ccKey]) ? prev[ccKey] : [prev[ccKey]]).map(x => (x.id||'legacy') === (m.id||'legacy') ? {...x, rangeMin: val} : x)
@@ -6339,7 +6345,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                                                             </div>
                                                             <div className="flex items-center gap-1.5" title="End Limit">
                                                                 <span>Max:</span>
-                                                                <input type="range" min="0" max="100" value={Math.round((m.rangeMax !== undefined ? m.rangeMax : 1)*100)} onChange={e => {
+                                                                <input type="range" min="-200" max="300" value={Math.round((m.rangeMax !== undefined ? m.rangeMax : 1)*100)} onChange={e => {
                                                                     const val = Number(e.target.value)/100;
                                                                     setMidiMappings(prev => ({
                                                                         ...prev, [ccKey]: (Array.isArray(prev[ccKey]) ? prev[ccKey] : [prev[ccKey]]).map(x => (x.id||'legacy') === (m.id||'legacy') ? {...x, rangeMax: val} : x)
