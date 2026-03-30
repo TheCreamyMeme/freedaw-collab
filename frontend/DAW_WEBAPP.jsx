@@ -561,6 +561,7 @@ const getDotStyle = (val) => {
     };
 };
 
+
 // --- Reusable DAW Radial Knob Component ---
 const Knob = React.memo(({ id, param, value, min, max, step, isLog, onChange, onContextMenu, mappedRange, onRangeAdjust, lfoMappedRange, onLfoRangeAdjust }) => {
     const [isDragging, setIsDragging] = useState(false);
@@ -668,24 +669,14 @@ const Knob = React.memo(({ id, param, value, min, max, step, isLog, onChange, on
             const deltaPercent = nextPercent - startPercentRef.current;
 
             if (onRangeAdjustRef.current && mappedRangeRef.current) {
-                const currentSpread = startRangeRef.current.max - startRangeRef.current.min;
                 let newMin = startRangeRef.current.min + deltaPercent;
                 let newMax = startRangeRef.current.max + deltaPercent;
-
-                if (newMin < 0) { newMin = 0; newMax = currentSpread; }
-                else if (newMax > 1) { newMax = 1; newMin = 1 - currentSpread; }
-                
                 onRangeAdjustRef.current(param, newMin, newMax);
             }
 
             if (onLfoRangeAdjustRef.current && lfoMappedRangeRef.current) {
-                const currentSpread = startLfoRangeRef.current.max - startLfoRangeRef.current.min;
                 let newMin = startLfoRangeRef.current.min + deltaPercent;
                 let newMax = startLfoRangeRef.current.max + deltaPercent;
-
-                if (newMin < 0) { newMin = 0; newMax = currentSpread; }
-                else if (newMax > 1) { newMax = 1; newMin = 1 - currentSpread; }
-                
                 onLfoRangeAdjustRef.current(param, newMin, newMax);
             }
 
@@ -717,11 +708,6 @@ const Knob = React.memo(({ id, param, value, min, max, step, isLog, onChange, on
                 let newMin = center - newSpread / 2;
                 let newMax = center + newSpread / 2;
 
-                if (newMin < 0) newMin = 0;
-                if (newMin > 1) newMin = 1;
-                if (newMax < 0) newMax = 0;
-                if (newMax > 1) newMax = 1;
-
                 onLfoRangeAdjustRef.current(param, newMin, newMax);
             }
             return;
@@ -738,11 +724,6 @@ const Knob = React.memo(({ id, param, value, min, max, step, isLog, onChange, on
                 
                 let newMin = center - newSpread / 2;
                 let newMax = center + newSpread / 2;
-
-                if (newMin < 0) newMin = 0;
-                if (newMin > 1) newMin = 1;
-                if (newMax < 0) newMax = 0;
-                if (newMax > 1) newMax = 1;
 
                 onRangeAdjustRef.current(param, newMin, newMax);
             }
@@ -777,20 +758,14 @@ const Knob = React.memo(({ id, param, value, min, max, step, isLog, onChange, on
         const deltaPercent = nextPercent - (percent || 0);
 
         if (onRangeAdjustRef.current && mappedRange) {
-            const currentSpread = mappedRange.max - mappedRange.min;
             let newMin = mappedRange.min + deltaPercent;
             let newMax = mappedRange.max + deltaPercent;
-            if (newMin < 0) { newMin = 0; newMax = currentSpread; }
-            else if (newMax > 1) { newMax = 1; newMin = 1 - currentSpread; }
             onRangeAdjustRef.current(param, newMin, newMax);
         }
 
         if (onLfoRangeAdjustRef.current && lfoMappedRange) {
-            const currentSpread = lfoMappedRange.max - lfoMappedRange.min;
             let newMin = lfoMappedRange.min + deltaPercent;
             let newMax = lfoMappedRange.max + deltaPercent;
-            if (newMin < 0) { newMin = 0; newMax = currentSpread; }
-            else if (newMax > 1) { newMax = 1; newMin = 1 - currentSpread; }
             onLfoRangeAdjustRef.current(param, newMin, newMax);
         }
 
@@ -3470,6 +3445,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                           } else {
                               mappedVal = constraints.min + normalizedVal * (constraints.max - constraints.min);
                           }
+                          mappedVal = Math.max(constraints.min, Math.min(constraints.max, mappedVal));
                           if (constraints.step && !constraints.isLog) {
                               mappedVal = Math.round(mappedVal / constraints.step) * constraints.step;
                           }
