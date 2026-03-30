@@ -823,12 +823,12 @@ const Knob = React.memo(({ id, param, value, min, max, step, isLog, onChange, on
                     <div className="mx-auto mt-1 w-1 h-3 bg-blue-400 rounded-full shadow-[0_0_6px_rgba(96,165,250,0.8)] group-hover:bg-blue-300 transition-colors pointer-events-none" />
                 </div>
                 {mappedRange && (
-                    <div id={id ? `knob-live-midi-${id}` : undefined} className="absolute inset-0 pointer-events-none z-20" style={{ transform: `rotate(${angle}deg)` }}>
+                    <div id={id ? `knob-live-midi-${id}` : undefined} className="absolute inset-0 pointer-events-none z-20">
                         <div className="mx-auto mt-[-4px] w-2 h-2 bg-green-400 rounded-full shadow-[0_0_8px_rgba(74,222,128,0.9)] border border-neutral-900" />
                     </div>
                 )}
                 {lfoMappedRange && (
-                    <div id={id ? `knob-live-lfo-${id}` : undefined} className="absolute inset-0 pointer-events-none z-30" style={{ transform: `rotate(${angle}deg)` }}>
+                    <div id={id ? `knob-live-lfo-${id}` : undefined} className="absolute inset-0 pointer-events-none z-30">
                         <div className="mx-auto mt-[-4px] w-2 h-2 bg-purple-400 rounded-full shadow-[0_0_8px_rgba(192,132,252,0.9)] border border-neutral-900" />
                     </div>
                 )}
