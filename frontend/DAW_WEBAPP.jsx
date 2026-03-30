@@ -548,20 +548,6 @@ const getBitcrusherCurve = (bitDepth) => {
   return curve;
 };
 
-const getDotStyle = (val) => {
-    // Keep the radius fixed so dots travel on the same circular track.
-    // Clamp to a 360-degree visual span so it doesn't wrap around multiple times.
-    // 0 is -135 deg, 1 is +135 deg. Max limits are -180 deg (-1/6) and +180 deg (7/6).
-    const clampedVal = Math.max(-1/6, Math.min(7/6, val));
-    return {
-        left: '50%',
-        top: `2px`,
-        transformOrigin: `50% 18px`,
-        transform: `translate(-50%, 0) rotate(${-135 + clampedVal * 270}deg)`
-    };
-};
-
-
 // --- Reusable DAW Radial Knob Component ---
 const Knob = React.memo(({ id, param, value, min, max, step, isLog, onChange, onContextMenu, mappedRange, onRangeAdjust, lfoMappedRange, onLfoRangeAdjust }) => {
     const [isDragging, setIsDragging] = useState(false);
@@ -774,6 +760,19 @@ const Knob = React.memo(({ id, param, value, min, max, step, isLog, onChange, on
 
     const angle = -135 + (percent || 0) * 270;
     const displayName = param.replace(/([A-Z0-9])/g, ' $1').trim();
+
+    const getDotStyle = (val) => {
+        // Clamp visual rotation to exactly 180 degrees away from the knob's base position.
+        // 180 degrees mapped to the 0-1 scale (where 1 unit = 270 deg) is 180/270 = 2/3.
+        const base = percent || 0;
+        const clampedVal = Math.max(base - 2/3, Math.min(base + 2/3, val));
+        return {
+            left: '50%',
+            top: `2px`,
+            transformOrigin: `50% 18px`,
+            transform: `translate(-50%, 0) rotate(${-135 + clampedVal * 270}deg)`
+        };
+    };
 
     return (
         <div className="flex flex-col items-center gap-2 w-16 shrink-0" onContextMenu={onContextMenu}>
