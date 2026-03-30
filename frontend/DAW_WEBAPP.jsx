@@ -510,6 +510,31 @@ const formatAutoName = (track, paramKey) => {
     return paramKey;
 };
 
+const getAutomatableParams = (track, customPluginsList = []) => {
+    const params = [
+        { key: 'volume', label: 'Volume' },
+        { key: 'pan', label: 'Pan' }
+    ];
+    
+    if (track.type === 'midi' && track.instrumentParams) {
+        Object.keys(track.instrumentParams).forEach(k => {
+            if (k !== 'samples' && k !== 'oscType') {
+                const inst = INTERNAL_PLUGINS.find(p => p.id === track.instrument) || customPluginsList.find(p => p.id === track.instrument);
+                params.push({ key: `inst_param_${k}`, label: `${inst ? inst.name : 'Inst'} - ${k.replace(/([A-Z])/g, ' $1').trim()}` });
+            }
+        });
+    }
+    
+    if (track.effects) {
+        track.effects.forEach(fx => {
+            Object.keys(fx.params || {}).forEach(k => {
+                params.push({ key: `fx_param_${fx.id}_${k}`, label: `${fx.name} - ${k.replace(/([A-Z])/g, ' $1').trim()}` });
+            });
+        });
+    }
+    return params;
+};
+
 // ==========================================
 // FULL DSP & WEB AUDIO ENGINE
 // ==========================================
@@ -2820,12 +2845,24 @@ const initAudioEngine = async (explicitTracks = null) => {
                                 if (synth.lastAutoVol !== targetVol) {
                                     synth.faderGain.gain.setTargetAtTime(targetVol, now, 0.05);
                                     synth.lastAutoVol = targetVol;
+                                    
+                                    const f1 = document.getElementById(`vol-fill-arr-${track.id}`);
+                                    const f2 = document.getElementById(`vol-fill-mix-${track.id}`);
+                                    const i1 = document.getElementById(`vol-input-arr-${track.id}`);
+                                    const i2 = document.getElementById(`vol-input-mix-${track.id}`);
+                                    if (f1) f1.style.height = `${val}%`;
+                                    if (f2) f2.style.height = `${val}%`;
+                                    if (i1) i1.value = val;
+                                    if (i2) i2.value = val;
                                 }
                             } else if (paramKey === 'pan' && synth.panner?.pan) {
                                 const targetPan = val / 50;
                                 if (synth.lastAutoPan !== targetPan) {
                                     synth.panner.pan.setTargetAtTime(targetPan, now, 0.05);
                                     synth.lastAutoPan = targetPan;
+                                    
+                                    const panInput = document.getElementById(`pan-input-${track.id}`);
+                                    if (panInput) panInput.value = val;
                                 }
                             } else if (paramKey.startsWith('fx_param_')) {
                                 const parts = paramKey.split('_');
@@ -2836,6 +2873,18 @@ const initAudioEngine = async (explicitTracks = null) => {
                                 if (synth[cacheKey] !== val) {
                                     applyAudioEffectParam(track.id, fxId, pName, val, now);
                                     synth[cacheKey] = val;
+                                    
+                                    const constraints = getParamConstraints(pName);
+                                    const knobRot = document.getElementById(`knob-rot-fx-${track.id}-${fxId}-${pName}`);
+                                    const knobVal = document.getElementById(`knob-val-fx-${track.id}-${fxId}-${pName}`);
+                                    if (knobRot && knobVal) {
+                                        const percent = constraints.isLog 
+                                            ? (Math.log(Math.max(0.001, val)) - Math.log(Math.max(0.001, constraints.min))) / (Math.log(constraints.max) - Math.log(Math.max(0.001, constraints.min)))
+                                            : (val - constraints.min) / (constraints.max - constraints.min);
+                                        const angle = -135 + (percent || 0) * 270;
+                                        knobRot.style.transform = `rotate(${angle}deg)`;
+                                        knobVal.innerText = val >= 1000 ? (val / 1000).toFixed(1) + 'k' : val.toFixed(constraints.step < 1 ? 2 : 0);
+                                    }
                                 }
                             }
                         }
@@ -4335,6 +4384,15 @@ const initAudioEngine = async (explicitTracks = null) => {
                   return { ...t, automation: { ...auto, [action.payload.paramKey]: pts } };
               }));
               break;
+          case 'CLEAR_AUTOMATION':
+              setTracks(prev => prev.map(t => {
+                  if (t.id !== action.payload.trackId) return t;
+                  const auto = { ...(t.automation || {}) };
+                  delete auto[action.payload.paramKey];
+                  const newActive = t.activeAutomationParam === action.payload.paramKey ? null : t.activeAutomationParam;
+                  return { ...t, automation: auto, activeAutomationParam: newActive };
+              }));
+              break;
           case 'DELETE_TRACK': 
               setTracks(prev => prev.filter(t => t.id !== action.payload.id)); 
               disconnectTrackRouting(synthsRef.current[action.payload.id]);
@@ -5717,6 +5775,9 @@ const initAudioEngine = async (explicitTracks = null) => {
                                         })}
                                     </div>
                                 ))}
+                                {isAutomationMode && (
+                                    <div className="h-8 border-b border-neutral-800/50 bg-neutral-900/10 relative pointer-events-none" />
+                                )}
                                 </div>
                             )})}
                         </div>
