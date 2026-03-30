@@ -2753,20 +2753,23 @@ const initAudioEngine = async (explicitTracks = null) => {
                       }
                       if (constraints.step && !constraints.isLog) mappedVal = Math.round(mappedVal / constraints.step) * constraints.step;
 
-                      const cacheKey = `lastLfo_${mapping.fxId}_${mapping.param}`;
+                  const cacheKey = `lastLfo_${mapping.fxId}_${mapping.param}`;
                       if (synth[cacheKey] !== mappedVal) {
                           applyAudioEffectParam(mapping.trackId, mapping.fxId, mapping.param, mappedVal, now);
                           synth[cacheKey] = mappedVal;
 
+                          const basePercent = constraints.isLog 
+                              ? (Math.log(Math.max(0.001, baseVal)) - Math.log(Math.max(0.001, constraints.min))) / (Math.log(constraints.max) - Math.log(Math.max(0.001, constraints.min)))
+                              : (baseVal - constraints.min) / (constraints.max - constraints.min);
+                          
+                          const rawPercent = basePercent + (lfoSwing * mappingSpread * 0.5);
+                          const clampedPercent = Math.max(-1/6, Math.min(7/6, rawPercent));
+                          const angle = -135 + clampedPercent * 270;
+
                           const knobLive = document.getElementById(`knob-live-lfo-fx-${mapping.trackId}-${mapping.fxId}-${mapping.param}`);
-                          if (knobLive) {
-                              const percent = constraints.isLog 
-                                  ? (Math.log(Math.max(0.001, mappedVal)) - Math.log(Math.max(0.001, constraints.min))) / (Math.log(constraints.max) - Math.log(Math.max(0.001, constraints.min)))
-                                  : (mappedVal - constraints.min) / (constraints.max - constraints.min);
-                              const clampedPercent = Math.max(-1/6, Math.min(7/6, percent));
-                              const angle = -135 + clampedPercent * 270;
-                              knobLive.style.transform = `rotate(${angle}deg)`;
-                          }
+                          const knobVal = document.getElementById(`knob-val-fx-${mapping.trackId}-${mapping.fxId}-${mapping.param}`);
+                          if (knobLive) knobLive.style.transform = `rotate(${angle}deg)`;
+                          if (knobVal) knobVal.innerText = mappedVal >= 1000 ? (mappedVal / 1000).toFixed(1) + 'k' : mappedVal.toFixed(constraints.step < 1 ? 2 : 0);
                       }
                   } else if (mapping.type === 'inst_param') {
                       const baseVal = track.instrumentParams?.[mapping.param];
@@ -2794,18 +2797,19 @@ const initAudioEngine = async (explicitTracks = null) => {
                       const cacheKey = `lastLfo_inst_${mapping.param}`;
                       if (synth[cacheKey] !== mappedVal) {
                           synth[cacheKey] = mappedVal;
+
+                          const basePercent = constraints.isLog 
+                              ? (Math.log(Math.max(0.001, baseVal)) - Math.log(Math.max(0.001, constraints.min))) / (Math.log(constraints.max) - Math.log(Math.max(0.001, constraints.min)))
+                              : (baseVal - constraints.min) / (constraints.max - constraints.min);
+                          
+                          const rawPercent = basePercent + (lfoSwing * mappingSpread * 0.5);
+                          const clampedPercent = Math.max(-1/6, Math.min(7/6, rawPercent));
+                          const angle = -135 + clampedPercent * 270;
                           
                           const knobLive = document.getElementById(`knob-live-lfo-inst-${mapping.trackId}-${mapping.param}`);
                           const knobVal = document.getElementById(`knob-val-inst-${mapping.trackId}-${mapping.param}`);
-                          if (knobLive && knobVal) {
-                              const percent = constraints.isLog 
-                                  ? (Math.log(Math.max(0.001, mappedVal)) - Math.log(Math.max(0.001, constraints.min))) / (Math.log(constraints.max) - Math.log(Math.max(0.001, constraints.min)))
-                                  : (mappedVal - constraints.min) / (constraints.max - constraints.min);
-                              const clampedPercent = Math.max(-1/6, Math.min(7/6, percent));
-                              const angle = -135 + clampedPercent * 270;
-                              knobLive.style.transform = `rotate(${angle}deg)`;
-                              knobVal.innerText = mappedVal >= 1000 ? (mappedVal / 1000).toFixed(1) + 'k' : mappedVal.toFixed(constraints.step < 1 ? 2 : 0);
-                          }
+                          if (knobLive) knobLive.style.transform = `rotate(${angle}deg)`;
+                          if (knobVal) knobVal.innerText = mappedVal >= 1000 ? (mappedVal / 1000).toFixed(1) + 'k' : mappedVal.toFixed(constraints.step < 1 ? 2 : 0);
                       }
                   } else if (mapping.type === 'mixer_vol') {
 
@@ -3519,36 +3523,27 @@ const initAudioEngine = async (explicitTracks = null) => {
                               mappedVal = Math.round(mappedVal / constraints.step) * constraints.step;
                           }
                           
-                          if (mapping.type === 'fx_param') {
-                              // Direct DSP & DOM update to move live dot without moving base knob
-                              applyAudioEffectParam(mapping.trackId, mapping.fxId, mapping.param, mappedVal);
-                              const knobLive = document.getElementById(`knob-live-fx-${mapping.trackId}-${mapping.fxId}-${mapping.param}`);
-                              const knobVal = document.getElementById(`knob-val-fx-${mapping.trackId}-${mapping.fxId}-${mapping.param}`);
-                              if (knobLive && knobVal) {
-                                  const percent = constraints.isLog 
-                                      ? (Math.log(Math.max(0.001, mappedVal)) - Math.log(Math.max(0.001, constraints.min))) / (Math.log(constraints.max) - Math.log(Math.max(0.001, constraints.min)))
-                                      : (mappedVal - constraints.min) / (constraints.max - constraints.min);
-                                  const angle = -135 + (percent || 0) * 270;
-                                  knobLive.style.transform = `rotate(${angle}deg)`;
-                                  knobVal.innerText = mappedVal >= 1000 ? (mappedVal / 1000).toFixed(1) + 'k' : mappedVal.toFixed(constraints.step < 1 ? 2 : 0);
-                              }
-                          } else if (mapping.type === 'inst_param') {
-                              const synth = synthsRef.current[mapping.trackId];
-                              if (synth) {
-                                  synth[`lastMidi_inst_${mapping.param}`] = mappedVal;
-                                  const knobLive = document.getElementById(`knob-live-midi-inst-${mapping.trackId}-${mapping.param}`);
-                                  const knobVal = document.getElementById(`knob-val-inst-${mapping.trackId}-${mapping.param}`);
-                                  if (knobLive && knobVal) {
-                                      const percent = constraints.isLog 
-                                          ? (Math.log(Math.max(0.001, mappedVal)) - Math.log(Math.max(0.001, constraints.min))) / (Math.log(constraints.max) - Math.log(Math.max(0.001, constraints.min)))
-                                          : (mappedVal - constraints.min) / (constraints.max - constraints.min);
-                                      const clampedPercent = Math.max(-1/6, Math.min(7/6, percent));
-                                      const angle = -135 + clampedPercent * 270;
-                                      knobLive.style.transform = `rotate(${angle}deg)`;
-                                      knobVal.innerText = mappedVal >= 1000 ? (mappedVal / 1000).toFixed(1) + 'k' : mappedVal.toFixed(constraints.step < 1 ? 2 : 0);
-                                  }
-                              }
-                          }
+                        // For the live indicator, we use normalizedVal (the un-clamped percentage) 
+                        // so the dot can visibly rotate past the knob's standard bounds.
+                        const rawPercent = normalizedVal;
+                        const clampedPercent = Math.max(-1/6, Math.min(7/6, rawPercent));
+                        const angle = -135 + clampedPercent * 270;
+
+                        if (mapping.type === 'fx_param') {
+                            applyAudioEffectParam(mapping.trackId, mapping.fxId, mapping.param, mappedVal);
+                            const knobLive = document.getElementById(`knob-live-midi-fx-${mapping.trackId}-${mapping.fxId}-${mapping.param}`);
+                            const knobVal = document.getElementById(`knob-val-fx-${mapping.trackId}-${mapping.fxId}-${mapping.param}`);
+                            if (knobLive) knobLive.style.transform = `rotate(${angle}deg)`;
+                            if (knobVal) knobVal.innerText = mappedVal >= 1000 ? (mappedVal / 1000).toFixed(1) + 'k' : mappedVal.toFixed(constraints.step < 1 ? 2 : 0);
+                        } else if (mapping.type === 'inst_param') {
+                            const synth = synthsRef.current[mapping.trackId];
+                            if (synth) synth[`lastMidi_inst_${mapping.param}`] = mappedVal;
+                            
+                            const knobLive = document.getElementById(`knob-live-midi-inst-${mapping.trackId}-${mapping.param}`);
+                            const knobVal = document.getElementById(`knob-val-inst-${mapping.trackId}-${mapping.param}`);
+                            if (knobLive) knobLive.style.transform = `rotate(${angle}deg)`;
+                            if (knobVal) knobVal.innerText = mappedVal >= 1000 ? (mappedVal / 1000).toFixed(1) + 'k' : mappedVal.toFixed(constraints.step < 1 ? 2 : 0);
+                        }
                       }
                   });
                   return; 
