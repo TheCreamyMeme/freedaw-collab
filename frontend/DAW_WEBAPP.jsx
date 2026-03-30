@@ -2796,16 +2796,19 @@ const initAudioEngine = async (explicitTracks = null) => {
                           synth[cacheKey] = mappedVal;
                           
                           const knobLive = document.getElementById(`knob-live-lfo-inst-${mapping.trackId}-${mapping.param}`);
-                          if (knobLive) {
+                          const knobVal = document.getElementById(`knob-val-inst-${mapping.trackId}-${mapping.param}`);
+                          if (knobLive && knobVal) {
                               const percent = constraints.isLog 
                                   ? (Math.log(Math.max(0.001, mappedVal)) - Math.log(Math.max(0.001, constraints.min))) / (Math.log(constraints.max) - Math.log(Math.max(0.001, constraints.min)))
                                   : (mappedVal - constraints.min) / (constraints.max - constraints.min);
                               const clampedPercent = Math.max(-1/6, Math.min(7/6, percent));
                               const angle = -135 + clampedPercent * 270;
                               knobLive.style.transform = `rotate(${angle}deg)`;
+                              knobVal.innerText = mappedVal >= 1000 ? (mappedVal / 1000).toFixed(1) + 'k' : mappedVal.toFixed(constraints.step < 1 ? 2 : 0);
                           }
                       }
                   } else if (mapping.type === 'mixer_vol') {
+
 
                       const baseVal = track.volume / 100;
                       let mappedVal = baseVal + (lfoSwing * 0.5); // Full depth = +/- 50% volume
@@ -3530,17 +3533,17 @@ const initAudioEngine = async (explicitTracks = null) => {
                                   knobVal.innerText = mappedVal >= 1000 ? (mappedVal / 1000).toFixed(1) + 'k' : mappedVal.toFixed(constraints.step < 1 ? 2 : 0);
                               }
                           } else if (mapping.type === 'inst_param') {
-                              // Cache MIDI value on synth object for next note trigger
                               const synth = synthsRef.current[mapping.trackId];
                               if (synth) {
                                   synth[`lastMidi_inst_${mapping.param}`] = mappedVal;
-                                  const knobLive = document.getElementById(`knob-live-inst-${mapping.trackId}-${mapping.param}`);
+                                  const knobLive = document.getElementById(`knob-live-midi-inst-${mapping.trackId}-${mapping.param}`);
                                   const knobVal = document.getElementById(`knob-val-inst-${mapping.trackId}-${mapping.param}`);
                                   if (knobLive && knobVal) {
                                       const percent = constraints.isLog 
                                           ? (Math.log(Math.max(0.001, mappedVal)) - Math.log(Math.max(0.001, constraints.min))) / (Math.log(constraints.max) - Math.log(Math.max(0.001, constraints.min)))
                                           : (mappedVal - constraints.min) / (constraints.max - constraints.min);
-                                      const angle = -135 + (percent || 0) * 270;
+                                      const clampedPercent = Math.max(-1/6, Math.min(7/6, percent));
+                                      const angle = -135 + clampedPercent * 270;
                                       knobLive.style.transform = `rotate(${angle}deg)`;
                                       knobVal.innerText = mappedVal >= 1000 ? (mappedVal / 1000).toFixed(1) + 'k' : mappedVal.toFixed(constraints.step < 1 ? 2 : 0);
                                   }
