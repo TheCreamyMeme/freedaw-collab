@@ -549,14 +549,12 @@ const getBitcrusherCurve = (bitDepth) => {
 };
 
 const getDotStyle = (val) => {
-    let radius = 18;
-    // Push the dot outward visually if the mapping extends beyond 0 or 1
-    if (val < 0) radius += (-val) * 12;
-    if (val > 1) radius += (val - 1) * 12;
+    // Keep the radius fixed so dots travel on the same circular track
+    // instead of spiraling outwards when going past bounds.
     return {
         left: '50%',
-        top: `${20 - radius}px`,
-        transformOrigin: `50% ${radius}px`,
+        top: `2px`,
+        transformOrigin: `50% 18px`,
         transform: `translate(-50%, 0) rotate(${-135 + val * 270}deg)`
     };
 };
