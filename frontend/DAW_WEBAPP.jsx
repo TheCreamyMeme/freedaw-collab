@@ -549,13 +549,15 @@ const getBitcrusherCurve = (bitDepth) => {
 };
 
 const getDotStyle = (val) => {
-    // Keep the radius fixed so dots travel on the same circular track
-    // instead of spiraling outwards when going past bounds.
+    // Keep the radius fixed so dots travel on the same circular track.
+    // Clamp to a 360-degree visual span so it doesn't wrap around multiple times.
+    // 0 is -135 deg, 1 is +135 deg. Max limits are -180 deg (-1/6) and +180 deg (7/6).
+    const clampedVal = Math.max(-1/6, Math.min(7/6, val));
     return {
         left: '50%',
         top: `2px`,
         transformOrigin: `50% 18px`,
-        transform: `translate(-50%, 0) rotate(${-135 + val * 270}deg)`
+        transform: `translate(-50%, 0) rotate(${-135 + clampedVal * 270}deg)`
     };
 };
 
