@@ -799,14 +799,28 @@ const Knob = React.memo(({ id, param, value, min, max, step, isLog, onChange, on
         };
     };
 
-    // Initialize un-tracked live dots to the knob's base angle so they don't start at 0 deg
+    const prevAngleRef = useRef(angle);
+
+    // Keep live dots synced relative to the base knob during manual adjustments (even when paused).
     useEffect(() => {
-        const midiEl = document.getElementById(id ? `knob-live-midi-${id}` : '');
-        if (midiEl && !midiEl.style.transform) midiEl.style.transform = `rotate(${angle}deg)`;
-        
-        const lfoEl = document.getElementById(id ? `knob-live-lfo-${id}` : '');
-        if (lfoEl && !lfoEl.style.transform) lfoEl.style.transform = `rotate(${angle}deg)`;
-    });
+        const delta = angle - prevAngleRef.current;
+        prevAngleRef.current = angle;
+
+        ['midi', 'lfo'].forEach(type => {
+            const el = document.getElementById(id ? `knob-live-${type}-${id}` : '');
+            if (el) {
+                if (!el.style.transform) {
+                    el.style.transform = `rotate(${angle}deg)`;
+                } else if (delta !== 0) {
+                    const match = el.style.transform.match(/rotate\(([-\d.]+)deg\)/);
+                    if (match) {
+                        const currentAngle = parseFloat(match[1]);
+                        el.style.transform = `rotate(${currentAngle + delta}deg)`;
+                    }
+                }
+            }
+        });
+    }, [angle, id]);
 
     return (
         <div className="flex flex-col items-center gap-2 w-16 shrink-0" onContextMenu={onContextMenu}>
