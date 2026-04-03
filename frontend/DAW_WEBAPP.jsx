@@ -1992,11 +1992,11 @@ function DAWStudio() {
   useEffect(() => {
     const style = document.createElement('style');
     style.innerHTML = `
-      .custom-scrollbar { scrollbar-width: thin; scrollbar-color: #4b5563 transparent; }
-      .custom-scrollbar::-webkit-scrollbar { width: 14px; height: 14px; }
-      .custom-scrollbar::-webkit-scrollbar-track { background: rgba(0, 0, 0, 0.15); border-radius: 8px; border: 4px solid transparent; background-clip: padding-box; }
-      .custom-scrollbar::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 8px; border: 4px solid transparent; background-clip: padding-box; }
-      .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #6b7280; border: 4px solid transparent; background-clip: padding-box; }
+      .custom-scrollbar { scrollbar-width: thin; scrollbar-color: #3f3f46 transparent; }
+      .custom-scrollbar::-webkit-scrollbar { width: 12px; height: 12px; }
+      .custom-scrollbar::-webkit-scrollbar-track { background: rgba(0, 0, 0, 0.2); border-radius: 8px; border: 3px solid transparent; background-clip: padding-box; }
+      .custom-scrollbar::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 8px; border: 3px solid transparent; background-clip: padding-box; }
+      .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #52525b; border: 3px solid transparent; background-clip: padding-box; }
       .custom-scrollbar::-webkit-scrollbar-corner { background: transparent; }
     `;
     document.head.appendChild(style);
@@ -2722,7 +2722,11 @@ const initAudioEngine = async (explicitTracks = null) => {
               let out = 0.5;
               if (lfo.type === 'sine') out = (Math.sin(phase * Math.PI * 2) + 1) / 2;
               else if (lfo.type === 'square') out = phase < 0.5 ? 1 : 0;
-              else if (lfo.type === 'triangle') out = phase < 0.5 ? phase * 2 : 2 - (phase * 2);
+              else if (lfo.type === 'triangle') {
+                  if (phase < 0.25) out = 0.5 + (phase * 2);
+                  else if (phase < 0.75) out = 1.0 - ((phase - 0.25) * 2);
+                  else out = (phase - 0.75) * 2;
+              }
               else if (lfo.type === 'sawtooth') out = phase;
               else if (lfo.type === 'stepped') {
                   const stepIdx = Math.floor(phase * (lfo.steps?.length || 8));
@@ -5226,7 +5230,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                 e.preventDefault(); 
             }
         }}
-        className="flex flex-col h-screen bg-neutral-900 text-neutral-300 font-sans select-none outline-none"
+        className="flex flex-col h-screen bg-[#0a0a0a] text-neutral-300 font-sans select-none outline-none"
     >
       
       {/* Loading Overlay */}
@@ -5246,7 +5250,7 @@ const initAudioEngine = async (explicitTracks = null) => {
         </div>
       )}
 
-      <header className="h-14 bg-neutral-950 border-b border-neutral-800 flex items-center justify-between px-4 shrink-0 z-40 relative overflow-x-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+      <header className="h-14 bg-gradient-to-b from-neutral-900 to-neutral-950 border-b border-neutral-800/80 flex items-center justify-between px-4 shrink-0 z-40 relative shadow-md overflow-x-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
         <div className="flex items-center gap-2 lg:gap-4 flex-1 min-w-0 justify-start">
             <button onClick={() => { loadProjects(authTokenRef.current); setAppView('home'); }} className="text-neutral-400 hover:text-white transition-colors shrink-0" title="Back to Library"><Home size={18} /></button>
             <div className="flex flex-col justify-center shrink-0">
@@ -5260,12 +5264,12 @@ const initAudioEngine = async (explicitTracks = null) => {
         </div>
 
         
-        <div className="flex items-center justify-center gap-1 sm:gap-1.5 bg-neutral-900 px-2 sm:px-3 py-1.5 rounded-xl border border-neutral-800 shrink-0 shadow-inner mx-2 lg:mx-4">
-            <button onClick={() => transportActionsRef.current.rewind?.()} onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'transport_rewind' })} className="p-1.5 text-neutral-400 hover:text-white transition-colors" title="Return to Start"><SkipBack size={16} /></button>
-            <button onClick={togglePlay} onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'transport_play' })} className={`p-2 rounded-full transition-all ${isPlaying ? 'bg-blue-600 text-white shadow-[0_0_12px_rgba(37,99,235,0.5)]' : 'bg-neutral-800 text-white hover:bg-neutral-700'}`} title="Play/Pause">{isPlaying ? <Pause size={16}/> : <Play size={16}/>}</button>
-            <button onClick={stopPlayback} onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'transport_stop' })} className="p-1.5 text-neutral-400 hover:text-white transition-colors" title="Stop"><Square size={16}/></button>
-            <button onClick={() => transportActionsRef.current.forward?.()} onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'transport_forward' })} className="p-1.5 text-neutral-400 hover:text-white transition-colors" title="Forward"><SkipForward size={16} /></button>
-            <button onClick={toggleRecord} onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'transport_record' })} className={`p-1.5 rounded-lg transition-colors ml-1 ${isRecording ? 'text-red-500 bg-red-500/20 shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'text-neutral-400 hover:text-red-400 hover:bg-neutral-800'}`} title="Record (Keyboard/Mic)"><Circle size={16} fill="currentColor"/></button>
+        <div className="flex items-center justify-center gap-1 sm:gap-1.5 bg-[#121212] px-2 sm:px-3 py-1.5 rounded-2xl border border-neutral-800/80 shrink-0 shadow-[inset_0_2px_4px_rgba(0,0,0,0.2)] mx-2 lg:mx-4">
+            <button onClick={() => transportActionsRef.current.rewind?.()} onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'transport_rewind' })} className="p-1.5 text-neutral-400 hover:text-white hover:bg-white/5 rounded-lg transition-all" title="Return to Start"><SkipBack size={16} /></button>
+            <button onClick={togglePlay} onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'transport_play' })} className={`p-2 rounded-full transition-all duration-300 ${isPlaying ? 'bg-blue-500 text-white shadow-[0_0_16px_rgba(59,130,246,0.6)] scale-105' : 'bg-neutral-800 text-white hover:bg-neutral-700 hover:scale-105'}`} title="Play/Pause">{isPlaying ? <Pause size={16} className="animate-pulse"/> : <Play size={16} className="ml-0.5"/>}</button>
+            <button onClick={stopPlayback} onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'transport_stop' })} className="p-1.5 text-neutral-400 hover:text-white hover:bg-white/5 rounded-lg transition-all" title="Stop"><Square size={16}/></button>
+            <button onClick={() => transportActionsRef.current.forward?.()} onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'transport_forward' })} className="p-1.5 text-neutral-400 hover:text-white hover:bg-white/5 rounded-lg transition-all" title="Forward"><SkipForward size={16} /></button>
+            <button onClick={toggleRecord} onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'transport_record' })} className={`p-1.5 rounded-xl transition-all duration-300 ml-1 ${isRecording ? 'text-red-500 bg-red-500/20 shadow-[0_0_12px_rgba(239,68,68,0.4)] scale-105' : 'text-neutral-400 hover:text-red-400 hover:bg-neutral-800'}`} title="Record (Keyboard/Mic)"><Circle size={16} fill="currentColor"/></button>
             <div className="w-px h-5 bg-neutral-800 mx-2" />
             <button onClick={() => {
                 const nextEnabled = !loopRegion.enabled;
@@ -5333,11 +5337,11 @@ const initAudioEngine = async (explicitTracks = null) => {
 
       <div className="flex flex-1 overflow-hidden relative">
         {/* Left Toolbar */}
-        <div className="w-12 bg-neutral-950 border-r border-neutral-800 flex flex-col items-center py-4 gap-4 z-20 shadow-[4px_0_15px_rgba(0,0,0,0.3)]">
-          <button onClick={() => setActiveView('arrangement')} className={`p-2 rounded-lg transition-all ${activeView==='arrangement'?'bg-blue-500/20 text-blue-400':'text-neutral-500 hover:text-white'}`} title="Arrangement View"><Grid size={20}/></button>
-          <button onClick={() => setActiveView('mixer')} className={`p-2 rounded-lg transition-all ${activeView==='mixer'?'bg-blue-500/20 text-blue-400':'text-neutral-500 hover:text-white'}`} title="Mixer Console"><Sliders size={20}/></button>
-          <button onClick={() => setActiveView('lfos')} className={`p-2 rounded-lg transition-all ${activeView==='lfos'?'bg-purple-500/20 text-purple-400':'text-neutral-500 hover:text-white'}`} title="LFO Rack"><Activity size={20}/></button>
-          <button onClick={() => setActiveView('browser')} className={`p-2 rounded-lg transition-all mt-auto ${activeView==='browser'?'bg-blue-500/20 text-blue-400':'text-neutral-500 hover:text-white'}`} title="Plugin Browser"><Folder size={20}/></button>
+        <div className="w-14 bg-neutral-950 border-r border-neutral-800/60 flex flex-col items-center py-4 gap-4 z-20 shadow-[4px_0_20px_rgba(0,0,0,0.4)]">
+          <button onClick={() => setActiveView('arrangement')} className={`p-2.5 rounded-xl transition-all duration-300 ${activeView==='arrangement'?'bg-blue-500/20 text-blue-400 shadow-[0_0_12px_rgba(59,130,246,0.3)] scale-105':'text-neutral-500 hover:bg-neutral-800 hover:text-white'}`} title="Arrangement View"><Grid size={20}/></button>
+          <button onClick={() => setActiveView('mixer')} className={`p-2.5 rounded-xl transition-all duration-300 ${activeView==='mixer'?'bg-blue-500/20 text-blue-400 shadow-[0_0_12px_rgba(59,130,246,0.3)] scale-105':'text-neutral-500 hover:bg-neutral-800 hover:text-white'}`} title="Mixer Console"><Sliders size={20}/></button>
+          <button onClick={() => setActiveView('lfos')} className={`p-2.5 rounded-xl transition-all duration-300 ${activeView==='lfos'?'bg-purple-500/20 text-purple-400 shadow-[0_0_12px_rgba(168,85,247,0.3)] scale-105':'text-neutral-500 hover:bg-neutral-800 hover:text-white'}`} title="LFO Rack"><Activity size={20}/></button>
+          <button onClick={() => setActiveView('browser')} className={`p-2.5 rounded-xl transition-all duration-300 mt-auto ${activeView==='browser'?'bg-blue-500/20 text-blue-400 shadow-[0_0_12px_rgba(59,130,246,0.3)] scale-105':'text-neutral-500 hover:bg-neutral-800 hover:text-white'}`} title="Plugin Browser"><Folder size={20}/></button>
         </div>
 
         {/* Main Content Area */}
@@ -5514,7 +5518,7 @@ const initAudioEngine = async (explicitTracks = null) => {
         ) : activeView === 'lfos' ? (
           <div className="flex-1 bg-neutral-900 flex p-4 gap-4 overflow-x-auto relative custom-scrollbar pb-6 items-start content-start">
              {lfos.map(lfo => (
-                <div key={lfo.id} className="min-w-[16rem] max-w-sm h-full max-h-[400px] bg-neutral-950 border border-neutral-800 rounded-xl p-5 flex flex-col shrink-0 shadow-lg relative group">
+                <div key={lfo.id} className="min-w-[16rem] max-w-sm h-full max-h-[400px] bg-[#111] border border-neutral-800/80 rounded-2xl p-5 flex flex-col shrink-0 shadow-[0_8px_30px_rgba(0,0,0,0.4)] relative group hover:border-neutral-700 transition-colors">
                     <div className="flex justify-between items-center mb-4 border-b border-neutral-800 pb-3 shrink-0">
                        <div className="flex items-center gap-2">
                           <Activity size={14} className="text-purple-400" />
@@ -5562,32 +5566,74 @@ const initAudioEngine = async (explicitTracks = null) => {
                     <div className="relative w-full h-12 bg-black border border-neutral-800 rounded-lg overflow-hidden mt-4 shrink-0 shadow-inner">
                         <div id={`lfo-vis-dot-${lfo.id}`} className="absolute w-3 h-3 bg-purple-500 rounded-full shadow-[0_0_10px_#a855f7] -ml-1.5 -mt-1.5 z-10" style={{ left: '0%', top: '50%' }} />
                         <div className="absolute inset-y-0 left-0 w-full flex items-center pointer-events-none">
-                            {lfo.type === 'sine' && <svg width="100%" height="100%" preserveAspectRatio="none" viewBox="0 0 100 100"><path d="M0,50 Q25,0 50,50 T100,50" fill="none" stroke="#a855f7" strokeWidth="2" opacity="0.3"/></svg>}
+                            {lfo.type === 'sine' && <svg width="100%" height="100%" preserveAspectRatio="none" viewBox="0 0 100 100"><path d="M0,50 L5,34.5 L10,20.6 L15,9.5 L20,2.4 L25,0 L30,2.4 L35,9.5 L40,20.6 L45,34.5 L50,50 L55,65.5 L60,79.4 L65,90.5 L70,97.6 L75,100 L80,97.6 L85,90.5 L90,79.4 L95,65.5 L100,50" fill="none" stroke="#a855f7" strokeWidth="2" opacity="0.3"/></svg>}
                             {lfo.type === 'triangle' && <svg width="100%" height="100%" preserveAspectRatio="none" viewBox="0 0 100 100"><path d="M0,50 L25,0 L75,100 L100,50" fill="none" stroke="#a855f7" strokeWidth="2" opacity="0.3"/></svg>}
                             {lfo.type === 'square' && <svg width="100%" height="100%" preserveAspectRatio="none" viewBox="0 0 100 100"><path d="M0,0 L50,0 L50,100 L100,100" fill="none" stroke="#a855f7" strokeWidth="2" opacity="0.3"/></svg>}
                             {lfo.type === 'sawtooth' && <svg width="100%" height="100%" preserveAspectRatio="none" viewBox="0 0 100 100"><path d="M0,100 L100,0 V100" fill="none" stroke="#a855f7" strokeWidth="2" opacity="0.3"/></svg>}
-                            {lfo.type === 'stepped' && <svg width="100%" height="100%" preserveAspectRatio="none" viewBox="0 0 100 100"><path d="M0,50 L100,50" fill="none" stroke="#a855f7" strokeWidth="2" opacity="0.3" strokeDasharray="5,5"/></svg>}
+                            {lfo.type === 'stepped' && (
+                                <svg width="100%" height="100%" preserveAspectRatio="none" viewBox="0 0 100 100">
+                                    <path d={(lfo.steps || [0.5,0.5,0.5,0.5,0.5,0.5,0.5,0.5]).reduce((acc, val, i, arr) => {
+                                        const w = 100 / arr.length;
+                                        const x1 = i * w;
+                                        const x2 = (i + 1) * w;
+                                        const y = 100 - (val * 100);
+                                        return acc + (i === 0 ? `M${x1},${y} L${x2},${y}` : ` L${x1},${y} L${x2},${y}`);
+                                    }, '')} fill="none" stroke="#a855f7" strokeWidth="2" opacity="0.4"/>
+                                </svg>
+                            )}
                         </div>
                     </div>
 
                     {lfo.type === 'stepped' && (
-                        <div className="flex flex-1 gap-1 min-h-[80px] mt-6 items-end justify-between bg-neutral-900 rounded-lg p-2 border border-neutral-800">
-                            {(lfo.steps || [0.5,0.5,0.5,0.5,0.5,0.5,0.5,0.5]).map((val, i) => (
-                                <input 
-                                    key={i} 
-                                    type="range" 
-                                    orient="vertical" 
-                                    min="0" max="1" step="0.01" 
-                                    value={val}
-                                    onChange={e => {
-                                        const newSteps = [...(lfo.steps || [0.5,0.5,0.5,0.5,0.5,0.5,0.5,0.5])];
-                                        newSteps[i] = Number(e.target.value);
-                                        dispatchDawAction({ type: 'UPDATE_LFO', payload: { id: lfo.id, updates: { steps: newSteps } } });
-                                    }}
-                                    className="w-full h-full appearance-none bg-neutral-950 rounded-full outline-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:h-2 [&::-webkit-slider-thumb]:w-full [&::-webkit-slider-thumb]:bg-purple-400 cursor-pointer hover:[&::-webkit-slider-thumb]:bg-purple-300 transition-colors shadow-inner" 
-                                    style={{ WebkitAppearance: 'slider-vertical' }} 
-                                />
-                            ))}
+                        <div className="flex flex-col gap-2 mt-4 shrink-0">
+                            <div className="flex justify-between items-center px-1">
+                                <span className="text-[10px] text-neutral-400 font-bold uppercase tracking-wider">Step Sequencer</span>
+                                <div className="flex items-center gap-2">
+                                    <span className="text-[9px] text-neutral-500 font-bold uppercase">Steps:</span>
+                                    <select 
+                                        value={(lfo.steps || []).length || 8}
+                                        onChange={(e) => {
+                                            const newLen = Number(e.target.value);
+                                            const current = lfo.steps || [0.5,0.5,0.5,0.5,0.5,0.5,0.5,0.5];
+                                            let next = [...current];
+                                            if (newLen > current.length) {
+                                                next = [...current, ...Array(newLen - current.length).fill(0.5)];
+                                            } else if (newLen < current.length) {
+                                                next = current.slice(0, newLen);
+                                            }
+                                            dispatchDawAction({ type: 'UPDATE_LFO', payload: { id: lfo.id, updates: { steps: next } } });
+                                        }}
+                                        className="bg-neutral-900 border border-neutral-700 rounded px-1.5 py-0.5 text-[10px] text-white outline-none cursor-pointer"
+                                    >
+                                        <option value={4}>4</option>
+                                        <option value={8}>8</option>
+                                        <option value={12}>12</option>
+                                        <option value={16}>16</option>
+                                        <option value={32}>32</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div className="flex flex-1 gap-1 min-h-[90px] items-end justify-between bg-neutral-900 rounded-xl p-3 border border-neutral-800 shadow-inner">
+                                {(lfo.steps || [0.5,0.5,0.5,0.5,0.5,0.5,0.5,0.5]).map((val, i) => (
+                                    <div key={i} className="relative w-full h-full bg-neutral-950 rounded-full shadow-inner flex flex-col justify-end group">
+                                        <div className="absolute bottom-0 w-full bg-gradient-to-t from-purple-600/30 to-purple-400/50 rounded-full pointer-events-none transition-all duration-75" style={{ height: `${val * 100}%` }} />
+                                        <div className="absolute bottom-0 w-full h-2 bg-purple-400 rounded-full shadow-[0_0_8px_rgba(192,132,252,0.9)] pointer-events-none transition-all duration-75 group-hover:bg-purple-300 group-hover:scale-y-110" style={{ bottom: `calc(${val * 100}% - 4px)` }} />
+                                        <input 
+                                            type="range" 
+                                            orient="vertical" 
+                                            min="0" max="1" step="0.01" 
+                                            value={val}
+                                            onChange={e => {
+                                                const newSteps = [...(lfo.steps || [0.5,0.5,0.5,0.5,0.5,0.5,0.5,0.5])];
+                                                newSteps[i] = Number(e.target.value);
+                                                dispatchDawAction({ type: 'UPDATE_LFO', payload: { id: lfo.id, updates: { steps: newSteps } } });
+                                            }}
+                                            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" 
+                                            style={{ WebkitAppearance: 'slider-vertical' }} 
+                                        />
+                                    </div>
+                                ))}
+                            </div>
                         </div>
                     )}
                 </div>
@@ -5618,7 +5664,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                             const autoKeys = isAutomationMode ? Array.from(new Set([...Object.keys(t.automation || {}).filter(k => t.automation[k]?.length > 0), t.activeAutomationParam].filter(Boolean))) : [];
                             return (
                             <div key={t.id} className="flex flex-col w-full">
-                            <div onClick={() => dispatchPresence(t.id)} onContextMenu={(e) => handleContextMenu(e, 'track', { trackId: t.id })} className={`h-24 border-b border-neutral-800 p-2 flex flex-col justify-between hover:bg-neutral-800/50 relative transition-colors ${bottomDock?.trackId === t.id && bottomDock?.type === 'devices' ? 'bg-neutral-800/40 border-l-2 border-l-blue-500' : ''}`}>
+                            <div onClick={() => dispatchPresence(t.id)} onContextMenu={(e) => handleContextMenu(e, 'track', { trackId: t.id })} className={`h-24 border-b border-neutral-800/60 p-2 flex flex-col justify-between hover:bg-neutral-800/40 relative transition-all duration-200 ${bottomDock?.trackId === t.id && bottomDock?.type === 'devices' ? 'bg-neutral-800/60 border-l-[3px] border-l-blue-500 shadow-[inset_4px_0_12px_rgba(59,130,246,0.1)]' : 'border-l-[3px] border-l-transparent'}`}>
                                 {isPeered && <div className={`absolute left-0 top-0 bottom-0 w-1 shadow-[0_0_8px_rgba(255,255,255,0.3)] ${isPeered.color || 'bg-blue-500'}`} title={`${isPeered.username} is active`} />}
                                 <div className="flex justify-between items-center">
                                     <div className="flex items-center gap-2 pl-1">
@@ -5749,7 +5795,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                                               const sliceBeat = snap(x / BEAT_WIDTH);
                                               handleContextMenu(e, 'clip', { trackId: t.id, clipId: c.id, sliceBeat });
                                           }}
-                                          className={`clip-element absolute top-2 bottom-2 rounded border overflow-hidden cursor-grab active:cursor-grabbing bg-gradient-to-br ${TRACK_COLOR_GRADIENTS[t.color] || 'from-blue-500/80 to-blue-500/40'} shadow-lg transition-all ${selectedClipIds.includes(c.id) ? 'border-white ring-2 ring-white/60 brightness-125 z-40' : 'border-white/20 hover:brightness-110 z-10'}`} 
+                                          className={`clip-element absolute top-1.5 bottom-1.5 rounded-md border overflow-hidden cursor-grab active:cursor-grabbing bg-gradient-to-br ${TRACK_COLOR_GRADIENTS[t.color] || 'from-blue-500/80 to-blue-500/40'} shadow-md transition-all ${selectedClipIds.includes(c.id) ? 'border-white ring-2 ring-white/40 brightness-125 z-40' : 'border-white/10 hover:border-white/30 hover:brightness-110 z-10'}`} 
                                           style={{ left: `${c.start * BEAT_WIDTH}px`, width: `${c.duration * BEAT_WIDTH}px`, zIndex: draggingClip?.clipId === c.id || selectedClipIds.includes(c.id) ? 50 : 10 }}
                                         >
                                             {/* Resize Handles */}
