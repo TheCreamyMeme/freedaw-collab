@@ -5547,10 +5547,15 @@ const initAudioEngine = async (explicitTracks = null) => {
                         {lfo.type === 'stepped' && (
                             <div className="flex flex-col gap-2 w-24 shrink-0">
                                 <label className="text-[9px] text-neutral-500 font-bold uppercase tracking-wider">Steps</label>
-                                <select 
+                                <input 
+                                    type="number"
+                                    min="2"
+                                    max="128"
                                     value={(lfo.steps || []).length || 8}
                                     onChange={(e) => {
-                                        const newLen = Number(e.target.value);
+                                        let newLen = Math.floor(Number(e.target.value));
+                                        if (newLen < 2) newLen = 2;
+                                        if (newLen > 128) newLen = 128;
                                         const current = lfo.steps || [0.5,0.5,0.5,0.5,0.5,0.5,0.5,0.5];
                                         let next = [...current];
                                         if (newLen > current.length) {
@@ -5560,14 +5565,8 @@ const initAudioEngine = async (explicitTracks = null) => {
                                         }
                                         dispatchDawAction({ type: 'UPDATE_LFO', payload: { id: lfo.id, updates: { steps: next } } });
                                     }}
-                                    className="w-full bg-neutral-900 border border-neutral-700 rounded-lg p-2 text-xs text-white outline-none focus:border-purple-500 cursor-pointer"
-                                >
-                                    <option value={4}>4</option>
-                                    <option value={8}>8</option>
-                                    <option value={12}>12</option>
-                                    <option value={16}>16</option>
-                                    <option value={32}>32</option>
-                                </select>
+                                    className="w-full bg-neutral-900 border border-neutral-700 rounded-lg p-2 text-xs text-white outline-none focus:border-purple-500"
+                                />
                             </div>
                         )}
                     </div>
