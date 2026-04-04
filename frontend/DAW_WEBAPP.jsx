@@ -1006,8 +1006,9 @@ const createFXNode = async (ctx, fx) => {
     for (let i = 0; i < 44100; ++i) { const x = (i * 2) / 44100 - 1; curve[i] = ((3 + amount) * x * 20 * deg) / (Math.PI + amount * Math.abs(x)); }
     node.curve = curve; node.oversample = '4x';
     const filter = ctx.createBiquadFilter(); filter.type = 'lowpass'; filter.frequency.value = fx.params?.tone || 4000;
-    input.connect(node); node.connect(filter); filter.connect(wet); wet.connect(output);
-    return { input, output, node, filter, wet, dry, fxType: 'distortion' };
+    const dcBlocker = ctx.createBiquadFilter(); dcBlocker.type = 'highpass'; dcBlocker.frequency.value = 30; // Kill sub-rumble
+    input.connect(node); node.connect(filter); filter.connect(dcBlocker); dcBlocker.connect(wet); wet.connect(output);
+    return { input, output, node, filter, dcBlocker, wet, dry, fxType: 'distortion' };
   } else if (fx.type === 'chorus') {
     const delay = ctx.createDelay(); delay.delayTime.value = fx.params?.delayTime || 0.03;
     const osc = ctx.createOscillator(); osc.type = 'sine'; osc.frequency.value = fx.params?.rate || 1.5;
@@ -1169,7 +1170,8 @@ const ParametricEqVisualizer = React.memo(({ trackId, fxId, params, onParamChang
                 
                 // Suppress DC offset / ghost low-end noise floor when idle
                 let hasSignal = false;
-                for(let i=1; i<bufferLength; i++) if(dataArray[i] > 5) { hasSignal = true; break; }
+                // Ignore the first few subsonic bins (DC offset) and raise threshold slightly to cut denormal noise
+                for(let i=3; i<bufferLength; i++) if(dataArray[i] > 8) { hasSignal = true; break; }
                 if (!hasSignal) dataArray.fill(0);
                 
                 ctx.fillStyle = 'rgba(6, 182, 212, 0.4)';
@@ -1240,20 +1242,22 @@ const triggerSubtractive = (ctx, bus, pitch, time, vol, dur, p={}, vel=100, pbNo
   filter.frequency.exponentialRampToValueAtTime(100, time + dur);
   env.gain.setValueAtTime(0, time); env.gain.linearRampToValueAtTime(realVol, time + (p.attack||0.01));
   env.gain.setValueAtTime(realVol, time + dur); env.gain.exponentialRampToValueAtTime(0.001, time + dur + (p.release||0.1));
+  env.gain.linearRampToValueAtTime(0, time + dur + (p.release||0.1) + 0.01);
   osc.connect(filter); filter.connect(env); env.connect(bus);
-  osc.start(time); osc.stop(time + dur + (p.release||0.1));
+  osc.start(time); osc.stop(time + dur + (p.release||0.1) + 0.02);
 };
 
 const triggerSupersaw = (ctx, bus, pitch, time, vol, dur, p={}, vel=100, pbNode) => {
   const env = ctx.createGain(); const safeVol = vol * 0.3 * (vel / 127);
   env.gain.setValueAtTime(0, time); env.gain.linearRampToValueAtTime(safeVol, time + (p.attack||0.05));
   env.gain.setValueAtTime(safeVol, time + dur); env.gain.exponentialRampToValueAtTime(0.001, time + dur + (p.release||0.5));
+  env.gain.linearRampToValueAtTime(0, time + dur + (p.release||0.5) + 0.01);
   const count = 5; const baseFreq = 440 * Math.pow(2, (pitch - 69) / 12);
   for(let i=0; i<count; i++) {
       const osc = ctx.createOscillator(); osc.type = 'sawtooth';
       osc.frequency.setValueAtTime(baseFreq, time); osc.detune.setValueAtTime((p.detune||25) * ((i/(count-1))*2-1), time);
       if (pbNode) pbNode.connect(osc.detune);
-      osc.connect(env); osc.start(time); osc.stop(time + dur + (p.release||0.5));
+      osc.connect(env); osc.start(time); osc.stop(time + dur + (p.release||0.5) + 0.02);
   }
   env.connect(bus);
 };
@@ -1267,6 +1271,7 @@ const triggerFMSynth = (ctx, bus, pitch, time, vol, dur, p={}, vel=100, pbNode) 
   modGain.gain.setValueAtTime(freq * (p.modIndex||5) * (vel/100), time);
   env.gain.setValueAtTime(0, time); env.gain.linearRampToValueAtTime(realVol, time + (p.attack||0.01));
   env.gain.setValueAtTime(realVol, time + dur); env.gain.exponentialRampToValueAtTime(0.001, time + dur + (p.release||0.2));
+  env.gain.linearRampToValueAtTime(0, time + dur + (p.release||0.2) + 0.01);
   mod.connect(modGain); modGain.connect(carrier.frequency); carrier.connect(env); env.connect(bus);
   carrier.start(time); mod.start(time); carrier.stop(time + dur + 0.5); mod.stop(time + dur + 0.5);
 };
@@ -1353,25 +1358,29 @@ const triggerDrum = (ctx, bus, pitch, time, vol, p={}, vel=100) => {
 
   if (pitch === 36) { // Kick
     const osc = ctx.createOscillator(), env = ctx.createGain();
-    osc.frequency.setValueAtTime(150, time); osc.frequency.exponentialRampToValueAtTime(0.001, time + 0.5);
+    osc.frequency.setValueAtTime(150, time); osc.frequency.exponentialRampToValueAtTime(10, time + 0.5);
     env.gain.setValueAtTime(realVol, time); env.gain.exponentialRampToValueAtTime(0.001, time + 0.5);
-    osc.connect(env); env.connect(bus); osc.start(time); osc.stop(time + 0.5);
+    env.gain.linearRampToValueAtTime(0, time + 0.51);
+    osc.connect(env); env.connect(bus); osc.start(time); osc.stop(time + 0.6);
   } else if (pitch === 38 || pitch === 39) { // Snare/Clap
     const osc = ctx.createOscillator(), env = ctx.createGain();
     osc.type = pitch === 39 ? 'square' : 'triangle'; osc.frequency.setValueAtTime(250, time);
-    env.gain.setValueAtTime(realVol*0.5, time); env.gain.exponentialRampToValueAtTime(0.01, time + 0.2);
-    osc.connect(env); env.connect(bus); osc.start(time); osc.stop(time + 0.2);
+    env.gain.setValueAtTime(realVol*0.5, time); env.gain.exponentialRampToValueAtTime(0.001, time + 0.2);
+    env.gain.linearRampToValueAtTime(0, time + 0.21);
+    osc.connect(env); env.connect(bus); osc.start(time); osc.stop(time + 0.3);
     
     const buffer = getNoiseBuffer(ctx, 0.2);
     const noise = ctx.createBufferSource(), filter = ctx.createBiquadFilter(), nEnv = ctx.createGain();
     noise.buffer = buffer; filter.type = pitch === 39 ? 'bandpass' : 'highpass'; filter.frequency.value = 1000;
-    nEnv.gain.setValueAtTime(realVol*0.8, time); nEnv.gain.exponentialRampToValueAtTime(0.01, time + 0.2);
+    nEnv.gain.setValueAtTime(realVol*0.8, time); nEnv.gain.exponentialRampToValueAtTime(0.001, time + 0.2);
+    nEnv.gain.linearRampToValueAtTime(0, time + 0.21);
     noise.connect(filter); filter.connect(nEnv); nEnv.connect(bus); noise.start(time);
   } else { // Hats/Cymbals
     const buffer = getNoiseBuffer(ctx, 0.1);
     const noise = ctx.createBufferSource(), filter = ctx.createBiquadFilter(), nEnv = ctx.createGain();
     noise.buffer = buffer; filter.type = 'highpass'; filter.frequency.value = 7000;
-    nEnv.gain.setValueAtTime(realVol*0.5, time); nEnv.gain.exponentialRampToValueAtTime(0.01, time + 0.1);
+    nEnv.gain.setValueAtTime(realVol*0.5, time); nEnv.gain.exponentialRampToValueAtTime(0.001, time + 0.1);
+    nEnv.gain.linearRampToValueAtTime(0, time + 0.11);
     noise.connect(filter); filter.connect(nEnv); nEnv.connect(bus); noise.start(time);
   }
 };
@@ -2764,7 +2773,43 @@ const initAudioEngine = async (explicitTracks = null) => {
       const currentLfos = lfosRef.current;
       if (currentLfos && currentLfos.length > 0) {
           currentLfos.forEach(lfo => {
-              let phase = (projectTimeSec * lfo.rate) % 1.0;
+              let currentRate = lfo.rate;
+              let currentDepth = lfo.depth;
+              
+              if (lfo.automation) {
+                  if (lfo.automation.rate?.length > 0) {
+                      const val = getInterpolatedValue(lfo.automation.rate, stateRefs.current.currentTime);
+                      if (val !== null) {
+                          currentRate = val;
+                          const knobVal = document.getElementById(`knob-val-lfo-${lfo.id}-rate`);
+                          const knobRot = document.getElementById(`knob-rot-lfo-${lfo.id}-rate`);
+                          if (knobVal) knobVal.innerText = currentRate >= 1000 ? (currentRate / 1000).toFixed(1) + 'k' : currentRate.toFixed(1);
+                          if (knobRot) {
+                              const constraints = getParamConstraints('rate');
+                              const percent = (Math.log(Math.max(0.001, currentRate)) - Math.log(Math.max(0.001, constraints.min))) / (Math.log(constraints.max) - Math.log(Math.max(0.001, constraints.min)));
+                              const angle = -135 + Math.max(0, Math.min(1, percent)) * 270;
+                              knobRot.style.transform = `rotate(${angle}deg)`;
+                          }
+                      }
+                  }
+                  if (lfo.automation.depth?.length > 0) {
+                      const val = getInterpolatedValue(lfo.automation.depth, stateRefs.current.currentTime);
+                      if (val !== null) {
+                          currentDepth = val;
+                          const knobVal = document.getElementById(`knob-val-lfo-${lfo.id}-depth`);
+                          const knobRot = document.getElementById(`knob-rot-lfo-${lfo.id}-depth`);
+                          if (knobVal) knobVal.innerText = currentDepth.toFixed(0);
+                          if (knobRot) {
+                              const constraints = getParamConstraints('depth');
+                              const percent = (currentDepth - constraints.min) / (constraints.max - constraints.min);
+                              const angle = -135 + Math.max(0, Math.min(1, percent)) * 270;
+                              knobRot.style.transform = `rotate(${angle}deg)`;
+                          }
+                      }
+                  }
+              }
+
+              let phase = (projectTimeSec * currentRate) % 1.0;
               let out = 0.5;
               if (lfo.type === 'sine') out = (Math.sin(phase * Math.PI * 2) + 1) / 2;
               else if (lfo.type === 'square') out = phase < 0.5 ? 1 : 0;
@@ -2779,7 +2824,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                   out = lfo.steps ? lfo.steps[stepIdx] : 0.5;
               }
 
-              const depthRatio = lfo.depth / 100;
+              const depthRatio = currentDepth / 100;
               const lfoSwing = (out - 0.5) * 2 * depthRatio; // Ranges from -1.0 to 1.0 at 100% depth
 
               const lfoDot = document.getElementById(`lfo-vis-dot-${lfo.id}`);
@@ -3166,7 +3211,7 @@ const initAudioEngine = async (explicitTracks = null) => {
     dispatchDawAction({ type: 'UPDATE_MASTER_VOL', payload: { volume: Number(val) } });
   };
 
-  const handleKnobRangeAdjust = useCallback((trackId, fxId, param, newMin, newMax) => {
+  const handleKnobRangeAdjust = useCallback((trackId, fxId, param, newMin, newMax, lfoId = null) => {
       setMidiMappings(prev => {
           let updated = { ...prev };
           let changed = false;
@@ -3175,9 +3220,10 @@ const initAudioEngine = async (explicitTracks = null) => {
               const maps = Array.isArray(updated[ccKey]) ? updated[ccKey] : [updated[ccKey]];
               const newMaps = maps.map(m => {
                   const matchesFx = fxId ? (m.type === 'fx_param' && m.trackId === trackId && m.fxId === fxId && m.param === param) : false;
-                  const matchesInst = !fxId ? (m.type === 'inst_param' && m.trackId === trackId && m.param === param) : false;
+                  const matchesInst = !fxId && !lfoId ? (m.type === 'inst_param' && m.trackId === trackId && m.param === param) : false;
+                  const matchesLfo = lfoId ? (m.type === 'lfo_param' && m.lfoId === lfoId && m.param === param) : false;
 
-                  if (matchesFx || matchesInst) {
+                  if (matchesFx || matchesInst || matchesLfo) {
                       changed = true;
                       return { ...m, rangeMin: newMin, rangeMax: newMax };
                   }
@@ -3190,10 +3236,10 @@ const initAudioEngine = async (explicitTracks = null) => {
       });
   }, []);
 
-  const getMappedRangeForKnob = useCallback((trackId, fxId, param) => {
+  const getMappedRangeForKnob = useCallback((trackId, fxId, param, lfoId = null) => {
       for (const maps of Object.values(midiMappings)) {
           const arr = Array.isArray(maps) ? maps : [maps];
-          const match = arr.find(m => fxId ? (m.type === 'fx_param' && m.trackId === trackId && m.fxId === fxId && m.param === param) : (m.type === 'inst_param' && m.trackId === trackId && m.param === param));
+          const match = arr.find(m => lfoId ? (m.type === 'lfo_param' && m.lfoId === lfoId && m.param === param) : fxId ? (m.type === 'fx_param' && m.trackId === trackId && m.fxId === fxId && m.param === param) : (m.type === 'inst_param' && m.trackId === trackId && m.param === param));
           if (match) return { min: match.rangeMin !== undefined ? match.rangeMin : 0, max: match.rangeMax !== undefined ? match.rangeMax : 1 };
       }
       return null;
@@ -3583,7 +3629,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                               if (mapping.type === 'transport_forward') actions.forward?.();
                               if (mapping.type === 'transport_loop') actions.loop?.();
                           }
-                      } else if (mapping.type === 'fx_param' || mapping.type === 'inst_param') {
+                      } else if (mapping.type === 'fx_param' || mapping.type === 'inst_param' || mapping.type === 'lfo_param') {
                           const constraints = getParamConstraints(mapping.param);
                           let mappedVal;
                           if (constraints.isLog) {
@@ -3622,6 +3668,8 @@ const initAudioEngine = async (explicitTracks = null) => {
                             const knobVal = document.getElementById(`knob-val-inst-${mapping.trackId}-${mapping.param}`);
                             if (knobLive) knobLive.style.transform = `rotate(${angle}deg)`;
                             if (knobVal) knobVal.innerText = mappedVal >= 1000 ? (mappedVal / 1000).toFixed(1) + 'k' : mappedVal.toFixed(constraints.step < 1 ? 2 : 0);
+                        } else if (mapping.type === 'lfo_param') {
+                            dispatchDawAction({ type: 'UPDATE_LFO', payload: { id: mapping.lfoId, updates: { [mapping.param]: mappedVal } } });
                         }
                       }
                   });
@@ -4519,6 +4567,33 @@ const initAudioEngine = async (explicitTracks = null) => {
                   return { ...t, automation: auto, activeAutomationParam: newActive };
               }));
               break;
+          case 'SET_LFO_AUTOMATION_PARAM':
+              setLfos(prev => prev.map(l => l.id === action.payload.lfoId ? { ...l, activeAutomationParam: action.payload.paramKey } : l));
+              break;
+          case 'ADD_LFO_AUTOMATION_POINT':
+              setLfos(prev => prev.map(l => {
+                  if (l.id !== action.payload.lfoId) return l;
+                  const auto = l.automation || {};
+                  const pts = auto[action.payload.paramKey] || [];
+                  return { ...l, automation: { ...auto, [action.payload.paramKey]: [...pts, action.payload.point] } };
+              }));
+              break;
+          case 'UPDATE_LFO_AUTOMATION_POINT':
+              setLfos(prev => prev.map(l => {
+                  if (l.id !== action.payload.lfoId) return l;
+                  const auto = l.automation || {};
+                  const pts = (auto[action.payload.paramKey] || []).map(p => p.id === action.payload.pointId ? { ...p, time: action.payload.time, value: action.payload.value } : p);
+                  return { ...l, automation: { ...auto, [action.payload.paramKey]: pts } };
+              }));
+              break;
+          case 'DELETE_LFO_AUTOMATION_POINT':
+              setLfos(prev => prev.map(l => {
+                  if (l.id !== action.payload.lfoId) return l;
+                  const auto = l.automation || {};
+                  const pts = (auto[action.payload.paramKey] || []).filter(p => p.id !== action.payload.pointId);
+                  return { ...l, automation: { ...auto, [action.payload.paramKey]: pts } };
+              }));
+              break;
           case 'DELETE_TRACK': 
               setTracks(prev => prev.filter(t => t.id !== action.payload.id)); 
               disconnectTrackRouting(synthsRef.current[action.payload.id]);
@@ -4975,7 +5050,7 @@ const initAudioEngine = async (explicitTracks = null) => {
               return newLoop;
           });
         } else if (draggingAutoPoint) {
-            const { trackId, paramKey, pointId, startX, startY, initialTime, initialValue } = draggingAutoPoint;
+            const { trackId, lfoId, paramKey, pointId, startX, startY, initialTime, initialValue } = draggingAutoPoint;
             const deltaX = e.clientX - startX;
             const deltaY = e.clientY - startY;
             const deltaBeats = snap(deltaX / BEAT_WIDTH);
@@ -4988,7 +5063,11 @@ const initAudioEngine = async (explicitTracks = null) => {
             const newTime = Math.max(0, initialTime + deltaBeats);
             const newValue = Math.max(minMax.min, Math.min(minMax.max, initialValue + deltaValue));
             
-            dispatchDawAction({ type: 'UPDATE_AUTOMATION_POINT', payload: { trackId, paramKey, pointId, time: newTime, value: newValue } });
+            if (lfoId) {
+                dispatchDawAction({ type: 'UPDATE_LFO_AUTOMATION_POINT', payload: { lfoId, paramKey, pointId, time: newTime, value: newValue } });
+            } else {
+                dispatchDawAction({ type: 'UPDATE_AUTOMATION_POINT', payload: { trackId, paramKey, pointId, time: newTime, value: newValue } });
+            }
         } else if (draggingPlayhead) {
             if (timelineRef.current) {
                 const rect = timelineRef.current.getBoundingClientRect();
@@ -5636,6 +5715,7 @@ const initAudioEngine = async (explicitTracks = null) => {
 
                     <div className="flex justify-around mt-1 shrink-0">
                         <Knob 
+                            id={`lfo-${lfo.id}-rate`}
                             param="rate" 
                             value={lfo.rate} 
                             min={0.1} 
@@ -5643,8 +5723,12 @@ const initAudioEngine = async (explicitTracks = null) => {
                             step={0.1} 
                             isLog={true}
                             onChange={(p, v) => dispatchDawAction({ type: 'UPDATE_LFO', payload: { id: lfo.id, updates: { rate: v } } })} 
+                            onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'lfo_param', lfoId: lfo.id, param: 'rate' })}
+                            mappedRange={getMappedRangeForKnob(null, null, 'rate', lfo.id)}
+                            onRangeAdjust={(p, min, max) => handleKnobRangeAdjust(null, null, p, min, max, lfo.id)}
                         />
                         <Knob 
+                            id={`lfo-${lfo.id}-depth`}
                             param="depth" 
                             value={lfo.depth} 
                             min={0} 
@@ -5652,6 +5736,9 @@ const initAudioEngine = async (explicitTracks = null) => {
                             step={1} 
                             isLog={false}
                             onChange={(p, v) => dispatchDawAction({ type: 'UPDATE_LFO', payload: { id: lfo.id, updates: { depth: v } } })} 
+                            onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'lfo_param', lfoId: lfo.id, param: 'depth' })}
+                            mappedRange={getMappedRangeForKnob(null, null, 'depth', lfo.id)}
+                            onRangeAdjust={(p, min, max) => handleKnobRangeAdjust(null, null, p, min, max, lfo.id)}
                         />
                     </div>
 
@@ -5694,7 +5781,8 @@ const initAudioEngine = async (explicitTracks = null) => {
                 </div>
              ))}
 
-             <div className="w-32 min-w-[8rem] h-full max-h-[400px] border border-[#222] bg-[#3a3a3a] hover:border-[#555] rounded-sm flex flex-col items-center justify-center shrink-0 cursor-pointer group transition-colors" onClick={() => dispatchDawAction({ type: 'ADD_LFO', payload: { id: `lfo_${Date.now()}`, name: `LFO ${lfos.length + 1}`, type: 'sine', rate: 1.0, depth: 100, steps: [0.5,0.5,0.5,0.5,0.5,0.5,0.5,0.5], mappings: [] }})}>
+             <div className="w-32 min-w-[8rem] h-full max-h-[400px] border border-[#222] bg-[#3a3a3a] hover:border-[#555] rounded-sm flex flex-col items-center justify-center shrink-0 cursor-pointer group transition-colors" onClick={() => dispatchDawAction({ type: 'ADD_LFO', payload: { id: `lfo_${Date.now()}`, name: `LFO ${lfos.length + 1}`, type: 'sine', rate: 1.0, depth: 100, steps: [0.5,0.5,0.5,0.5,0.5,0.5,0.5,0.5], mappings: [], automation: {}, activeAutomationParam: 'rate' }})}>
+
                 <Plus size={20} className="text-[#888] group-hover:text-amber-500 mb-2 transition-colors"/>
                 <span className="text-[10px] text-[#888] group-hover:text-[#ccc] font-bold uppercase tracking-wider transition-colors text-center px-2">Add LFO</span>
              </div>
@@ -5766,6 +5854,28 @@ const initAudioEngine = async (explicitTracks = null) => {
                             ))}
                             </div>
                         )})}
+
+                        {/* LFO Automation Headers */}
+                        {isAutomationMode && lfos.map(lfo => {
+                            const autoKeys = Array.from(new Set([...Object.keys(lfo.automation || {}).filter(k => lfo.automation[k]?.length > 0), lfo.activeAutomationParam].filter(Boolean)));
+                            if (autoKeys.length === 0) return null;
+                            return (
+                                <div key={`lfo-header-${lfo.id}`} className="flex flex-col w-full">
+                                    <div className="h-8 bg-[#2d2d2d] border-b border-[#111] px-2 flex items-center border-l-[3px] border-l-amber-500">
+                                        <Activity size={10} className="text-amber-500 mr-2"/>
+                                        <span className="text-[10px] font-bold text-[#888] uppercase tracking-wider">{lfo.name}</span>
+                                    </div>
+                                    {autoKeys.map(paramKey => (
+                                        <div key={paramKey} className="h-16 border-b border-[#222] bg-[#333] pl-6 pr-2 py-2 flex items-center shadow-inner relative border-l-[3px] border-l-amber-500/50">
+                                            <span className="text-[10px] text-[#888] font-bold uppercase tracking-wider truncate w-full" title={paramKey}>
+                                                <Activity size={10} className="inline mr-1.5 mb-0.5 text-amber-500" />
+                                                {paramKey}
+                                            </span>
+                                        </div>
+                                    ))}
+                                </div>
+                            );
+                        })}
                     </div>
                 </div>
                 
@@ -5939,6 +6049,68 @@ const initAudioEngine = async (explicitTracks = null) => {
                                 )}
                                 </div>
                             )})}
+
+                            {/* LFO Automation Lanes */}
+                            {isAutomationMode && lfos.map(lfo => {
+                                const autoKeys = Array.from(new Set([...Object.keys(lfo.automation || {}).filter(k => lfo.automation[k]?.length > 0), lfo.activeAutomationParam].filter(Boolean)));
+                                if (autoKeys.length === 0) return null;
+                                return (
+                                    <div key={`lfo-lane-${lfo.id}`} className="flex flex-col w-full">
+                                        <div className="h-8 border-b border-[#111] bg-[#222]/50 relative pointer-events-none" />
+                                        {autoKeys.map(paramKey => (
+                                            <div key={paramKey} className="h-16 border-b border-[#222] bg-[#222] relative pointer-events-auto cursor-crosshair overflow-hidden" onMouseDown={(e) => {
+                                                e.stopPropagation();
+                                                if (e.button === 2) return;
+                                                const rect = e.currentTarget.getBoundingClientRect();
+                                                const x = e.clientX - rect.left + timelineRef.current.scrollLeft;
+                                                const y = e.clientY - rect.top;
+                                                const sg = snapGridRef.current;
+                                                const snapVal = (val) => sg === 0 ? val : Math.round(val / sg) * sg;
+                                                const time = Math.max(0, snapVal(x / BEAT_WIDTH));
+                                                const minMax = getAutomationConstraints(paramKey);
+                                                const value = minMax.min + ((64 - y) / 64) * (minMax.max - minMax.min);
+                                                dispatchDawAction({ type: 'ADD_LFO_AUTOMATION_POINT', payload: { lfoId: lfo.id, paramKey, point: { id: `pt_${Date.now()}`, time, value } }});
+                                            }}>
+                                                <svg width="100%" height="100%" className="pointer-events-none absolute inset-0">
+                                                    {(() => {
+                                                        const pts = [...(lfo.automation?.[paramKey] || [])].sort((a,b) => a.time - b.time);
+                                                        if (pts.length === 0) return null;
+                                                        let d = "";
+                                                        const minMax = getAutomationConstraints(paramKey);
+                                                        const getY = (val) => 64 - ((val - minMax.min) / (minMax.max - minMax.min)) * 64;
+                                                        pts.forEach((p, i) => {
+                                                            const x = p.time * BEAT_WIDTH;
+                                                            const y = getY(p.value);
+                                                            d += `${i === 0 ? 'M' : 'L'} ${x} ${y} `;
+                                                        });
+                                                        return <path d={d} stroke="#f59e0b" strokeWidth="2" fill="none" opacity="0.8" />
+                                                    })()}
+                                                </svg>
+                                                {(lfo.automation?.[paramKey] || []).map(p => {
+                                                    const minMax = getAutomationConstraints(paramKey);
+                                                    const y = 64 - ((p.value - minMax.min) / (minMax.max - minMax.min)) * 64;
+                                                    return (
+                                                        <div 
+                                                            key={p.id}
+                                                            className="absolute w-2.5 h-2.5 bg-white border-2 border-amber-500 rounded-full -ml-[5px] -mt-[5px] cursor-pointer pointer-events-auto shadow-md hover:scale-150 transition-transform"
+                                                            style={{ left: `${p.time * BEAT_WIDTH}px`, top: `${y}px` }}
+                                                            onMouseDown={(e) => {
+                                                                e.stopPropagation();
+                                                                if (e.button === 2) {
+                                                                    dispatchDawAction({ type: 'DELETE_LFO_AUTOMATION_POINT', payload: { lfoId: lfo.id, paramKey, pointId: p.id } });
+                                                                } else {
+                                                                    setDraggingAutoPoint({ lfoId: lfo.id, paramKey, pointId: p.id, startX: e.clientX, startY: e.clientY, initialTime: p.time, initialValue: p.value, laneHeight: 64 });
+                                                                }
+                                                            }}
+                                                            onContextMenu={e => { e.preventDefault(); e.stopPropagation(); }}
+                                                        />
+                                                    );
+                                                })}
+                                            </div>
+                                        ))}
+                                    </div>
+                                );
+                            })}
                         </div>
                     </div>
                 </div>
@@ -6334,16 +6506,21 @@ const initAudioEngine = async (explicitTracks = null) => {
                           contextMenu.payload.type === 'mixer_vol' ? 'volume' :
                           contextMenu.payload.type === 'mixer_pan' ? 'pan' :
                           contextMenu.payload.type === 'fx_param' ? `fx_param_${contextMenu.payload.fxId}_${contextMenu.payload.param}` :
-                          contextMenu.payload.type === 'inst_param' ? `inst_param_${contextMenu.payload.param}` : null;
+                          contextMenu.payload.type === 'inst_param' ? `inst_param_${contextMenu.payload.param}` : 
+                          contextMenu.payload.type === 'lfo_param' ? contextMenu.payload.param : null;
                         
                         if (autoKey) {
                             return (
                                 <button onClick={() => { 
-                                    dispatchDawAction({ type: 'SET_AUTOMATION_PARAM', payload: { trackId: contextMenu.payload.trackId, paramKey: autoKey }});
+                                    if (contextMenu.payload.type === 'lfo_param') {
+                                        dispatchDawAction({ type: 'SET_LFO_AUTOMATION_PARAM', payload: { lfoId: contextMenu.payload.lfoId, paramKey: autoKey }});
+                                    } else {
+                                        dispatchDawAction({ type: 'SET_AUTOMATION_PARAM', payload: { trackId: contextMenu.payload.trackId, paramKey: autoKey }});
+                                    }
                                     setIsAutomationMode(true);
                                     setContextMenu(null);
                                     showToast(`Automation active for ${autoKey.replace(/_/g, ' ')}`, 'success');
-                                }} className="w-full text-left px-4 py-2 text-sm text-neutral-300 hover:bg-neutral-800 hover:text-blue-400 flex items-center gap-2">
+                                }} className="w-full text-left px-4 py-2 text-sm text-[#e0e0e0] hover:bg-[#444] hover:text-cyan-500 flex items-center gap-2">
                                     <Activity size={14}/> Automate Parameter
                                 </button>
                             );
@@ -6358,7 +6535,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                         Object.entries(midiMappings).forEach(([ccKey, maps]) => {
                             const arr = Array.isArray(maps) ? maps : [maps];
                             arr.forEach(m => {
-                                if (m.type === contextMenu.payload.type && m.trackId === contextMenu.payload.trackId && m.param === contextMenu.payload.param && m.fxId === contextMenu.payload.fxId) {
+                                if (m.type === contextMenu.payload.type && m.trackId === contextMenu.payload.trackId && m.param === contextMenu.payload.param && m.fxId === contextMenu.payload.fxId && m.lfoId === contextMenu.payload.lfoId) {
                                     activeMappings.push({ ccKey, id: m.id || 'legacy' });
                                 }
                             });
@@ -6379,7 +6556,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                                              });
                                              setContextMenu(null);
                                              showToast(`Mapping removed from ${m.ccKey}`, "info");
-                                         }} className="w-full text-left px-4 py-2 text-sm text-red-400 hover:bg-neutral-800 hover:text-red-300 flex items-center gap-2">
+                                         }} className="w-full text-left px-4 py-2 text-sm text-red-500 hover:bg-[#444] hover:text-red-400 flex items-center gap-2">
                                              <X size={14}/> Unmap Controller ({m.ccKey.split('-').pop()})
                                          </button>
                                     ))}
