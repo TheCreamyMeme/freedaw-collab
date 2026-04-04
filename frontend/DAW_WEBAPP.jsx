@@ -1157,7 +1157,12 @@ const ParametricEqVisualizer = React.memo(({ trackId, fxId, params, onParamChang
                 const dataArray = new Uint8Array(bufferLength);
                 analyser.getByteFrequencyData(dataArray);
                 
-                ctx.fillStyle = 'rgba(59, 130, 246, 0.4)';
+                // Suppress DC offset / ghost low-end noise floor when idle
+                let hasSignal = false;
+                for(let i=1; i<bufferLength; i++) if(dataArray[i] > 5) { hasSignal = true; break; }
+                if (!hasSignal) dataArray.fill(0);
+                
+                ctx.fillStyle = 'rgba(6, 182, 212, 0.4)';
                 ctx.beginPath();
                 ctx.moveTo(0, height);
                 for (let i = 0; i < bufferLength; i++) {
@@ -5173,19 +5178,19 @@ const initAudioEngine = async (explicitTracks = null) => {
   // --- RENDER: AUTH ---
   if (appView === 'auth') {
     return (
-      <div className="flex flex-col h-screen bg-neutral-950 items-center justify-center text-neutral-300 font-sans select-none">
-        <div className="bg-neutral-900 border border-neutral-800 rounded-2xl w-full max-w-sm p-6 shadow-2xl">
+      <div className="flex flex-col h-screen bg-[#2b2b2b] items-center justify-center text-[#b3b3b3] font-sans select-none">
+        <div className="bg-[#3a3a3a] border border-[#111] rounded-sm w-full max-w-sm p-6 shadow-2xl">
           <div className="flex flex-col items-center gap-3 mb-6">
-             <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white"><Lock size={24} /></div>
-             <h2 className="text-xl font-bold text-white">FreeDaw-Collab <span className="text-sm text-blue-400">Secure</span></h2>
+             <div className="w-12 h-12 rounded-sm bg-[#222] border border-[#111] flex items-center justify-center text-cyan-500"><Lock size={24} /></div>
+             <h2 className="text-xl font-bold text-white uppercase tracking-widest">FreeDaw <span className="text-cyan-500">Live</span></h2>
           </div>
           <form onSubmit={handleAuthSubmit} className="flex flex-col gap-4">
-            <input id="auth-username" name="username" autoComplete="username" type="text" value={authName} onChange={(e) => setAuthName(e.target.value)} required className="bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-2 text-white outline-none focus:border-blue-500 transition-colors" placeholder="Username" />
-            <input id="auth-password" name="password" autoComplete="current-password" type="password" value={authPassword} onChange={(e) => setAuthPassword(e.target.value)} required className="bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-2 text-white outline-none focus:border-blue-500 transition-colors" placeholder="Password" />
-            <button type="submit" className="w-full bg-blue-600 hover:bg-blue-500 text-white font-medium py-2 rounded-lg mt-2 shadow-lg flex items-center justify-center gap-2 transition-colors"><Network size={16} /> Connect</button>
+            <input id="auth-username" name="username" autoComplete="username" type="text" value={authName} onChange={(e) => setAuthName(e.target.value)} required className="bg-[#222] border border-[#111] rounded-sm px-3 py-2 text-white outline-none focus:border-cyan-500 transition-colors" placeholder="Username" />
+            <input id="auth-password" name="password" autoComplete="current-password" type="password" value={authPassword} onChange={(e) => setAuthPassword(e.target.value)} required className="bg-[#222] border border-[#111] rounded-sm px-3 py-2 text-white outline-none focus:border-cyan-500 transition-colors" placeholder="Password" />
+            <button type="submit" className="w-full bg-cyan-500 hover:bg-cyan-400 text-black font-bold uppercase tracking-wider py-2.5 rounded-sm mt-2 flex items-center justify-center gap-2 transition-colors"><Network size={16} /> Connect</button>
           </form>
         </div>
-        {toasts.map(t => <div key={t.id} className="fixed bottom-4 right-4 bg-red-500/10 border border-red-500/20 text-red-400 px-4 py-3 rounded-xl z-50 shadow-lg">{t.message}</div>)}
+        {toasts.map(t => <div key={t.id} className="fixed bottom-4 right-4 bg-[#222] border border-red-500 text-red-500 px-4 py-3 rounded-sm z-50 shadow-lg font-bold uppercase tracking-wider">{t.message}</div>)}
       </div>
     );
   }
@@ -5202,62 +5207,61 @@ const initAudioEngine = async (explicitTracks = null) => {
           );
 
       return (
-        <div className="flex flex-col w-screen h-screen overflow-y-auto overflow-x-hidden bg-neutral-950 text-neutral-300 p-8 custom-scrollbar select-none">
-            <header className="flex justify-between items-center mb-12 border-b border-neutral-800 pb-6">
-                <h1 className="text-3xl font-bold text-white">Project Library</h1>
+        <div className="flex flex-col w-screen h-screen overflow-y-auto overflow-x-hidden bg-[#2b2b2b] text-[#b3b3b3] p-8 custom-scrollbar select-none">
+            <header className="flex justify-between items-center mb-12 border-b border-[#111] pb-6">
+                <h1 className="text-2xl font-bold text-[#e0e0e0] uppercase tracking-wider">Project Library</h1>
                 <div className="flex items-center gap-4">
                     <div className="flex items-center gap-2 mr-4">
                         {currentUser?.avatar ? (
-                            <img src={currentUser.avatar} alt="avatar" className="w-8 h-8 rounded-full object-cover border border-neutral-700" />
+                            <img src={currentUser.avatar} alt="avatar" className="w-8 h-8 rounded-sm object-cover border border-[#111]" />
                         ) : (
-                            <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-white ${currentUser?.color || 'bg-emerald-500'}`}>
+                            <div className={`w-8 h-8 rounded-sm flex items-center justify-center text-xs font-bold text-white ${currentUser?.color || 'bg-[#06b6d4]'}`}>
                                 {currentUser?.username?.charAt(0).toUpperCase()}
                             </div>
                         )}
-                        <span className="text-sm">Signed in as <b className="text-white">{currentUser?.username}</b></span>
+                        <span className="text-sm font-bold uppercase tracking-wider text-[#888]">Signed in as <b className="text-white">{currentUser?.username}</b></span>
                     </div>
-                    <button onClick={handleSignOut} className="bg-neutral-800 hover:bg-neutral-700 text-neutral-400 hover:text-white p-2 rounded-lg transition-colors" title="Sign Out">
+                    <button onClick={handleSignOut} className="bg-[#444] hover:bg-[#555] text-[#b3b3b3] hover:text-white p-2 rounded-sm transition-colors border border-[#222]" title="Sign Out">
                         <LogOut size={16} />
                     </button>
-                    <button onClick={() => { setAppView('daw'); setTracks(INITIAL_TRACKS); setProjectId(`proj_${Date.now()}`); setSharedWith([]); setProjectOwnerId(currentUser?.id); setProjectOwnerName(currentUser?.username); setIsPublic(false); }} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg flex items-center gap-2 transition-colors"><Plus size={16}/> New Project</button>
+                    <button onClick={() => { setAppView('daw'); setTracks(INITIAL_TRACKS); setProjectId(`proj_${Date.now()}`); setSharedWith([]); setProjectOwnerId(currentUser?.id); setProjectOwnerName(currentUser?.username); setIsPublic(false); }} className="bg-cyan-500 hover:bg-cyan-400 text-black font-bold uppercase tracking-wider px-4 py-2 rounded-sm flex items-center gap-2 transition-colors"><Plus size={16}/> New Project</button>
                 </div>
-
             </header>
             
-            <h2 className="text-lg font-bold text-white mb-4 flex items-center gap-2"><Folder size={18} className="text-blue-400"/> My Projects</h2>
+            <h2 className="text-sm font-bold text-[#888] uppercase tracking-wider mb-4 flex items-center gap-2"><Folder size={16} className="text-cyan-500"/> My Projects</h2>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-12">
-                {personalProjects.length === 0 && <p className="text-neutral-500 text-sm">No personal projects found.</p>}
+                {personalProjects.length === 0 && <p className="text-[#888] text-sm">No personal projects found.</p>}
                 {personalProjects.map(proj => (
-                    <div key={proj.id} className="bg-neutral-900 border border-neutral-800 rounded-xl p-6 group hover:border-neutral-600 shadow-lg transition-colors">
+                    <div key={proj.id} className="bg-[#3a3a3a] border border-[#222] rounded-sm p-6 group hover:border-[#555] transition-colors">
                         <div className="flex justify-between items-start mb-4">
-                            <div className="w-10 h-10 bg-neutral-800 rounded flex items-center justify-center text-blue-400"><FileJson size={20}/></div>
-                            <button onClick={(e) => handleDeleteProject(e, proj.id)} className="text-neutral-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"><Trash2 size={16}/></button>
+                            <div className="w-10 h-10 bg-[#2d2d2d] rounded-sm border border-[#111] flex items-center justify-center text-cyan-500"><FileJson size={20}/></div>
+                            <button onClick={(e) => handleDeleteProject(e, proj.id)} className="text-[#888] hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"><Trash2 size={16}/></button>
                         </div>
-                        <h3 className="text-lg font-bold text-white mb-1 cursor-pointer hover:text-blue-400 transition-colors" onClick={() => loadProjectToDaw(proj)}>{proj.name}</h3>
-                        <p className="text-xs text-neutral-500">{new Date(proj.lastModified).toLocaleString()}</p>
+                        <h3 className="text-lg font-bold text-[#e0e0e0] mb-1 cursor-pointer hover:text-cyan-400 transition-colors uppercase tracking-wider" onClick={() => loadProjectToDaw(proj)}>{proj.name}</h3>
+                        <p className="text-[10px] uppercase font-bold text-[#888]">{new Date(proj.lastModified).toLocaleString()}</p>
                     </div>
                 ))}
             </div>
 
             {sharedProjects.length > 0 && (
                 <>
-                    <h2 className="text-lg font-bold text-white mb-4 flex items-center gap-2"><Users size={18} className="text-purple-400"/> Community & Shared Projects</h2>
+                    <h2 className="text-sm font-bold text-[#888] uppercase tracking-wider mb-4 flex items-center gap-2"><Users size={16} className="text-amber-500"/> Community & Shared Projects</h2>
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-12">
                         {sharedProjects.map(proj => (
-                            <div key={proj.id} className="bg-neutral-900 border border-neutral-800 rounded-xl p-6 group hover:border-neutral-600 shadow-lg transition-colors">
+                            <div key={proj.id} className="bg-[#3a3a3a] border border-[#222] rounded-sm p-6 group hover:border-[#555] transition-colors">
                                 <div className="flex justify-between items-start mb-4">
-                                    <div className="w-10 h-10 bg-neutral-800 rounded flex items-center justify-center text-purple-400"><Users size={20}/></div>
-                                    <button onClick={(e) => { e.stopPropagation(); handleForkProject(proj); }} className="text-xs bg-purple-500/20 text-purple-400 hover:bg-purple-500/40 px-2 py-1 rounded transition-colors" title="Fork Project">Fork</button>
+                                    <div className="w-10 h-10 bg-[#2d2d2d] rounded-sm border border-[#111] flex items-center justify-center text-amber-500"><Users size={20}/></div>
+                                    <button onClick={(e) => { e.stopPropagation(); handleForkProject(proj); }} className="text-[10px] uppercase font-bold bg-amber-500/20 text-amber-500 hover:bg-amber-500/40 px-2 py-1 rounded-sm border border-amber-500/20 transition-colors" title="Fork Project">Fork</button>
                                 </div>
-                                <h3 className="text-lg font-bold text-white mb-1 cursor-pointer hover:text-purple-400 transition-colors" onClick={() => loadProjectToDaw(proj)}>{proj.name}</h3>
-                                <p className="text-xs text-neutral-500">Shared by: <span className="text-white">{proj.ownerName || 'Unknown'}</span></p>
-                                <p className="text-xs text-neutral-500 mt-1">{new Date(proj.lastModified).toLocaleString()}</p>
+                                <h3 className="text-lg font-bold text-[#e0e0e0] mb-1 cursor-pointer hover:text-amber-400 transition-colors uppercase tracking-wider" onClick={() => loadProjectToDaw(proj)}>{proj.name}</h3>
+                                <p className="text-[10px] font-bold uppercase text-[#888]">Shared by: <span className="text-[#ccc]">{proj.ownerName || 'Unknown'}</span></p>
+                                <p className="text-[10px] font-bold uppercase text-[#888] mt-1">{new Date(proj.lastModified).toLocaleString()}</p>
                             </div>
                         ))}
                     </div>
                 </>
             )}
-            {toasts.map(t => <div key={t.id} className="fixed bottom-4 right-4 bg-blue-500/10 border border-blue-500/20 text-blue-400 px-4 py-3 rounded-xl z-50 shadow-lg">{t.message}</div>)}
+            {toasts.map(t => <div key={t.id} className={`fixed bottom-4 right-4 border px-4 py-3 rounded-sm z-50 shadow-lg font-bold uppercase tracking-wider ${t.type === 'success' ? 'bg-[#222] border-green-500 text-green-500' : t.type === 'error' ? 'bg-[#222] border-red-500 text-red-500' : 'bg-[#222] border-cyan-500 text-cyan-500'}`}>{t.message}</div>)}
         </div>
       );
   }
@@ -5398,9 +5402,9 @@ const initAudioEngine = async (explicitTracks = null) => {
 
         {/* Main Content Area */}
         {activeView === 'browser' ? (
-          <div className="flex-1 flex overflow-hidden bg-neutral-900 z-10">
+          <div className="flex-1 flex overflow-hidden bg-[#333333] z-10">
             <div 
-                className="w-72 bg-neutral-950 border-r border-neutral-800 flex flex-col shrink-0 relative"
+                className="w-72 bg-[#3a3a3a] border-r border-[#111] flex flex-col shrink-0 relative"
                 onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setIsBrowserDragOver(true); }}
                 onDragLeave={(e) => { e.preventDefault(); e.stopPropagation(); setIsBrowserDragOver(false); }}
                 onDrop={(e) => {
@@ -5414,58 +5418,58 @@ const initAudioEngine = async (explicitTracks = null) => {
                 }}
             >
               {isBrowserDragOver && (
-                  <div className="absolute inset-0 z-50 bg-blue-500/10 border-2 border-blue-500 border-dashed m-2 rounded-xl flex items-center justify-center pointer-events-none backdrop-blur-sm">
-                      <div className="bg-neutral-900 px-4 py-2 rounded-lg font-bold text-blue-400 shadow-xl flex items-center gap-2"><Upload size={16}/> Drop Plugins or Audio</div>
+                  <div className="absolute inset-0 z-50 bg-cyan-500/10 border-2 border-cyan-500 border-dashed m-2 rounded-sm flex items-center justify-center pointer-events-none backdrop-blur-sm">
+                      <div className="bg-[#222] px-4 py-2 rounded-sm font-bold text-cyan-500 shadow-xl flex items-center gap-2 uppercase tracking-wider text-xs"><Upload size={16}/> Drop Plugins or Audio</div>
                   </div>
               )}
-              <div className="p-4 border-b border-neutral-800 flex justify-between items-center">
-                  <h3 className="text-white font-semibold flex items-center gap-2"><Folder size={18} className="text-blue-400"/> Browser</h3>
-                  <label className="bg-neutral-800 hover:bg-neutral-700 text-neutral-300 px-2 py-1 rounded text-xs cursor-pointer flex items-center gap-1 transition-colors">
+              <div className="p-3 border-b border-[#222] flex justify-between items-center">
+                  <h3 className="text-[#e0e0e0] font-bold text-xs uppercase tracking-wider flex items-center gap-2"><Folder size={14} className="text-cyan-500"/> Browser</h3>
+                  <label className="bg-[#444] hover:bg-[#555] text-[#b3b3b3] px-2 py-1 rounded-sm text-[10px] font-bold uppercase tracking-wider cursor-pointer flex items-center gap-1 border border-[#222] transition-colors">
                      <Upload size={12}/> Import .js
                      <input type="file" accept=".js" className="hidden" onChange={handlePluginUpload} />
                   </label>
               </div>
               <div className="flex-1 overflow-y-auto p-2 pr-3 custom-scrollbar">
-                <div className="text-[10px] font-bold text-neutral-500 mb-2 mt-2 uppercase tracking-wider px-2">Internal Engines</div>
+                <div className="text-[9px] font-bold text-[#888] mb-2 mt-2 uppercase tracking-wider px-2">Internal Engines</div>
                 {INTERNAL_PLUGINS.map(vst => (
                   <div 
                       key={vst.id} 
                       onClick={() => handleBrowserPluginClick(vst)}
-                      className={`flex items-center gap-3 p-2 rounded-lg text-sm text-neutral-300 border transition-colors cursor-pointer ${selectedBrowserPlugin?.id === vst.id ? 'bg-neutral-800/80 border-neutral-700 shadow-sm' : 'hover:bg-neutral-800/50 border-transparent hover:border-neutral-700'}`}
+                      className={`flex items-center gap-3 p-1.5 rounded-sm text-[10px] text-[#b3b3b3] border transition-colors cursor-pointer ${selectedBrowserPlugin?.id === vst.id ? 'bg-[#555] border-[#222] text-white shadow-sm' : 'hover:bg-[#444] border-transparent'}`}
                   >
-                    <div className={`w-8 h-8 rounded bg-neutral-800 flex items-center justify-center shadow-sm shrink-0 ${vst.category === 'instrument' ? 'text-purple-400' : 'text-blue-400'}`}>
-                      {vst.category === 'instrument' ? <Piano size={14} /> : <Plug size={14} />}
+                    <div className={`w-7 h-7 rounded-sm bg-[#2d2d2d] border border-[#111] flex items-center justify-center shadow-sm shrink-0 ${vst.category === 'instrument' ? 'text-amber-500' : 'text-cyan-500'}`}>
+                      {vst.category === 'instrument' ? <Piano size={12} /> : <Plug size={12} />}
                     </div>
                     <div className="flex flex-col overflow-hidden">
-                      <span className="font-medium text-white text-xs truncate">{vst.name}</span>
-                      <span className="text-[9px] text-neutral-500 truncate">{vst.vendor || 'FreeDaw-Collab'} &bull; {vst.category?.toUpperCase()}</span>
+                      <span className="font-bold text-[#e0e0e0] text-[10px] uppercase tracking-wider truncate">{vst.name}</span>
+                      <span className="text-[8px] text-[#888] uppercase font-bold truncate">{vst.vendor || 'FreeDaw'} &bull; {vst.category?.substring(0,4)}</span>
                     </div>
                   </div>
                 ))}
                 
                 {customPlugins.length > 0 && (
                     <>
-                        <div className="text-[10px] font-bold text-blue-400 mb-2 mt-4 uppercase tracking-wider px-2 border-t border-neutral-800 pt-4">Custom Plugins</div>
+                        <div className="text-[9px] font-bold text-cyan-500 mb-2 mt-4 uppercase tracking-wider px-2 border-t border-[#222] pt-4">Custom Plugins</div>
                         {customPlugins.map(vst => (
                           <div 
                               key={vst.id} 
                               onClick={() => handleBrowserPluginClick(vst)}
-                              className={`group flex items-center gap-3 p-2 rounded-lg text-sm text-neutral-300 border transition-colors cursor-pointer ${selectedBrowserPlugin?.id === vst.id ? 'bg-blue-900/30 border-blue-500/50 shadow-sm' : 'hover:bg-neutral-800/50 border-transparent hover:border-neutral-700'}`}
+                              className={`group flex items-center gap-3 p-1.5 rounded-sm text-[10px] text-[#b3b3b3] border transition-colors cursor-pointer ${selectedBrowserPlugin?.id === vst.id ? 'bg-cyan-500/20 border-cyan-500/50 shadow-sm' : 'hover:bg-[#444] border-transparent'}`}
                           >
-                            <div className={`w-8 h-8 rounded bg-neutral-800 flex items-center justify-center shadow-sm shrink-0 ${vst.category === 'instrument' ? 'text-purple-400' : 'text-blue-400'}`}>
-                              {vst.category === 'instrument' ? <Piano size={14} /> : <Plug size={14} />}
+                            <div className={`w-7 h-7 rounded-sm bg-[#2d2d2d] border border-[#111] flex items-center justify-center shadow-sm shrink-0 ${vst.category === 'instrument' ? 'text-amber-500' : 'text-cyan-500'}`}>
+                              {vst.category === 'instrument' ? <Piano size={12} /> : <Plug size={12} />}
                             </div>
                             <div className="flex flex-col overflow-hidden flex-1">
-                              <span className="font-medium text-white text-xs truncate">{vst.name}</span>
-                              <span className="text-[9px] text-blue-400 truncate">{vst.vendor || 'Custom'} &bull; {vst.category?.toUpperCase()}</span>
+                              <span className="font-bold text-[#e0e0e0] text-[10px] uppercase tracking-wider truncate">{vst.name}</span>
+                              <span className="text-[8px] text-cyan-500 uppercase font-bold truncate">{vst.vendor || 'Custom'} &bull; {vst.category?.substring(0,4)}</span>
                             </div>
-                            <button onClick={(e) => handleDeletePlugin(e, vst.id)} className="text-neutral-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity p-1 shrink-0" title="Delete Plugin"><Trash2 size={14}/></button>
+                            <button onClick={(e) => handleDeletePlugin(e, vst.id)} className="text-[#888] hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity p-1 shrink-0" title="Delete Plugin"><Trash2 size={12}/></button>
                           </div>
                         ))}
                     </>
                 )}
 
-                <div className="text-[10px] font-bold text-emerald-400 mb-2 mt-4 uppercase tracking-wider px-2 border-t border-neutral-800 pt-4 flex justify-between items-center">
+                <div className="text-[9px] font-bold text-emerald-500 mb-2 mt-4 uppercase tracking-wider px-2 border-t border-[#222] pt-4 flex justify-between items-center">
                     <span>Audio Samples</span>
                     <label className="cursor-pointer hover:text-white transition-colors" title="Upload Audio">
                          <Plus size={12}/>
@@ -5484,119 +5488,119 @@ const initAudioEngine = async (explicitTracks = null) => {
                               src.start(0);
                           }
                       }}
-                      className="group flex items-center gap-3 p-2 rounded-lg text-sm text-neutral-300 border border-transparent hover:bg-neutral-800/50 cursor-pointer transition-colors"
+                      className="group flex items-center gap-3 p-1.5 rounded-sm text-[10px] text-[#b3b3b3] border border-transparent hover:bg-[#444] cursor-pointer transition-colors"
                   >
-                    <div className="w-8 h-8 rounded bg-neutral-800 flex items-center justify-center text-emerald-400 shadow-sm shrink-0"><FileAudio size={14}/></div>
+                    <div className="w-7 h-7 rounded-sm bg-[#2d2d2d] border border-[#111] flex items-center justify-center text-emerald-500 shadow-sm shrink-0"><FileAudio size={12}/></div>
                     <div className="flex flex-col overflow-hidden flex-1">
-                      <span className="font-medium text-white text-xs truncate" title={s.name}>{s.name}</span>
-                      <span className="text-[9px] text-emerald-400 truncate">Audio File</span>
+                      <span className="font-bold text-[#e0e0e0] text-[10px] uppercase tracking-wider truncate" title={s.name}>{s.name}</span>
+                      <span className="text-[8px] text-emerald-500 font-bold uppercase truncate">Audio File</span>
                     </div>
-                    <button onClick={(e) => handleDeleteSample(e, s.id)} className="text-neutral-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity p-1 shrink-0" title="Delete Sample"><Trash2 size={14}/></button>
+                    <button onClick={(e) => handleDeleteSample(e, s.id)} className="text-[#888] hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity p-1 shrink-0" title="Delete Sample"><Trash2 size={12}/></button>
                   </div>
                 ))}
               </div>
             </div>
             
             {selectedBrowserPlugin ? (
-                <div className="flex-1 flex flex-col overflow-hidden bg-[#0d0d0d] shadow-[inset_4px_0_24px_rgba(0,0,0,0.4)]">
-                    <div className="h-10 bg-neutral-900 border-b border-neutral-800 flex items-center px-4 shrink-0 shadow-sm">
-                        <span className="text-xs font-bold text-neutral-300 flex items-center gap-2">
-                            <FileCode size={14} className="text-blue-400" /> 
+                <div className="flex-1 flex flex-col overflow-hidden bg-[#242424] shadow-[inset_4px_0_12px_rgba(0,0,0,0.2)]">
+                    <div className="h-8 bg-[#2d2d2d] border-b border-[#111] flex items-center px-4 shrink-0">
+                        <span className="text-[10px] font-bold text-[#e0e0e0] uppercase tracking-wider flex items-center gap-2">
+                            <FileCode size={12} className="text-cyan-500" /> 
                             {selectedBrowserPlugin.name} Source
                         </span>
                     </div>
                     <div className="flex-1 overflow-auto p-4 custom-scrollbar select-text cursor-text">
-                        <pre className="text-[11px] leading-[1.6] font-mono text-[#9cdcfe]"><code>{browserPluginCode}</code></pre>
+                        <pre className="text-[10px] leading-[1.6] font-mono text-[#9cdcfe]"><code>{browserPluginCode}</code></pre>
                     </div>
                 </div>
             ) : (
-                <div className="flex-1 flex flex-col items-center justify-center text-neutral-500 opacity-30 shadow-[inset_4px_0_24px_rgba(0,0,0,0.4)]">
-                    <Plug size={64} className="mb-4" />
-                    <p className="max-w-xs text-center text-sm font-medium">Select a plugin from the list to preview its architecture or upload a .js file to mount a custom DSP node.</p>
+                <div className="flex-1 flex flex-col items-center justify-center text-[#555] shadow-[inset_4px_0_12px_rgba(0,0,0,0.2)]">
+                    <Plug size={48} className="mb-4 opacity-50" />
+                    <p className="max-w-xs text-center text-[10px] uppercase tracking-wider font-bold opacity-80">Select a plugin from the list to preview its architecture or upload a .js file to mount a custom DSP node.</p>
                 </div>
             )}
           </div>
         ) : activeView === 'mixer' ? (
-          <div className="flex-1 bg-neutral-900 flex p-4 gap-2 overflow-x-auto relative custom-scrollbar pb-6">
+          <div className="flex-1 bg-[#333333] flex p-4 gap-2 overflow-x-auto relative custom-scrollbar pb-6">
              {tracks.map(t => (
-               <div key={t.id} className="w-32 bg-neutral-950 border border-neutral-800 rounded-xl flex flex-col items-center py-4 shrink-0 relative group shadow-lg transition-colors">
-                  <button onClick={(e) => handleContextMenu(e, 'track', { trackId: t.id })} className="absolute top-2 right-2 text-neutral-500 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"><MoreHorizontal size={14}/></button>
+               <div key={t.id} className="w-28 bg-[#3a3a3a] border border-[#111] rounded-sm flex flex-col items-center py-3 shrink-0 relative group transition-colors">
+                  <button onClick={(e) => handleContextMenu(e, 'track', { trackId: t.id })} className="absolute top-1.5 right-1.5 text-[#888] hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"><MoreHorizontal size={12}/></button>
                   <div 
-                      className={`w-3 h-3 rounded-full mb-2 shadow-sm ${t.color} cursor-pointer hover:scale-110 transition-transform`} 
+                      className={`w-2 h-2 rounded-sm mb-1.5 border border-[#111] ${t.color.replace('bg-', 'bg-').replace('-500', '-400')} cursor-pointer hover:brightness-125 transition-transform`} 
                       title="Click to cycle color"
                       onClick={(e) => { e.stopPropagation(); const colors = ['bg-emerald-500', 'bg-blue-500', 'bg-purple-500', 'bg-pink-500', 'bg-red-500', 'bg-orange-500', 'bg-yellow-500', 'bg-cyan-500']; dispatchDawAction({ type: 'UPDATE_TRACK_COLOR', payload: { trackId: t.id, color: colors[(colors.indexOf(t.color) + 1) % colors.length] }}); }}
                   />
-                  <span className="text-xs font-bold text-white truncate w-full text-center px-2">{t.name}</span>
+                  <span className="text-[10px] font-bold text-[#e0e0e0] uppercase tracking-wider truncate w-full text-center px-1">{t.name}</span>
                   
-                  <div className="w-full px-4 mt-2 flex flex-col items-center" onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'mixer_pan', trackId: t.id })}>
-                     <span className="text-[9px] text-neutral-500 mb-1 font-mono">PAN</span>
-                     <input id={`pan-input-${t.id}`} type="range" min="-50" max="50" value={t.pan} onDoubleClick={() => dispatchDawAction({ type: 'UPDATE_TRACK_PAN', payload: { id: t.id, pan: 0 } })} onChange={(e) => dispatchDawAction({ type: 'UPDATE_TRACK_PAN', payload: { id: t.id, pan: Number(e.target.value) } })} onWheel={(e) => { e.stopPropagation(); dispatchDawAction({ type: 'UPDATE_TRACK_PAN', payload: { id: t.id, pan: Math.min(50, Math.max(-50, t.pan + (e.deltaY < 0 ? 5 : -5))) } }); }} className="w-full h-1 bg-neutral-800 rounded-full appearance-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-2 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-neutral-400 cursor-pointer" />
+                  <div className="w-full px-3 mt-2 flex flex-col items-center" onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'mixer_pan', trackId: t.id })}>
+                     <span className="text-[8px] text-[#888] font-bold uppercase tracking-wider">PAN</span>
+                     <input id={`pan-input-${t.id}`} type="range" min="-50" max="50" value={t.pan} onDoubleClick={() => dispatchDawAction({ type: 'UPDATE_TRACK_PAN', payload: { id: t.id, pan: 0 } })} onChange={(e) => dispatchDawAction({ type: 'UPDATE_TRACK_PAN', payload: { id: t.id, pan: Number(e.target.value) } })} onWheel={(e) => { e.stopPropagation(); dispatchDawAction({ type: 'UPDATE_TRACK_PAN', payload: { id: t.id, pan: Math.min(50, Math.max(-50, t.pan + (e.deltaY < 0 ? 5 : -5))) } }); }} className="w-full h-1 bg-[#222] border border-[#111] rounded-sm appearance-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-1.5 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-[#888] cursor-pointer mt-1" />
                   </div>
 
-                  <div className="flex gap-1.5 mt-4">
-                    <button onClick={() => dispatchDawAction({ type: 'TOGGLE_MUTE', payload: { trackId: t.id } })} className={`w-6 h-6 rounded text-[10px] font-bold transition-colors border ${t.muted ? 'bg-orange-500/20 text-orange-400 border-orange-500/50' : 'bg-neutral-800 text-neutral-500 border-transparent hover:bg-neutral-700'}`}>M</button>
-                    <button onClick={() => dispatchDawAction({ type: 'TOGGLE_SOLO', payload: { trackId: t.id } })} className={`w-6 h-6 rounded text-[10px] font-bold transition-colors border ${t.solo ? 'bg-yellow-500/20 text-yellow-400 border-yellow-500/50' : 'bg-neutral-800 text-neutral-500 border-transparent hover:bg-neutral-700'}`}>S</button>
+                  <div className="flex gap-1 mt-3">
+                    <button onClick={() => dispatchDawAction({ type: 'TOGGLE_MUTE', payload: { trackId: t.id } })} className={`w-5 h-5 rounded-sm text-[9px] font-bold transition-colors border ${t.muted ? 'bg-[#ffae00] text-black border-[#ffae00]' : 'bg-[#222] text-[#888] border-[#111] hover:bg-[#444]'}`}>M</button>
+                    <button onClick={() => dispatchDawAction({ type: 'TOGGLE_SOLO', payload: { trackId: t.id } })} className={`w-5 h-5 rounded-sm text-[9px] font-bold transition-colors border ${t.solo ? 'bg-[#00d0ff] text-black border-[#00d0ff]' : 'bg-[#222] text-[#888] border-[#111] hover:bg-[#444]'}`}>S</button>
                   </div>
 
-                  <div className="flex-1 w-full flex justify-center py-4 relative mt-2 min-h-[200px]" onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'mixer_vol', trackId: t.id })}>
-                     <div className="flex justify-center gap-2 h-full w-full pointer-events-none">
-                         <div className="w-2 bg-black rounded-full h-full relative border border-neutral-800">
-                            <div id={`vol-fill-mix-${t.id}`} className={`absolute bottom-0 w-full rounded-full opacity-60 ${t.color}`} style={{ height: `${t.volume}%` }} />
+                  <div className="flex-1 w-full flex justify-center py-3 relative mt-2 min-h-[180px]" onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'mixer_vol', trackId: t.id })}>
+                     <div className="flex justify-center gap-1.5 h-full w-full pointer-events-none">
+                         <div className="w-1.5 bg-[#111] rounded-sm h-full relative">
+                            <div id={`vol-fill-mix-${t.id}`} className={`absolute bottom-0 w-full rounded-sm opacity-80 ${t.color.replace('bg-', 'bg-').replace('-500', '-400')}`} style={{ height: `${t.volume}%` }} />
                          </div>
                          <VuMeter trackId={t.id} synthsRef={synthsRef} isVertical={true} />
                      </div>
                      <input id={`vol-input-mix-${t.id}`} type="range" orient="vertical" min="0" max="100" value={t.volume} onChange={(e) => dispatchDawAction({ type: 'UPDATE_TRACK_VOL', payload: { id: t.id, volume: Number(e.target.value) } })} onWheel={(e) => { e.stopPropagation(); dispatchDawAction({ type: 'UPDATE_TRACK_VOL', payload: { id: t.id, volume: Math.min(100, Math.max(0, t.volume + (e.deltaY < 0 ? 5 : -5))) } }); }} className="absolute inset-0 opacity-0 cursor-pointer h-full w-full" style={{ WebkitAppearance: 'slider-vertical' }} />
                   </div>
-                  <span className="text-[10px] font-mono text-neutral-500">{t.volume}</span>
+                  <span className="text-[9px] font-mono text-[#888] font-bold mt-1">{t.volume}</span>
                </div>
              ))}
 
              {/* Master Fader */}
-             <div className="w-32 bg-neutral-950 border border-neutral-800 rounded-xl flex flex-col items-center py-4 shrink-0 relative shadow-lg ml-auto">
-                  <div className="w-3 h-3 rounded-full mb-2 bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.6)]" />
-                  <span className="text-xs font-bold text-white truncate w-full text-center px-2">MASTER</span>
-                  <div className="flex-1 w-full flex justify-center py-4 relative mt-2 min-h-[200px]" onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'master_vol' })}>
-                     <div className="flex justify-center gap-2 h-full w-full pointer-events-none">
-                         <div className="w-2 bg-black rounded-full h-full relative border border-neutral-800">
-                            <div className="absolute bottom-0 w-full rounded-full bg-red-500 opacity-70 shadow-[0_0_10px_rgba(239,68,68,0.4)]" style={{ height: `${masterVolume}%` }} />
+             <div className="w-28 bg-[#3a3a3a] border border-[#111] rounded-sm flex flex-col items-center py-3 shrink-0 relative shadow-md ml-auto">
+                  <div className="w-2 h-2 rounded-sm mb-1.5 bg-[#ff5a5a] border border-[#111]" />
+                  <span className="text-[10px] font-bold text-[#e0e0e0] uppercase tracking-wider truncate w-full text-center px-1">MASTER</span>
+                  <div className="flex-1 w-full flex justify-center py-3 relative mt-8 min-h-[180px]" onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'master_vol' })}>
+                     <div className="flex justify-center gap-1.5 h-full w-full pointer-events-none">
+                         <div className="w-1.5 bg-[#111] rounded-sm h-full relative">
+                            <div className="absolute bottom-0 w-full rounded-sm bg-[#ff5a5a] opacity-90" style={{ height: `${masterVolume}%` }} />
                          </div>
                          <VuMeter isMaster={true} masterAnalyserRef={masterAnalyserRef} isVertical={true} />
                      </div>
                      <input type="range" orient="vertical" min="0" max="100" value={masterVolume} onChange={(e) => handleMasterVolumeChange(e.target.value)} onDoubleClick={() => handleMasterVolumeChange(80)} onWheel={(e) => { e.stopPropagation(); handleMasterVolumeChange(Math.min(100, Math.max(0, masterVolume + (e.deltaY < 0 ? 5 : -5)))); }} className="absolute inset-0 opacity-0 cursor-pointer h-full w-full" title="Double-click to reset" style={{ WebkitAppearance: 'slider-vertical' }} />
                   </div>
-                  <span className="text-[10px] font-mono text-red-400">{masterVolume}</span>
+                  <span className="text-[9px] font-mono text-[#ff5a5a] font-bold mt-1">{masterVolume}</span>
              </div>
           </div>
         ) : activeView === 'lfos' ? (
-          <div className="flex-1 bg-neutral-900 flex p-4 gap-4 overflow-x-auto relative custom-scrollbar pb-6 items-start content-start">
+          <div className="flex-1 bg-[#333333] flex p-4 gap-4 overflow-x-auto relative custom-scrollbar pb-6 items-start content-start">
              {lfos.map(lfo => (
-                <div key={lfo.id} className="min-w-[24rem] max-w-lg h-full max-h-[400px] bg-[#111] border border-neutral-800/80 rounded-2xl p-5 flex flex-col shrink-0 shadow-[0_8px_30px_rgba(0,0,0,0.4)] relative group hover:border-neutral-700 transition-colors">
-                    <div className="flex justify-between items-center mb-4 border-b border-neutral-800 pb-3 shrink-0">
+                <div key={lfo.id} className="min-w-[24rem] max-w-lg h-full max-h-[400px] bg-[#3a3a3a] border border-[#222] rounded-sm p-4 flex flex-col shrink-0 relative group hover:border-[#555] transition-colors">
+                    <div className="flex justify-between items-center mb-3 border-b border-[#222] pb-2 shrink-0">
                        <div className="flex items-center gap-2">
-                          <Activity size={14} className="text-purple-400" />
-                          <span className="text-xs font-bold text-white uppercase tracking-wider">{lfo.name}</span>
+                          <Activity size={12} className="text-amber-500" />
+                          <span className="text-[10px] font-bold text-[#e0e0e0] uppercase tracking-wider">{lfo.name}</span>
                        </div>
-                       <button onClick={() => dispatchDawAction({ type: 'DELETE_LFO', payload: { id: lfo.id } })} className="text-neutral-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"><Trash2 size={14}/></button>
+                       <button onClick={() => dispatchDawAction({ type: 'DELETE_LFO', payload: { id: lfo.id } })} className="text-[#888] hover:text-[#ff5a5a] opacity-0 group-hover:opacity-100 transition-opacity"><Trash2 size={12}/></button>
                     </div>
 
-                    <div className="flex gap-3 shrink-0 mb-4">
-                        <div className="flex flex-col gap-2 flex-1">
-                            <label className="text-[9px] text-neutral-500 font-bold uppercase tracking-wider">Wave Type</label>
+                    <div className="flex gap-2 shrink-0 mb-3">
+                        <div className="flex flex-col gap-1 flex-1">
+                            <label className="text-[8px] text-[#888] font-bold uppercase tracking-wider">Wave Type</label>
                             <select 
                                 value={lfo.type} 
                                 onChange={(e) => dispatchDawAction({ type: 'UPDATE_LFO', payload: { id: lfo.id, updates: { type: e.target.value } } })}
-                                className="w-full bg-neutral-900 border border-neutral-700 rounded-lg p-2 text-xs text-white outline-none focus:border-purple-500 cursor-pointer"
+                                className="w-full bg-[#222] border border-[#111] rounded-sm p-1.5 text-[10px] text-white outline-none focus:border-amber-500 cursor-pointer uppercase tracking-wider font-bold"
                             >
                                 <option value="sine">Sine</option>
                                 <option value="triangle">Triangle</option>
                                 <option value="square">Square</option>
                                 <option value="sawtooth">Sawtooth</option>
-                                <option value="stepped">Stepped (Custom)</option>
+                                <option value="stepped">Stepped</option>
                             </select>
                         </div>
                         {lfo.type === 'stepped' && (
-                            <div className="flex flex-col gap-2 w-24 shrink-0">
-                                <label className="text-[9px] text-neutral-500 font-bold uppercase tracking-wider">Steps</label>
+                            <div className="flex flex-col gap-1 w-16 shrink-0">
+                                <label className="text-[8px] text-[#888] font-bold uppercase tracking-wider">Steps</label>
                                 <input 
                                     type="number"
                                     min="2"
@@ -5615,13 +5619,13 @@ const initAudioEngine = async (explicitTracks = null) => {
                                         }
                                         dispatchDawAction({ type: 'UPDATE_LFO', payload: { id: lfo.id, updates: { steps: next } } });
                                     }}
-                                    className="w-full bg-neutral-900 border border-neutral-700 rounded-lg p-2 text-xs text-white outline-none focus:border-purple-500"
+                                    className="w-full bg-[#222] border border-[#111] rounded-sm p-1.5 text-[10px] font-bold text-white outline-none focus:border-amber-500 uppercase text-center"
                                 />
                             </div>
                         )}
                     </div>
 
-                    <div className="flex justify-around mt-2 shrink-0">
+                    <div className="flex justify-around mt-1 shrink-0">
                         <Knob 
                             param="rate" 
                             value={lfo.rate} 
@@ -5642,24 +5646,24 @@ const initAudioEngine = async (explicitTracks = null) => {
                         />
                     </div>
 
-                    <div className="relative w-full flex-1 min-h-[100px] bg-black border border-neutral-800 rounded-xl overflow-hidden mt-4 shrink-0 shadow-inner">
-                        <div id={`lfo-vis-dot-${lfo.id}`} className="absolute w-3 h-3 bg-purple-500 rounded-full shadow-[0_0_10px_#a855f7] -ml-1.5 -mt-1.5 z-20 pointer-events-none" style={{ left: '0%', top: '50%' }} />
+                    <div className="relative w-full flex-1 min-h-[100px] bg-[#222] border border-[#111] rounded-sm overflow-hidden mt-4 shrink-0">
+                        <div id={`lfo-vis-dot-${lfo.id}`} className="absolute w-2.5 h-2.5 bg-amber-500 rounded-full shadow-[0_0_8px_#f59e0b] -ml-[5px] -mt-[5px] z-20 pointer-events-none" style={{ left: '0%', top: '50%' }} />
                         
                         {lfo.type !== 'stepped' && (
                             <div className="absolute inset-y-0 left-0 w-full flex items-center pointer-events-none z-10">
-                                {lfo.type === 'sine' && <svg width="100%" height="100%" preserveAspectRatio="none" viewBox="0 0 100 100"><path d="M0,50 L5,34.5 L10,20.6 L15,9.5 L20,2.4 L25,0 L30,2.4 L35,9.5 L40,20.6 L45,34.5 L50,50 L55,65.5 L60,79.4 L65,90.5 L70,97.6 L75,100 L80,97.6 L85,90.5 L90,79.4 L95,65.5 L100,50" fill="none" stroke="#a855f7" strokeWidth="2" opacity="0.3"/></svg>}
-                                {lfo.type === 'triangle' && <svg width="100%" height="100%" preserveAspectRatio="none" viewBox="0 0 100 100"><path d="M0,50 L25,0 L75,100 L100,50" fill="none" stroke="#a855f7" strokeWidth="2" opacity="0.3"/></svg>}
-                                {lfo.type === 'square' && <svg width="100%" height="100%" preserveAspectRatio="none" viewBox="0 0 100 100"><path d="M0,0 L50,0 L50,100 L100,100" fill="none" stroke="#a855f7" strokeWidth="2" opacity="0.3"/></svg>}
-                                {lfo.type === 'sawtooth' && <svg width="100%" height="100%" preserveAspectRatio="none" viewBox="0 0 100 100"><path d="M0,100 L100,0 V100" fill="none" stroke="#a855f7" strokeWidth="2" opacity="0.3"/></svg>}
+                                {lfo.type === 'sine' && <svg width="100%" height="100%" preserveAspectRatio="none" viewBox="0 0 100 100"><path d="M0,50 L5,34.5 L10,20.6 L15,9.5 L20,2.4 L25,0 L30,2.4 L35,9.5 L40,20.6 L45,34.5 L50,50 L55,65.5 L60,79.4 L65,90.5 L70,97.6 L75,100 L80,97.6 L85,90.5 L90,79.4 L95,65.5 L100,50" fill="none" stroke="#f59e0b" strokeWidth="1.5" opacity="0.4"/></svg>}
+                                {lfo.type === 'triangle' && <svg width="100%" height="100%" preserveAspectRatio="none" viewBox="0 0 100 100"><path d="M0,50 L25,0 L75,100 L100,50" fill="none" stroke="#f59e0b" strokeWidth="1.5" opacity="0.4"/></svg>}
+                                {lfo.type === 'square' && <svg width="100%" height="100%" preserveAspectRatio="none" viewBox="0 0 100 100"><path d="M0,0 L50,0 L50,100 L100,100" fill="none" stroke="#f59e0b" strokeWidth="1.5" opacity="0.4"/></svg>}
+                                {lfo.type === 'sawtooth' && <svg width="100%" height="100%" preserveAspectRatio="none" viewBox="0 0 100 100"><path d="M0,100 L100,0 V100" fill="none" stroke="#f59e0b" strokeWidth="1.5" opacity="0.4"/></svg>}
                             </div>
                         )}
 
                         {lfo.type === 'stepped' && (
                             <div className="absolute inset-0 flex gap-px p-1 items-end z-10">
                                 {(lfo.steps || [0.5,0.5,0.5,0.5,0.5,0.5,0.5,0.5]).map((val, i) => (
-                                    <div key={i} className="relative w-full h-full bg-neutral-900/40 rounded-sm shadow-inner flex flex-col justify-end group hover:bg-neutral-800/60 transition-colors">
-                                        <div className="absolute bottom-0 w-full bg-gradient-to-t from-purple-600/30 to-purple-400/50 rounded-sm pointer-events-none transition-all duration-75" style={{ height: `${val * 100}%` }} />
-                                        <div className="absolute bottom-0 w-full h-1 bg-purple-400 shadow-[0_0_8px_rgba(192,132,252,0.9)] pointer-events-none transition-all duration-75 group-hover:bg-purple-300" style={{ bottom: `calc(${val * 100}% - 2px)` }} />
+                                    <div key={i} className="relative w-full h-full bg-[#111] rounded-sm flex flex-col justify-end group hover:bg-[#333] transition-colors">
+                                        <div className="absolute bottom-0 w-full bg-amber-500/20 rounded-sm pointer-events-none transition-all duration-75" style={{ height: `${val * 100}%` }} />
+                                        <div className="absolute bottom-0 w-full h-[2px] bg-amber-500 pointer-events-none transition-all duration-75 group-hover:bg-amber-400" style={{ bottom: `calc(${val * 100}% - 1px)` }} />
                                         <input 
                                             type="range" 
                                             orient="vertical" 
@@ -5681,9 +5685,9 @@ const initAudioEngine = async (explicitTracks = null) => {
                 </div>
              ))}
 
-             <div className="w-48 min-w-[12rem] h-full max-h-[400px] border-2 border-dashed border-neutral-800 hover:border-neutral-700 rounded-xl flex flex-col items-center justify-center shrink-0 cursor-pointer group transition-colors" onClick={() => dispatchDawAction({ type: 'ADD_LFO', payload: { id: `lfo_${Date.now()}`, name: `LFO ${lfos.length + 1}`, type: 'sine', rate: 1.0, depth: 100, steps: [0.5,0.5,0.5,0.5,0.5,0.5,0.5,0.5], mappings: [] }})}>
-                <Plus size={24} className="text-neutral-600 group-hover:text-purple-400 mb-2 transition-colors"/>
-                <span className="text-[10px] text-neutral-500 group-hover:text-purple-400 font-bold uppercase tracking-wider transition-colors">Add LFO</span>
+             <div className="w-32 min-w-[8rem] h-full max-h-[400px] border border-[#222] bg-[#3a3a3a] hover:border-[#555] rounded-sm flex flex-col items-center justify-center shrink-0 cursor-pointer group transition-colors" onClick={() => dispatchDawAction({ type: 'ADD_LFO', payload: { id: `lfo_${Date.now()}`, name: `LFO ${lfos.length + 1}`, type: 'sine', rate: 1.0, depth: 100, steps: [0.5,0.5,0.5,0.5,0.5,0.5,0.5,0.5], mappings: [] }})}>
+                <Plus size={20} className="text-[#888] group-hover:text-amber-500 mb-2 transition-colors"/>
+                <span className="text-[10px] text-[#888] group-hover:text-[#ccc] font-bold uppercase tracking-wider transition-colors text-center px-2">Add LFO</span>
              </div>
           </div>
         ) : (
