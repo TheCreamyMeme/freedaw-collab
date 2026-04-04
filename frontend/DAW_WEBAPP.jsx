@@ -824,6 +824,36 @@ const Knob = React.memo(({ id, param, value, min, max, step, isLog, onChange, on
         });
     }, [angle, id]);
 
+    // Keep LFO bounds anchored to the MIDI indicator (or base knob if none)
+    useEffect(() => {
+        if (!lfoMappedRange) return;
+        let reqId;
+        const updateLfoBounds = () => {
+            const spreadPercent = lfoMappedRange.max - lfoMappedRange.min;
+            const spreadDeg = spreadPercent * 270;
+            
+            let centerAngle = angle;
+            const midiLiveEl = document.getElementById(id ? `knob-live-midi-${id}` : '');
+            if (midiLiveEl && midiLiveEl.style.transform) {
+                const match = midiLiveEl.style.transform.match(/rotate\((.*?)deg\)/);
+                if (match) {
+                    const parsed = parseFloat(match[1]);
+                    if (!isNaN(parsed)) centerAngle = parsed;
+                }
+            }
+            
+            const minEl = document.getElementById(id ? `lfo-min-${id}` : '');
+            const maxEl = document.getElementById(id ? `lfo-max-${id}` : '');
+            
+            if (minEl) minEl.style.transform = `translate(-50%, 0) rotate(${centerAngle - spreadDeg / 2}deg)`;
+            if (maxEl) maxEl.style.transform = `translate(-50%, 0) rotate(${centerAngle + spreadDeg / 2}deg)`;
+            
+            reqId = requestAnimationFrame(updateLfoBounds);
+        };
+        reqId = requestAnimationFrame(updateLfoBounds);
+        return () => cancelAnimationFrame(reqId);
+    }, [angle, id, lfoMappedRange]);
+
     return (
         <div className="flex flex-col items-center gap-2 w-16 shrink-0" onContextMenu={onContextMenu}>
             <div 
@@ -840,8 +870,8 @@ const Knob = React.memo(({ id, param, value, min, max, step, isLog, onChange, on
                 )}
                 {lfoMappedRange && (
                     <>
-                        <div className="absolute w-[3px] h-[3px] bg-purple-400 rounded-full z-10 shadow-[0_0_4px_#c084fc] pointer-events-none" style={getDotStyle(lfoMappedRange.min)} title="LFO Min" />
-                        <div className="absolute w-[3px] h-[3px] bg-fuchsia-400 rounded-full z-10 shadow-[0_0_4px_#e879f9] pointer-events-none" style={getDotStyle(lfoMappedRange.max)} title="LFO Max" />
+                        <div id={id ? `lfo-min-${id}` : undefined} className="absolute w-[3px] h-[3px] bg-purple-400 rounded-full z-10 shadow-[0_0_4px_#c084fc] pointer-events-none" style={{ left: '50%', top: '2px', transformOrigin: '50% 18px', transform: `translate(-50%, 0) rotate(${angle - ((lfoMappedRange.max - lfoMappedRange.min)*270)/2}deg)` }} title="LFO Min" />
+                        <div id={id ? `lfo-max-${id}` : undefined} className="absolute w-[3px] h-[3px] bg-fuchsia-400 rounded-full z-10 shadow-[0_0_4px_#e879f9] pointer-events-none" style={{ left: '50%', top: '2px', transformOrigin: '50% 18px', transform: `translate(-50%, 0) rotate(${angle + ((lfoMappedRange.max - lfoMappedRange.min)*270)/2}deg)` }} title="LFO Max" />
                     </>
                 )}
                 <div id={id ? `knob-rot-${id}` : undefined} className="absolute inset-0" style={{ transform: `rotate(${angle}deg)` }}>
@@ -2755,9 +2785,17 @@ const initAudioEngine = async (explicitTracks = null) => {
                       const constraints = getParamConstraints(mapping.param);
                       const rMin = mapping.rangeMin !== undefined ? mapping.rangeMin : 0;
                       const rMax = mapping.rangeMax !== undefined ? mapping.rangeMax : 1;
+                      const spread = rMax - rMin;
                       
-                      const scaledOut = 0.5 + (out - 0.5) * depthRatio;
-                      const rawPercent = rMin + scaledOut * (rMax - rMin);
+                      let basePercent = synth[`lastMidiRaw_fx_${mapping.fxId}_${mapping.param}`];
+                      if (basePercent === undefined) {
+                          const baseVal = fx.params[mapping.param] !== undefined ? fx.params[mapping.param] : 0;
+                          basePercent = constraints.isLog 
+                              ? (Math.log(Math.max(0.001, baseVal)) - Math.log(Math.max(0.001, constraints.min))) / (Math.log(constraints.max) - Math.log(Math.max(0.001, constraints.min)))
+                              : (baseVal - constraints.min) / (constraints.max - constraints.min);
+                      }
+                      
+                      const rawPercent = basePercent + (lfoSwing * spread * 0.5);
                       
                       let mappedVal;
                       if (constraints.isLog) {
@@ -2794,9 +2832,17 @@ const initAudioEngine = async (explicitTracks = null) => {
                       const constraints = getParamConstraints(mapping.param);
                       const rMin = mapping.rangeMin !== undefined ? mapping.rangeMin : 0;
                       const rMax = mapping.rangeMax !== undefined ? mapping.rangeMax : 1;
+                      const spread = rMax - rMin;
                       
-                      const scaledOut = 0.5 + (out - 0.5) * depthRatio;
-                      const rawPercent = rMin + scaledOut * (rMax - rMin);
+                      let basePercent = synth[`lastMidiRaw_inst_${mapping.param}`];
+                      if (basePercent === undefined) {
+                          const baseVal = track.instrumentParams?.[mapping.param] !== undefined ? track.instrumentParams[mapping.param] : 0;
+                          basePercent = constraints.isLog 
+                              ? (Math.log(Math.max(0.001, baseVal)) - Math.log(Math.max(0.001, constraints.min))) / (Math.log(constraints.max) - Math.log(Math.max(0.001, constraints.min)))
+                              : (baseVal - constraints.min) / (constraints.max - constraints.min);
+                      }
+                      
+                      const rawPercent = basePercent + (lfoSwing * spread * 0.5);
                       
                       let mappedVal;
                       if (constraints.isLog) {
@@ -3545,6 +3591,8 @@ const initAudioEngine = async (explicitTracks = null) => {
                         const angle = -135 + clampedPercent * 270;
 
                         if (mapping.type === 'fx_param') {
+                            const synth = synthsRef.current[mapping.trackId];
+                            if (synth) synth[`lastMidiRaw_fx_${mapping.fxId}_${mapping.param}`] = rawPercent;
                             applyAudioEffectParam(mapping.trackId, mapping.fxId, mapping.param, mappedVal);
                             const knobLive = document.getElementById(`knob-live-midi-fx-${mapping.trackId}-${mapping.fxId}-${mapping.param}`);
                             const knobVal = document.getElementById(`knob-val-fx-${mapping.trackId}-${mapping.fxId}-${mapping.param}`);
@@ -3552,7 +3600,10 @@ const initAudioEngine = async (explicitTracks = null) => {
                             if (knobVal) knobVal.innerText = mappedVal >= 1000 ? (mappedVal / 1000).toFixed(1) + 'k' : mappedVal.toFixed(constraints.step < 1 ? 2 : 0);
                         } else if (mapping.type === 'inst_param') {
                             const synth = synthsRef.current[mapping.trackId];
-                            if (synth) synth[`lastMidi_inst_${mapping.param}`] = mappedVal;
+                            if (synth) {
+                                synth[`lastMidi_inst_${mapping.param}`] = mappedVal;
+                                synth[`lastMidiRaw_inst_${mapping.param}`] = rawPercent;
+                            }
                             
                             const knobLive = document.getElementById(`knob-live-midi-inst-${mapping.trackId}-${mapping.param}`);
                             const knobVal = document.getElementById(`knob-val-inst-${mapping.trackId}-${mapping.param}`);
