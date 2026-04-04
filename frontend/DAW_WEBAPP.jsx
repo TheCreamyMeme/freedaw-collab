@@ -355,21 +355,21 @@ const getGridStyle = (snap, beatWidth, isPianoRoll = false) => {
 
     // Horizontal Pitch Lines (Piano Roll only)
     if (isPianoRoll) {
-        layers.push(`linear-gradient(to bottom, rgba(255,255,255,0.05) 1px, transparent 1px)`);
+        layers.push(`linear-gradient(to bottom, rgba(255,255,255,0.03) 1px, transparent 1px)`);
         sizes.push(`100% 16px`);
     }
     
     // Measure Lines (Strongest)
-    layers.push(`linear-gradient(to right, rgba(255,255,255,0.2) 1px, transparent 1px)`);
+    layers.push(`linear-gradient(to right, rgba(255,255,255,0.1) 1px, transparent 1px)`);
     sizes.push(`${measureW}px ${baseH}`);
     
     // Beat Lines (Medium)
-    layers.push(`linear-gradient(to right, rgba(255,255,255,0.08) 1px, transparent 1px)`);
+    layers.push(`linear-gradient(to right, rgba(255,255,255,0.04) 1px, transparent 1px)`);
     sizes.push(`${beatW}px ${baseH}`);
     
-    // Snap Sub-divisions (Blue Tinted)
+    // Snap Sub-divisions (Flat gray)
     if (snapW > 0 && snap !== 1 && snap !== 4) {
-        layers.push(`linear-gradient(to right, rgba(59,130,246,0.15) 1px, transparent 1px)`);
+        layers.push(`linear-gradient(to right, rgba(255,255,255,0.02) 1px, transparent 1px)`);
         sizes.push(`${snapW}px ${baseH}`);
     }
 
@@ -855,42 +855,41 @@ const Knob = React.memo(({ id, param, value, min, max, step, isLog, onChange, on
     }, [angle, id, lfoMappedRange]);
 
     return (
-        <div className="flex flex-col items-center gap-2 w-16 shrink-0" onContextMenu={onContextMenu}>
+        <div className="flex flex-col items-center gap-1 w-12 shrink-0" onContextMenu={onContextMenu}>
+            <span className="text-[9px] text-[#b3b3b3] font-bold tracking-wider text-center truncate w-full" title={displayName}>{displayName}</span>
             <div 
-                className="w-10 h-10 rounded-full bg-neutral-800 border-2 border-neutral-700 relative cursor-ns-resize shadow-[0_4px_8px_rgba(0,0,0,0.6)] group"
+                className="w-8 h-8 rounded-full bg-[#111111] border-2 border-[#2b2b2b] relative cursor-ns-resize group"
                 onPointerDown={handlePointerDown}
                 onWheel={handleWheel}
             >
-                <div className="absolute inset-0 rounded-full bg-gradient-to-b from-neutral-600/20 to-transparent pointer-events-none" />
                 {mappedRange && (
                     <>
-                        <div className="absolute w-[3px] h-[3px] bg-green-400 rounded-full z-10 shadow-[0_0_4px_#4ade80] pointer-events-none" style={getDotStyle(mappedRange.min)} title="MIDI Min" />
-                        <div className="absolute w-[3px] h-[3px] bg-red-400 rounded-full z-10 shadow-[0_0_4px_#f87171] pointer-events-none" style={getDotStyle(mappedRange.max)} title="MIDI Max" />
+                        <div className="absolute w-[2px] h-[2px] bg-[#4ade80] rounded-full z-10 pointer-events-none" style={getDotStyle(mappedRange.min)} title="MIDI Min" />
+                        <div className="absolute w-[2px] h-[2px] bg-[#f87171] rounded-full z-10 pointer-events-none" style={getDotStyle(mappedRange.max)} title="MIDI Max" />
                     </>
                 )}
                 {lfoMappedRange && (
                     <>
-                        <div id={id ? `lfo-min-${id}` : undefined} className="absolute w-[3px] h-[3px] bg-purple-400 rounded-full z-10 shadow-[0_0_4px_#c084fc] pointer-events-none" style={{ left: '50%', top: '2px', transformOrigin: '50% 18px', transform: `translate(-50%, 0) rotate(${angle - ((lfoMappedRange.max - lfoMappedRange.min)*270)/2}deg)` }} title="LFO Min" />
-                        <div id={id ? `lfo-max-${id}` : undefined} className="absolute w-[3px] h-[3px] bg-fuchsia-400 rounded-full z-10 shadow-[0_0_4px_#e879f9] pointer-events-none" style={{ left: '50%', top: '2px', transformOrigin: '50% 18px', transform: `translate(-50%, 0) rotate(${angle + ((lfoMappedRange.max - lfoMappedRange.min)*270)/2}deg)` }} title="LFO Max" />
+                        <div id={id ? `lfo-min-${id}` : undefined} className="absolute w-[2px] h-[2px] bg-[#c084fc] rounded-full z-10 pointer-events-none" style={{ left: '50%', top: '2px', transformOrigin: '50% 14px', transform: `translate(-50%, 0) rotate(${angle - ((lfoMappedRange.max - lfoMappedRange.min)*270)/2}deg)` }} title="LFO Min" />
+                        <div id={id ? `lfo-max-${id}` : undefined} className="absolute w-[2px] h-[2px] bg-[#e879f9] rounded-full z-10 pointer-events-none" style={{ left: '50%', top: '2px', transformOrigin: '50% 14px', transform: `translate(-50%, 0) rotate(${angle + ((lfoMappedRange.max - lfoMappedRange.min)*270)/2}deg)` }} title="LFO Max" />
                     </>
                 )}
                 <div id={id ? `knob-rot-${id}` : undefined} className="absolute inset-0" style={{ transform: `rotate(${angle}deg)` }}>
-                    <div className="mx-auto mt-1 w-1 h-3 bg-blue-400 rounded-full shadow-[0_0_6px_rgba(96,165,250,0.8)] group-hover:bg-blue-300 transition-colors pointer-events-none" />
+                    <div className="mx-auto mt-0.5 w-[2px] h-3 bg-[#444] group-hover:bg-[#888] transition-colors pointer-events-none" />
                 </div>
                 {mappedRange && (
                     <div id={id ? `knob-live-midi-${id}` : undefined} className="absolute inset-0 pointer-events-none z-20">
-                        <div className="mx-auto mt-[-4px] w-2 h-2 bg-green-400 rounded-full shadow-[0_0_8px_rgba(74,222,128,0.9)] border border-neutral-900" />
+                        <div className="mx-auto mt-[-3px] w-1.5 h-1.5 bg-[#4ade80] rounded-full" />
                     </div>
                 )}
                 {lfoMappedRange && (
                     <div id={id ? `knob-live-lfo-${id}` : undefined} className="absolute inset-0 pointer-events-none z-30">
-                        <div className="mx-auto mt-[-4px] w-2 h-2 bg-purple-400 rounded-full shadow-[0_0_8px_rgba(192,132,252,0.9)] border border-neutral-900" />
+                        <div className="mx-auto mt-[-3px] w-1.5 h-1.5 bg-[#c084fc] rounded-full" />
                     </div>
                 )}
             </div>
             <div className="flex flex-col items-center w-full">
-                <span className="text-[10px] text-neutral-300 font-bold uppercase tracking-wider text-center truncate w-full" title={displayName}>{displayName}</span>
-                <span id={id ? `knob-val-${id}` : undefined} className="text-[10px] text-blue-400 font-mono bg-neutral-950 px-1.5 py-0.5 rounded mt-0.5 border border-neutral-800 shadow-inner select-none">
+                <span id={id ? `knob-val-${id}` : undefined} className="text-[9px] text-[#e0e0e0] font-mono select-none">
                     {Number(value) >= 1000 ? (Number(value) / 1000).toFixed(1) + 'k' : Number(value).toFixed(step < 1 ? 2 : 0)}
                 </span>
             </div>
@@ -2024,12 +2023,12 @@ function DAWStudio() {
   useEffect(() => {
     const style = document.createElement('style');
     style.innerHTML = `
-      .custom-scrollbar { scrollbar-width: thin; scrollbar-color: #3f3f46 transparent; }
+      .custom-scrollbar { scrollbar-width: thin; scrollbar-color: #555555 transparent; }
       .custom-scrollbar::-webkit-scrollbar { width: 12px; height: 12px; }
-      .custom-scrollbar::-webkit-scrollbar-track { background: rgba(0, 0, 0, 0.2); border-radius: 8px; border: 3px solid transparent; background-clip: padding-box; }
-      .custom-scrollbar::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 8px; border: 3px solid transparent; background-clip: padding-box; }
-      .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #52525b; border: 3px solid transparent; background-clip: padding-box; }
-      .custom-scrollbar::-webkit-scrollbar-corner { background: transparent; }
+      .custom-scrollbar::-webkit-scrollbar-track { background: #1e1e1e; border-radius: 0; border: none; }
+      .custom-scrollbar::-webkit-scrollbar-thumb { background: #555555; border-radius: 0; border: 2px solid #1e1e1e; }
+      .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #777777; border: 2px solid #1e1e1e; }
+      .custom-scrollbar::-webkit-scrollbar-corner { background: #1e1e1e; }
     `;
     document.head.appendChild(style);
     return () => { if (document.head.contains(style)) document.head.removeChild(style); };
@@ -5283,7 +5282,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                 e.preventDefault(); 
             }
         }}
-        className="flex flex-col h-screen bg-[#0a0a0a] text-neutral-300 font-sans select-none outline-none"
+        className="flex flex-col h-screen bg-[#2b2b2b] text-neutral-300 font-sans select-none outline-none"
     >
       
       {/* Loading Overlay */}
@@ -5303,7 +5302,7 @@ const initAudioEngine = async (explicitTracks = null) => {
         </div>
       )}
 
-      <header className="h-14 bg-gradient-to-b from-neutral-900 to-neutral-950 border-b border-neutral-800/80 flex items-center justify-between px-4 shrink-0 z-40 relative shadow-md overflow-x-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+      <header className="h-14 bg-[#333333] border-b border-[#111111] flex items-center justify-between px-4 shrink-0 z-40 relative overflow-x-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
         <div className="flex items-center gap-2 lg:gap-4 flex-1 min-w-0 justify-start">
             <button onClick={() => { loadProjects(authTokenRef.current); setAppView('home'); }} className="text-neutral-400 hover:text-white transition-colors shrink-0" title="Back to Library"><Home size={18} /></button>
             <div className="flex flex-col justify-center shrink-0">
@@ -5317,19 +5316,19 @@ const initAudioEngine = async (explicitTracks = null) => {
         </div>
 
         
-        <div className="flex items-center justify-center gap-1 sm:gap-1.5 bg-[#121212] px-2 sm:px-3 py-1.5 rounded-2xl border border-neutral-800/80 shrink-0 shadow-[inset_0_2px_4px_rgba(0,0,0,0.2)] mx-2 lg:mx-4">
-            <button onClick={() => transportActionsRef.current.rewind?.()} onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'transport_rewind' })} className="p-1.5 text-neutral-400 hover:text-white hover:bg-white/5 rounded-lg transition-all" title="Return to Start"><SkipBack size={16} /></button>
-            <button onClick={togglePlay} onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'transport_play' })} className={`p-2 rounded-full transition-all duration-300 ${isPlaying ? 'bg-blue-500 text-white shadow-[0_0_16px_rgba(59,130,246,0.6)] scale-105' : 'bg-neutral-800 text-white hover:bg-neutral-700 hover:scale-105'}`} title="Play/Pause">{isPlaying ? <Pause size={16} className="animate-pulse"/> : <Play size={16} className="ml-0.5"/>}</button>
-            <button onClick={stopPlayback} onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'transport_stop' })} className="p-1.5 text-neutral-400 hover:text-white hover:bg-white/5 rounded-lg transition-all" title="Stop"><Square size={16}/></button>
-            <button onClick={() => transportActionsRef.current.forward?.()} onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'transport_forward' })} className="p-1.5 text-neutral-400 hover:text-white hover:bg-white/5 rounded-lg transition-all" title="Forward"><SkipForward size={16} /></button>
-            <button onClick={toggleRecord} onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'transport_record' })} className={`p-1.5 rounded-xl transition-all duration-300 ml-1 ${isRecording ? 'text-red-500 bg-red-500/20 shadow-[0_0_12px_rgba(239,68,68,0.4)] scale-105' : 'text-neutral-400 hover:text-red-400 hover:bg-neutral-800'}`} title="Record (Keyboard/Mic)"><Circle size={16} fill="currentColor"/></button>
-            <div className="w-px h-5 bg-neutral-800 mx-2" />
+        <div className="flex items-center justify-center gap-0.5 bg-[#222222] px-2 py-1 rounded border border-[#111111] shrink-0 mx-2 lg:mx-4">
+            <button onClick={() => transportActionsRef.current.rewind?.()} onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'transport_rewind' })} className="p-1.5 text-neutral-400 hover:text-white hover:bg-white/10 rounded-sm transition-all" title="Return to Start"><SkipBack size={16} /></button>
+            <button onClick={togglePlay} onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'transport_play' })} className={`p-1.5 rounded-sm transition-all duration-100 ${isPlaying ? 'bg-amber-500 text-black' : 'bg-transparent text-white hover:bg-white/10'}`} title="Play/Pause">{isPlaying ? <Pause size={16} /> : <Play size={16} />}</button>
+            <button onClick={stopPlayback} onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'transport_stop' })} className="p-1.5 text-neutral-400 hover:text-white hover:bg-white/10 rounded-sm transition-all" title="Stop"><Square size={16}/></button>
+            <button onClick={() => transportActionsRef.current.forward?.()} onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'transport_forward' })} className="p-1.5 text-neutral-400 hover:text-white hover:bg-white/10 rounded-sm transition-all" title="Forward"><SkipForward size={16} /></button>
+            <button onClick={toggleRecord} onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'transport_record' })} className={`p-1.5 rounded-sm transition-all duration-100 ml-1 ${isRecording ? 'text-black bg-red-500' : 'text-neutral-400 hover:text-white hover:bg-white/10'}`} title="Record (Keyboard/Mic)"><Circle size={16} fill="currentColor"/></button>
+            <div className="w-px h-5 bg-[#111] mx-1" />
             <button onClick={() => {
                 const nextEnabled = !loopRegion.enabled;
                 setLoopRegion(prev => ({...prev, enabled: nextEnabled}));
             dispatchDawAction({ type: 'UPDATE_LOOP_REGION', payload: { ...loopRegion, enabled: nextEnabled } });
-        }} onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'transport_loop' })} className={`p-1.5 rounded-lg transition-colors ${loopRegion.enabled ? 'text-blue-400 bg-blue-500/20' : 'text-neutral-400 hover:text-white hover:bg-neutral-800'}`} title="Toggle Loop"><Repeat size={16}/></button>
-        <button onClick={() => setIsMetronomeEnabled(!isMetronomeEnabled)} className={`p-1.5 rounded-lg transition-colors ml-1 ${isMetronomeEnabled ? 'text-blue-400 bg-blue-500/20' : 'text-neutral-400 hover:text-white hover:bg-neutral-800'}`} title="Toggle Metronome"><Bell size={16}/></button>
+        }} onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'transport_loop' })} className={`p-1.5 rounded-sm transition-colors ${loopRegion.enabled ? 'text-black bg-cyan-500' : 'text-neutral-400 hover:text-white hover:bg-white/10'}`} title="Toggle Loop"><Repeat size={16}/></button>
+        <button onClick={() => setIsMetronomeEnabled(!isMetronomeEnabled)} className={`p-1.5 rounded-sm transition-colors ml-0.5 ${isMetronomeEnabled ? 'text-black bg-cyan-500' : 'text-neutral-400 hover:text-white hover:bg-white/10'}`} title="Toggle Metronome"><Bell size={16}/></button>
     </div>
 
 
@@ -5390,11 +5389,11 @@ const initAudioEngine = async (explicitTracks = null) => {
 
       <div className="flex flex-1 overflow-hidden relative">
         {/* Left Toolbar */}
-        <div className="w-14 bg-neutral-950 border-r border-neutral-800/60 flex flex-col items-center py-4 gap-4 z-20 shadow-[4px_0_20px_rgba(0,0,0,0.4)]">
-          <button onClick={() => setActiveView('arrangement')} className={`p-2.5 rounded-xl transition-all duration-300 ${activeView==='arrangement'?'bg-blue-500/20 text-blue-400 shadow-[0_0_12px_rgba(59,130,246,0.3)] scale-105':'text-neutral-500 hover:bg-neutral-800 hover:text-white'}`} title="Arrangement View"><Grid size={20}/></button>
-          <button onClick={() => setActiveView('mixer')} className={`p-2.5 rounded-xl transition-all duration-300 ${activeView==='mixer'?'bg-blue-500/20 text-blue-400 shadow-[0_0_12px_rgba(59,130,246,0.3)] scale-105':'text-neutral-500 hover:bg-neutral-800 hover:text-white'}`} title="Mixer Console"><Sliders size={20}/></button>
-          <button onClick={() => setActiveView('lfos')} className={`p-2.5 rounded-xl transition-all duration-300 ${activeView==='lfos'?'bg-purple-500/20 text-purple-400 shadow-[0_0_12px_rgba(168,85,247,0.3)] scale-105':'text-neutral-500 hover:bg-neutral-800 hover:text-white'}`} title="LFO Rack"><Activity size={20}/></button>
-          <button onClick={() => setActiveView('browser')} className={`p-2.5 rounded-xl transition-all duration-300 mt-auto ${activeView==='browser'?'bg-blue-500/20 text-blue-400 shadow-[0_0_12px_rgba(59,130,246,0.3)] scale-105':'text-neutral-500 hover:bg-neutral-800 hover:text-white'}`} title="Plugin Browser"><Folder size={20}/></button>
+        <div className="w-14 bg-[#333333] border-r border-[#111111] flex flex-col items-center py-4 gap-4 z-20">
+          <button onClick={() => setActiveView('arrangement')} className={`p-2 rounded-sm transition-all duration-100 ${activeView==='arrangement'?'bg-[#444] text-amber-500':'text-neutral-400 hover:bg-[#444] hover:text-white'}`} title="Arrangement View"><Grid size={20}/></button>
+          <button onClick={() => setActiveView('mixer')} className={`p-2 rounded-sm transition-all duration-100 ${activeView==='mixer'?'bg-[#444] text-amber-500':'text-neutral-400 hover:bg-[#444] hover:text-white'}`} title="Mixer Console"><Sliders size={20}/></button>
+          <button onClick={() => setActiveView('lfos')} className={`p-2 rounded-sm transition-all duration-100 ${activeView==='lfos'?'bg-[#444] text-amber-500':'text-neutral-400 hover:bg-[#444] hover:text-white'}`} title="LFO Rack"><Activity size={20}/></button>
+          <button onClick={() => setActiveView('browser')} className={`p-2 rounded-sm transition-all duration-100 mt-auto ${activeView==='browser'?'bg-[#444] text-amber-500':'text-neutral-400 hover:bg-[#444] hover:text-white'}`} title="Plugin Browser"><Folder size={20}/></button>
         </div>
 
         {/* Main Content Area */}
@@ -5691,14 +5690,14 @@ const initAudioEngine = async (explicitTracks = null) => {
           <div className="flex-1 flex flex-col overflow-hidden relative">
             <div className="flex-1 flex overflow-hidden">
                 {/* Track Headers */}
-                <div className="w-64 bg-neutral-900 border-r border-neutral-800 flex flex-col z-20 shadow-[4px_0_24px_rgba(0,0,0,0.2)]">
-                    <div className="h-8 bg-neutral-950 border-b border-neutral-800 flex items-center justify-between px-2 shrink-0">
-                        <span className="text-[10px] font-bold text-neutral-500">TRACKS</span>
+                <div className="w-64 bg-[#3a3a3a] border-r border-[#111] flex flex-col z-20">
+                    <div className="h-8 bg-[#2d2d2d] border-b border-[#111] flex items-center justify-between px-2 shrink-0">
+                        <span className="text-[10px] font-bold text-[#888]">TRACKS</span>
                         <div className="flex gap-1">
                             {/* Auto Tracks Toggle Button */}
-                            <button onClick={() => setIsAutomationMode(!isAutomationMode)} className={`text-[9px] uppercase font-bold flex items-center gap-1 px-1.5 py-0.5 rounded transition-colors ${isAutomationMode ? 'bg-blue-500 text-white shadow-[0_0_8px_rgba(59,130,246,0.5)]' : 'bg-neutral-800 text-neutral-400 hover:text-white hover:bg-neutral-700'}`} title="Toggle Automation Lanes (Ctrl+Shift+A)"><Activity size={10}/> Auto</button>
-                            <button onClick={() => dispatchDawAction({ type: 'ADD_TRACK', payload: { id: Date.now(), name: 'New MIDI', type: 'midi', instrument: 'inst-subtractive', instrumentParams: {cutoff:2000, res:1}, color: 'bg-pink-500', volume: 80, pan: 0, automation: {}, activeAutomationParam: 'volume', clips: [], effects: [] }})} className="text-[9px] uppercase text-neutral-400 hover:text-white font-bold flex items-center gap-1 bg-neutral-800 hover:bg-neutral-700 px-1.5 py-0.5 rounded transition-colors"><Plus size={10}/> MIDI</button>
-                            <button onClick={() => dispatchDawAction({ type: 'ADD_TRACK', payload: { id: Date.now(), name: 'New Audio', type: 'audio', color: 'bg-emerald-500', volume: 80, pan: 0, automation: {}, activeAutomationParam: 'volume', clips: [], effects: [] }})} className="text-[9px] uppercase text-neutral-400 hover:text-white font-bold flex items-center gap-1 bg-neutral-800 hover:bg-neutral-700 px-1.5 py-0.5 rounded transition-colors"><Plus size={10}/> Audio</button>
+                            <button onClick={() => setIsAutomationMode(!isAutomationMode)} className={`text-[9px] uppercase font-bold flex items-center gap-1 px-1.5 py-0.5 rounded-sm transition-colors ${isAutomationMode ? 'bg-cyan-500 text-black' : 'bg-[#444] text-neutral-400 hover:text-white hover:bg-[#555]'}`} title="Toggle Automation Lanes (Ctrl+Shift+A)"><Activity size={10}/> Auto</button>
+                            <button onClick={() => dispatchDawAction({ type: 'ADD_TRACK', payload: { id: Date.now(), name: 'New MIDI', type: 'midi', instrument: 'inst-subtractive', instrumentParams: {cutoff:2000, res:1}, color: 'bg-pink-500', volume: 80, pan: 0, automation: {}, activeAutomationParam: 'volume', clips: [], effects: [] }})} className="text-[9px] uppercase text-neutral-400 hover:text-white font-bold flex items-center gap-1 bg-[#444] hover:bg-[#555] px-1.5 py-0.5 rounded-sm transition-colors"><Plus size={10}/> MIDI</button>
+                            <button onClick={() => dispatchDawAction({ type: 'ADD_TRACK', payload: { id: Date.now(), name: 'New Audio', type: 'audio', color: 'bg-emerald-500', volume: 80, pan: 0, automation: {}, activeAutomationParam: 'volume', clips: [], effects: [] }})} className="text-[9px] uppercase text-neutral-400 hover:text-white font-bold flex items-center gap-1 bg-[#444] hover:bg-[#555] px-1.5 py-0.5 rounded-sm transition-colors"><Plus size={10}/> Audio</button>
                         </div>
                     </div>
                     <div className="flex-1 overflow-y-auto overflow-x-hidden custom-scrollbar pr-1">
@@ -5707,26 +5706,26 @@ const initAudioEngine = async (explicitTracks = null) => {
                             const autoKeys = isAutomationMode ? Array.from(new Set([...Object.keys(t.automation || {}).filter(k => t.automation[k]?.length > 0), t.activeAutomationParam].filter(Boolean))) : [];
                             return (
                             <div key={t.id} className="flex flex-col w-full">
-                            <div onClick={() => dispatchPresence(t.id)} onContextMenu={(e) => handleContextMenu(e, 'track', { trackId: t.id })} className={`h-24 border-b border-neutral-800/60 p-2 flex flex-col justify-between hover:bg-neutral-800/40 relative transition-all duration-200 ${bottomDock?.trackId === t.id && bottomDock?.type === 'devices' ? 'bg-neutral-800/60 border-l-[3px] border-l-blue-500 shadow-[inset_4px_0_12px_rgba(59,130,246,0.1)]' : 'border-l-[3px] border-l-transparent'}`}>
-                                {isPeered && <div className={`absolute left-0 top-0 bottom-0 w-1 shadow-[0_0_8px_rgba(255,255,255,0.3)] ${isPeered.color || 'bg-blue-500'}`} title={`${isPeered.username} is active`} />}
+                            <div onClick={() => dispatchPresence(t.id)} onContextMenu={(e) => handleContextMenu(e, 'track', { trackId: t.id })} className={`h-24 border-b border-[#222] p-2 flex flex-col justify-between hover:bg-[#444] bg-[#3a3a3a] relative transition-all duration-100 ${bottomDock?.trackId === t.id && bottomDock?.type === 'devices' ? 'bg-[#4a4a4a]' : ''}`}>
+                                {isPeered && <div className={`absolute left-0 top-0 bottom-0 w-1 ${isPeered.color || 'bg-cyan-500'}`} title={`${isPeered.username} is active`} />}
                                 <div className="flex justify-between items-center">
                                     <div className="flex items-center gap-2 pl-1">
                                         <div 
-                                          className={`w-3 h-3 rounded-full shadow-sm ${t.color} shrink-0 cursor-pointer hover:scale-110 transition-transform`} 
+                                          className={`w-2.5 h-2.5 rounded-sm ${t.color.replace('bg-', 'bg-').replace('-500', '-400')} shrink-0 cursor-pointer`} 
                                           title="Click to cycle color"
                                           onClick={(e) => { e.stopPropagation(); const colors = ['bg-emerald-500', 'bg-blue-500', 'bg-purple-500', 'bg-pink-500', 'bg-red-500', 'bg-orange-500', 'bg-yellow-500', 'bg-cyan-500']; dispatchDawAction({ type: 'UPDATE_TRACK_COLOR', payload: { trackId: t.id, color: colors[(colors.indexOf(t.color) + 1) % colors.length] }}); }}
                                         />
                                         {editingTrackId === t.id ? (
-                                            <input autoFocus onBlur={() => setEditingTrackId(null)} onKeyDown={(e) => e.key === 'Enter' && setEditingTrackId(null)} value={t.name} onChange={(e) => dispatchDawAction({ type: 'RENAME_TRACK', payload: { id: t.id, name: e.target.value } })} className="bg-neutral-950 text-xs font-bold text-white outline-none border border-neutral-700 rounded px-1 w-24" />
+                                            <input autoFocus onBlur={() => setEditingTrackId(null)} onKeyDown={(e) => e.key === 'Enter' && setEditingTrackId(null)} value={t.name} onChange={(e) => dispatchDawAction({ type: 'RENAME_TRACK', payload: { id: t.id, name: e.target.value } })} className="bg-[#222] text-xs font-bold text-white outline-none border border-[#111] rounded-sm px-1 w-24" />
                                         ) : (
-                                            <span onDoubleClick={() => setEditingTrackId(t.id)} className="text-xs font-bold text-white truncate w-24 cursor-text">{t.name}</span>
+                                            <span onDoubleClick={() => setEditingTrackId(t.id)} className="text-[10px] uppercase tracking-wider font-bold text-white truncate w-24 cursor-text">{t.name}</span>
                                         )}
                                     </div>
-                                    <div className="flex items-center gap-1">
-                                        <button onClick={(e) => { e.stopPropagation(); dispatchDawAction({ type: 'TOGGLE_ARM', payload: { trackId: t.id } }); }} className={`w-5 h-5 rounded flex items-center justify-center transition-colors ${t.armed ? 'text-red-500 bg-red-500/20' : 'text-neutral-500 hover:bg-neutral-700 hover:text-red-400'}`}><Circle size={10} fill={t.armed ? "currentColor" : "none"}/></button>
-                                        <button onClick={(e) => { e.stopPropagation(); dispatchDawAction({ type: 'TOGGLE_MUTE', payload: { trackId: t.id } }); }} className={`w-5 h-5 rounded text-[9px] font-bold transition-colors ${t.muted ? 'bg-orange-500/20 text-orange-400' : 'text-neutral-500 hover:bg-neutral-700'}`}>M</button>
-                                        <button onClick={(e) => { e.stopPropagation(); dispatchDawAction({ type: 'TOGGLE_SOLO', payload: { trackId: t.id } }); }} className={`w-5 h-5 rounded text-[9px] font-bold transition-colors ${t.solo ? 'bg-yellow-500/20 text-yellow-400' : 'text-neutral-500 hover:bg-neutral-700'}`}>S</button>
-                                        <button onClick={(e) => { e.stopPropagation(); setBottomDock(bottomDock?.trackId === t.id && bottomDock?.type === 'devices' ? null : { type: 'devices', trackId: t.id }); }} className={`w-5 h-5 flex items-center justify-center rounded transition-colors ${bottomDock?.trackId === t.id && bottomDock?.type === 'devices' ? 'bg-blue-500/20 text-blue-400' : 'text-neutral-500 hover:bg-neutral-700 hover:text-white'}`}><Plug size={12}/></button>
+                                    <div className="flex items-center gap-0.5">
+                                        <button onClick={(e) => { e.stopPropagation(); dispatchDawAction({ type: 'TOGGLE_ARM', payload: { trackId: t.id } }); }} className={`w-5 h-5 rounded-sm flex items-center justify-center transition-colors ${t.armed ? 'text-black bg-[#ff5a5a]' : 'text-[#888] bg-[#222] hover:bg-[#555]'}`}><Circle size={8} fill={t.armed ? "currentColor" : "none"}/></button>
+                                        <button onClick={(e) => { e.stopPropagation(); dispatchDawAction({ type: 'TOGGLE_MUTE', payload: { trackId: t.id } }); }} className={`w-5 h-5 rounded-sm text-[9px] font-bold transition-colors ${t.muted ? 'bg-[#ffae00] text-black' : 'text-[#888] bg-[#222] hover:bg-[#555]'}`}>M</button>
+                                        <button onClick={(e) => { e.stopPropagation(); dispatchDawAction({ type: 'TOGGLE_SOLO', payload: { trackId: t.id } }); }} className={`w-5 h-5 rounded-sm text-[9px] font-bold transition-colors ${t.solo ? 'bg-[#00d0ff] text-black' : 'text-[#888] bg-[#222] hover:bg-[#555]'}`}>S</button>
+                                        <button onClick={(e) => { e.stopPropagation(); setBottomDock(bottomDock?.trackId === t.id && bottomDock?.type === 'devices' ? null : { type: 'devices', trackId: t.id }); }} className={`w-5 h-5 flex items-center justify-center rounded-sm transition-colors ${bottomDock?.trackId === t.id && bottomDock?.type === 'devices' ? 'bg-cyan-500 text-black' : 'text-[#888] bg-[#222] hover:bg-[#555]'}`}><Plug size={10}/></button>
                                     </div>
                                 </div>
                                 <div className="flex flex-col gap-1 px-1">
@@ -5758,8 +5757,8 @@ const initAudioEngine = async (explicitTracks = null) => {
                 </div>
                 
                 {/* Timeline */}
-                <div className="flex-1 bg-neutral-950 flex flex-col overflow-hidden">
-                    <div className="h-8 border-b border-neutral-800 bg-neutral-900 relative shrink-0 overflow-hidden cursor-pointer" onMouseDown={handleTimelineMouseDown}>
+                <div className="flex-1 bg-[#242424] flex flex-col overflow-hidden">
+                    <div className="h-8 border-b border-[#111] bg-[#2d2d2d] relative shrink-0 overflow-hidden cursor-pointer" onMouseDown={handleTimelineMouseDown}>
                        <div className="absolute top-0 bottom-0 pointer-events-none text-[10px] text-neutral-600 font-mono" style={{ width: `${dynamicTotalBeats * BEAT_WIDTH}px`, left: timelineRef.current ? -timelineRef.current.scrollLeft : 0 }}>
                           {Array.from({length: dynamicTotalBeats/4}).map((_, i) => <div key={i} className="absolute border-l border-neutral-700 pl-1 h-full" style={{ left: `${i * 4 * BEAT_WIDTH}px` }}>{i + 1}</div>)}
                           
@@ -5838,14 +5837,16 @@ const initAudioEngine = async (explicitTracks = null) => {
                                               const sliceBeat = snap(x / BEAT_WIDTH);
                                               handleContextMenu(e, 'clip', { trackId: t.id, clipId: c.id, sliceBeat });
                                           }}
-                                          className={`clip-element absolute top-1.5 bottom-1.5 rounded-md border overflow-hidden cursor-grab active:cursor-grabbing bg-gradient-to-br ${TRACK_COLOR_GRADIENTS[t.color] || 'from-blue-500/80 to-blue-500/40'} shadow-md transition-all ${selectedClipIds.includes(c.id) ? 'border-white ring-2 ring-white/40 brightness-125 z-40' : 'border-white/10 hover:border-white/30 hover:brightness-110 z-10'}`} 
+                                          className={`clip-element absolute top-[1px] bottom-[1px] rounded-sm border overflow-hidden cursor-grab active:cursor-grabbing ${t.color.replace('bg-', 'bg-').replace('-500', '-600')} transition-all ${selectedClipIds.includes(c.id) ? 'border-white brightness-125 z-40' : 'border-black/60 hover:brightness-110 z-10'}`} 
                                           style={{ left: `${c.start * BEAT_WIDTH}px`, width: `${c.duration * BEAT_WIDTH}px`, zIndex: draggingClip?.clipId === c.id || selectedClipIds.includes(c.id) ? 50 : 10 }}
                                         >
                                             {/* Resize Handles */}
                                             <div className="absolute left-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-white/30 z-10" onMouseDown={(e) => { e.stopPropagation(); setDraggingEdge({ trackId: t.id, clipId: c.id, edge: 'left', startX: e.clientX, initialStart: c.start, initialDuration: c.duration, initialSampleOffset: c.sampleOffset || 0, initialNotes: c.notes }); }} data-edge="left" />
                                             <div className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-white/30 z-10" onMouseDown={(e) => { e.stopPropagation(); setDraggingEdge({ trackId: t.id, clipId: c.id, edge: 'right', startX: e.clientX, initialStart: c.start, initialDuration: c.duration, initialSampleOffset: c.sampleOffset || 0, initialNotes: c.notes }); }} data-edge="right" />
 
-                                            <div className="px-2 pt-1 text-[9px] font-bold text-white/90 truncate pointer-events-none select-none relative z-10">{t.type === 'midi' ? 'MIDI Clip' : 'Audio Clip'}</div>
+                                            <div className="h-3 w-full bg-black/20 flex items-center px-1 border-b border-black/20 pointer-events-none z-10 relative">
+                                                <span className="text-[9px] font-bold text-white/90 truncate select-none">{t.type === 'midi' ? 'MIDI Clip' : 'Audio Clip'}</span>
+                                            </div>
                                             {t.type === 'midi' && c.notes && (
                                               <div className="absolute inset-x-0 bottom-0 top-4 opacity-50 pointer-events-none overflow-hidden">
                                                 {c.notes.map(n => <div key={n.id} className="absolute bg-white rounded-sm h-[2px]" style={{ left: `${n.start * BEAT_WIDTH}px`, width: `${n.duration * BEAT_WIDTH}px`, top: `${100 - ((n.pitch - 24) / (108 - 24) * 100)}%` }} />)}
@@ -5938,9 +5939,9 @@ const initAudioEngine = async (explicitTracks = null) => {
                 const rollWidthPx = activeClipDuration * BEAT_WIDTH;
                 
                 return (
-                <div style={{ height: dockHeight }} className="bg-neutral-950 border-t border-neutral-800 flex flex-col shrink-0 shadow-[0_-4px_24px_rgba(0,0,0,0.3)] z-30 relative">
-                    <div className="absolute top-0 left-0 right-0 h-1.5 -translate-y-1/2 cursor-ns-resize hover:bg-blue-500 z-50 transition-colors" onMouseDown={() => setDraggingDockHeight(true)} />
-                    <div className="h-8 bg-neutral-900 flex justify-between items-center px-4 border-b border-neutral-800 shrink-0">
+                <div style={{ height: dockHeight }} className="bg-[#333333] border-t border-[#111111] flex flex-col shrink-0 z-30 relative">
+                    <div className="absolute top-0 left-0 right-0 h-1.5 -translate-y-1/2 cursor-ns-resize hover:bg-cyan-500 z-50 transition-colors" onMouseDown={() => setDraggingDockHeight(true)} />
+                    <div className="h-6 bg-[#444444] flex justify-between items-center px-4 border-b border-[#222222] shrink-0">
                         <div className="flex items-center gap-4">
                            <div className="flex items-center gap-2">
                                <Piano size={14} className="text-purple-400" />
@@ -5968,7 +5969,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                                 return <div key={pitch} className={`h-4 border-b border-neutral-800 text-[8px] flex items-center justify-end pr-1 ${isBlack ? 'bg-neutral-900 text-neutral-600' : 'bg-neutral-200 text-black font-bold'}`}>{pitch % 12 === 0 ? `C${Math.floor(pitch/12)-1}` : ''}</div>
                             })}
                         </div>
-                        <div className="bg-neutral-900 relative shrink-0 shadow-[4px_0_15px_rgba(0,0,0,0.5)]" style={{ width: `${rollWidthPx}px`, height: `${84 * 16}px` }} onDoubleClick={(e) => handlePianoGridDoubleClick(e, bottomDock.trackId, bottomDock.clipId)}>
+                        <div className="bg-[#242424] relative shrink-0" style={{ width: `${rollWidthPx}px`, height: `${84 * 16}px` }} onDoubleClick={(e) => handlePianoGridDoubleClick(e, bottomDock.trackId, bottomDock.clipId)}>
                             <div className="absolute inset-0 pointer-events-none" style={getGridStyle(snapGrid, BEAT_WIDTH, true)} />
                             
                             {activeClip?.notes?.map(n => (
@@ -6009,23 +6010,21 @@ const initAudioEngine = async (explicitTracks = null) => {
                 const track = tracks.find(t => t.id === bottomDock.trackId);
                 if (!track) return null;
                 return (
-                <div style={{ height: dockHeight }} className="bg-neutral-900 border-t border-neutral-800 flex flex-col shrink-0 shadow-[0_-4px_24px_rgba(0,0,0,0.3)] z-30 relative">
-                    <div className="absolute top-0 left-0 right-0 h-1.5 -translate-y-1/2 cursor-ns-resize hover:bg-blue-500 z-50 transition-colors" onMouseDown={() => setDraggingDockHeight(true)} />
-                    <div className="h-8 bg-neutral-950 flex justify-between items-center px-4 border-b border-neutral-800 shrink-0">
+                <div style={{ height: dockHeight }} className="bg-[#333333] border-t border-[#111111] flex flex-col shrink-0 z-30 relative">
+                    <div className="absolute top-0 left-0 right-0 h-1.5 -translate-y-1/2 cursor-ns-resize hover:bg-cyan-500 z-50 transition-colors" onMouseDown={() => setDraggingDockHeight(true)} />
+                    <div className="h-6 bg-[#444444] flex justify-between items-center px-4 border-b border-[#222222] shrink-0">
                         <div className="flex items-center gap-2">
-                           <Plug size={14} className="text-blue-400" />
-                           <span className="text-xs font-bold text-neutral-300">{track.name} - Device Rack</span>
+                           <span className="text-[10px] font-bold text-[#b3b3b3] uppercase">{track.name}</span>
                         </div>
-                        <button onClick={() => setBottomDock(null)} className="text-neutral-500 hover:text-white transition-colors"><X size={14}/></button>
+                        <button onClick={() => setBottomDock(null)} className="text-[#888] hover:text-white transition-colors"><X size={12}/></button>
                     </div>
-                    <div className="flex-1 flex overflow-x-auto p-4 gap-4 items-start bg-neutral-900/50 custom-scrollbar pb-6">
+                    <div className="flex-1 flex overflow-x-auto p-2 gap-2 items-start bg-[#333333] custom-scrollbar pb-6">
                         
                         {/* Audio Track specific Input block */}
                         {track.type === 'audio' && (
-                            <div className="min-w-[14rem] h-max bg-neutral-950 border border-neutral-800 rounded-xl p-4 flex flex-col shrink-0 relative shadow-lg">
-                                <div className="flex items-center gap-2 mb-4 border-b border-neutral-800 pb-2">
-                                    <Mic size={14} className="text-emerald-400" />
-                                    <span className="text-[11px] font-bold text-white uppercase tracking-wider">Audio Input</span>
+                            <div className="min-w-[12rem] h-max bg-[#444] border border-[#222] rounded-sm p-3 flex flex-col shrink-0 relative">
+                                <div className="flex items-center gap-2 mb-3 border-b border-[#222] pb-2">
+                                    <span className="text-[10px] font-bold text-[#b3b3b3] uppercase tracking-wider">Audio Input</span>
                                 </div>
                                 <div className="flex flex-col gap-2">
                                     <select 
@@ -6044,10 +6043,9 @@ const initAudioEngine = async (explicitTracks = null) => {
 
                         {/* Instrument Selector & Controls for MIDI Tracks */}
                         {track.type === 'midi' && (
-                            <div className="min-w-[16rem] max-w-md w-max h-max bg-neutral-950 border border-neutral-800 rounded-xl p-5 flex flex-col shrink-0 relative shadow-lg">
-                                <div className="flex items-center gap-2 mb-4 border-b border-neutral-800 pb-3 shrink-0">
-                                    <Piano size={14} className="text-purple-400" />
-                                    <span className="text-xs font-bold text-white uppercase tracking-wider">Instrument</span>
+                            <div className="min-w-[16rem] max-w-md w-max h-max bg-[#444] border border-[#222] rounded-sm p-3 flex flex-col shrink-0 relative">
+                                <div className="flex items-center gap-2 mb-3 border-b border-[#222] pb-2 shrink-0">
+                                    <span className="text-[10px] font-bold text-[#b3b3b3] uppercase tracking-wider">Instrument</span>
                                 </div>
                                 <div className="flex flex-col gap-2 shrink-0 mb-4">
                                     <select 
@@ -6210,14 +6208,14 @@ const initAudioEngine = async (explicitTracks = null) => {
                                 }}
                                 onContextMenu={(e) => handleContextMenu(e, 'effect', { trackId: track.id, fxId: fx.id })} 
                                 // Added [&_*]:pointer-events-none to prevent child knobs from stealing drag events!
-                                className={`min-w-[16rem] max-w-lg w-max h-max bg-neutral-950 border rounded-xl p-5 flex flex-col shrink-0 relative group shadow-lg transition-all duration-200 cursor-grab active:cursor-grabbing ${draggedFxIndex === index ? 'opacity-40 scale-95 border-neutral-700' : dragOverFxIndex === index && draggedFxIndex !== null ? 'border-blue-500 scale-[1.02] bg-neutral-900 z-10' : 'border-neutral-800'} ${draggedFxIndex !== null ? '[&_*]:pointer-events-none' : ''}`}
+                                className={`min-w-[12rem] max-w-lg w-max h-max bg-[#444] border rounded-sm p-3 flex flex-col shrink-0 relative group transition-all duration-100 cursor-grab active:cursor-grabbing ${draggedFxIndex === index ? 'opacity-40 border-[#222]' : dragOverFxIndex === index && draggedFxIndex !== null ? 'border-cyan-500 bg-[#555] z-10' : 'border-[#222]'} ${draggedFxIndex !== null ? '[&_*]:pointer-events-none' : ''}`}
                             >
-                                <div className="flex justify-between items-center mb-2 border-b border-neutral-800 pb-3 shrink-0">
+                                <div className="flex justify-between items-center mb-3 border-b border-[#222] pb-2 shrink-0">
                                    <div className="flex items-center gap-2">
-                                      <div className="w-2 h-2 rounded-full bg-green-500 shadow-[0_0_5px_#22c55e]" />
-                                      <span className="text-xs font-bold text-white whitespace-nowrap uppercase tracking-wider">{fx.name}</span>
+                                      <div className="w-1.5 h-1.5 rounded-full bg-[#06b6d4]" />
+                                      <span className="text-[10px] font-bold text-[#b3b3b3] whitespace-nowrap uppercase tracking-wider">{fx.name}</span>
                                    </div>
-                                   <button onClick={() => deleteEffect(track.id, fx.id)} className="text-neutral-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity ml-4"><X size={14}/></button>
+                                   <button onClick={() => deleteEffect(track.id, fx.id)} className="text-[#888] hover:text-[#f87171] opacity-0 group-hover:opacity-100 transition-opacity ml-4"><X size={12}/></button>
                                 </div>
                                 {fx.type === 'parametric-eq' && <ParametricEqVisualizer trackId={track.id} fxId={fx.id} params={fx.params} onParamChange={(p, v) => handleEffectParamChange(track.id, fx.id, p, v)} synthsRef={synthsRef} audioCtxRef={audioCtxRef} />}
                                 <div className="flex-1 flex flex-wrap gap-x-6 gap-y-4 overflow-y-auto custom-scrollbar pt-2 pr-2 content-start">
@@ -6249,12 +6247,11 @@ const initAudioEngine = async (explicitTracks = null) => {
                         ))}
                         
                         {/* Add Effect Button Container */}
-                        <div className="w-48 min-w-[12rem] h-[160px] border-2 border-dashed border-neutral-800 hover:border-neutral-700 rounded-xl flex flex-col items-center justify-center shrink-0 relative group transition-colors cursor-pointer">
-                            <Plus size={24} className="text-neutral-600 group-hover:text-blue-400 mb-2 transition-colors" />
-                            <span className="text-[10px] text-neutral-500 group-hover:text-blue-400 font-bold uppercase tracking-wider">Add Effect</span>
+                        <div className="w-24 min-w-[6rem] h-[120px] border border-[#222] hover:border-[#555] bg-[#3a3a3a] rounded-sm flex flex-col items-center justify-center shrink-0 relative group transition-colors cursor-pointer">
+                            <span className="text-[10px] text-[#888] group-hover:text-[#ccc] font-bold tracking-wider text-center">Add Effect</span>
                             
                             <div 
-                                className="absolute top-0 left-0 w-full bg-neutral-900/95 border border-neutral-700 shadow-2xl backdrop-blur-md rounded-xl opacity-0 group-hover:opacity-100 transition-opacity flex flex-col gap-1.5 pointer-events-none group-hover:pointer-events-auto p-2 overflow-y-auto custom-scrollbar z-50"
+                                className="absolute top-0 left-0 w-48 bg-[#333] border border-[#111] shadow-2xl rounded-sm opacity-0 group-hover:opacity-100 transition-opacity flex flex-col gap-1.5 pointer-events-none group-hover:pointer-events-auto p-2 overflow-y-auto custom-scrollbar z-50"
                                 style={{ maxHeight: `${Math.max(160, dockHeight - 64)}px` }}
                             >
                                <div className="text-[9px] font-bold text-neutral-500 mb-1 uppercase tracking-wider px-1 mt-1 shrink-0">Engines</div>
