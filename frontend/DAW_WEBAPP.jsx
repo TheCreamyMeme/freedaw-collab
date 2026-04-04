@@ -812,10 +812,12 @@ const Knob = React.memo(({ id, param, value, min, max, step, isLog, onChange, on
                 if (!el.style.transform) {
                     el.style.transform = `rotate(${angle}deg)`;
                 } else if (delta !== 0) {
-                    const match = el.style.transform.match(/rotate\(([-\d.]+)deg\)/);
+                    const match = el.style.transform.match(/rotate\((.*?)deg\)/);
                     if (match) {
                         const currentAngle = parseFloat(match[1]);
-                        el.style.transform = `rotate(${currentAngle + delta}deg)`;
+                        if (!isNaN(currentAngle)) {
+                            el.style.transform = `rotate(${currentAngle + delta}deg)`;
+                        }
                     }
                 }
             }
