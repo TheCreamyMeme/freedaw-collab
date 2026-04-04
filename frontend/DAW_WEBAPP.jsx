@@ -390,6 +390,11 @@ const getInterpolatedValue = (points, time) => {
         if (time >= sorted[i].time && time < sorted[i+1].time) {
             const p1 = sorted[i]; const p2 = sorted[i+1];
             const t = (time - p1.time) / (p2.time - p1.time);
+            if (p1.curve) {
+                // Evaluates a 1D Quadratic Bezier identically to the SVG 'Q' path
+                const cv = (p1.value + p2.value) / 2 + p1.curve;
+                return (1-t)*(1-t)*p1.value + 2*(1-t)*t*cv + t*t*p2.value;
+            }
             return p1.value + t * (p2.value - p1.value);
         }
     }
@@ -1811,6 +1816,7 @@ function DAWStudio() {
   const [draggingNote, setDraggingNote] = useState(null);
   const [draggingNoteEdge, setDraggingNoteEdge] = useState(null);
   const [draggingAutoPoint, setDraggingAutoPoint] = useState(null);
+  const [draggingAutoCurve, setDraggingAutoCurve] = useState(null);
   const [isAutomationMode, setIsAutomationMode] = useState(false);
   const [draggingPlayhead, setDraggingPlayhead] = useState(false);
   const [dockHeight, setDockHeight] = useState(260);
@@ -4550,6 +4556,14 @@ const initAudioEngine = async (explicitTracks = null) => {
                   return { ...t, automation: { ...auto, [action.payload.paramKey]: pts } };
               }));
               break;
+          case 'UPDATE_AUTOMATION_POINT_CURVE':
+              setTracks(prev => prev.map(t => {
+                  if (t.id !== action.payload.trackId) return t;
+                  const auto = t.automation || {};
+                  const pts = (auto[action.payload.paramKey] || []).map(p => p.id === action.payload.pointId ? { ...p, curve: action.payload.curve } : p);
+                  return { ...t, automation: { ...auto, [action.payload.paramKey]: pts } };
+              }));
+              break;
           case 'DELETE_AUTOMATION_POINT':
               setTracks(prev => prev.map(t => {
                   if (t.id !== action.payload.trackId) return t;
@@ -4583,6 +4597,14 @@ const initAudioEngine = async (explicitTracks = null) => {
                   if (l.id !== action.payload.lfoId) return l;
                   const auto = l.automation || {};
                   const pts = (auto[action.payload.paramKey] || []).map(p => p.id === action.payload.pointId ? { ...p, time: action.payload.time, value: action.payload.value } : p);
+                  return { ...l, automation: { ...auto, [action.payload.paramKey]: pts } };
+              }));
+              break;
+          case 'UPDATE_LFO_AUTOMATION_POINT_CURVE':
+              setLfos(prev => prev.map(l => {
+                  if (l.id !== action.payload.lfoId) return l;
+                  const auto = l.automation || {};
+                  const pts = (auto[action.payload.paramKey] || []).map(p => p.id === action.payload.pointId ? { ...p, curve: action.payload.curve } : p);
                   return { ...l, automation: { ...auto, [action.payload.paramKey]: pts } };
               }));
               break;
@@ -5068,6 +5090,20 @@ const initAudioEngine = async (explicitTracks = null) => {
             } else {
                 dispatchDawAction({ type: 'UPDATE_AUTOMATION_POINT', payload: { trackId, paramKey, pointId, time: newTime, value: newValue } });
             }
+        } else if (draggingAutoCurve) {
+            const { trackId, lfoId, paramKey, pointId, startY, initialCurve } = draggingAutoCurve;
+            const deltaY = e.clientY - startY;
+            const minMax = getAutomationConstraints(paramKey);
+            const valueRange = minMax.max - minMax.min;
+            const deltaValue = -(deltaY / 64) * valueRange; // 64 is lane height
+            
+            const newCurve = Math.max(-valueRange, Math.min(valueRange, initialCurve + deltaValue));
+            
+            if (lfoId) {
+                dispatchDawAction({ type: 'UPDATE_LFO_AUTOMATION_POINT_CURVE', payload: { lfoId, paramKey, pointId, curve: newCurve } });
+            } else {
+                dispatchDawAction({ type: 'UPDATE_AUTOMATION_POINT_CURVE', payload: { trackId, paramKey, pointId, curve: newCurve } });
+            }
         } else if (draggingPlayhead) {
             if (timelineRef.current) {
                 const rect = timelineRef.current.getBoundingClientRect();
@@ -5082,7 +5118,7 @@ const initAudioEngine = async (explicitTracks = null) => {
           // Keep a minimum readable bound on the bottom rack (260px) to prevent squished crash behaviors
           setDockHeight(Math.max(260, Math.min(800, window.innerHeight - e.clientY)));
       }
-  }, [draggingClip, draggingEdge, draggingNote, draggingNoteEdge, draggingLoop, draggingPlayhead, draggingDockHeight, BEAT_WIDTH]);
+  }, [draggingClip, draggingEdge, draggingNote, draggingNoteEdge, draggingLoop, draggingPlayhead, draggingDockHeight, draggingAutoPoint, draggingAutoCurve, BEAT_WIDTH]);
   
   const handleMouseUp = useCallback(() => {
       if (draggingClip) {
@@ -5113,13 +5149,14 @@ const initAudioEngine = async (explicitTracks = null) => {
       }
       dragValuesRef.current = {};
       if (draggingAutoPoint) setDraggingAutoPoint(null);
+      if (draggingAutoCurve) setDraggingAutoCurve(null);
       if (draggingLoop) setDraggingLoop(null);
       if (draggingPlayhead) {
           setDraggingPlayhead(false);
           setCurrentTime(stateRefs.current.currentTime); // Sync react UI state cleanly on release
       }
       if (draggingDockHeight) setDraggingDockHeight(false);
-  }, [draggingClip, draggingEdge, draggingNote, draggingNoteEdge, draggingLoop, draggingPlayhead, draggingDockHeight]);
+  }, [draggingClip, draggingEdge, draggingNote, draggingNoteEdge, draggingLoop, draggingPlayhead, draggingDockHeight, draggingAutoPoint, draggingAutoCurve]);
 
   useEffect(() => {
       window.addEventListener('mousemove', handleMouseMove);
@@ -6007,19 +6044,45 @@ const initAudioEngine = async (explicitTracks = null) => {
                                         const value = minMax.min + ((64 - y) / 64) * (minMax.max - minMax.min);
                                         dispatchDawAction({ type: 'ADD_AUTOMATION_POINT', payload: { trackId: t.id, paramKey, point: { id: `pt_${Date.now()}`, time, value } }});
                                     }}>
-                                        <svg width="100%" height="100%" className="pointer-events-none absolute inset-0">
+                                        <svg width="100%" height="100%" className="pointer-events-none absolute inset-0 z-0">
                                             {(() => {
                                                 const pts = [...(t.automation?.[paramKey] || [])].sort((a,b) => a.time - b.time);
-                                                if (pts.length === 0) return null;
-                                                let d = "";
+                                                if (pts.length < 2) return null;
                                                 const minMax = getAutomationConstraints(paramKey);
                                                 const getY = (val) => 64 - ((val - minMax.min) / (minMax.max - minMax.min)) * 64;
-                                                pts.forEach((p, i) => {
-                                                    const x = p.time * BEAT_WIDTH;
-                                                    const y = getY(p.value);
-                                                    d += `${i === 0 ? 'M' : 'L'} ${x} ${y} `;
+                                                return pts.map((p, i) => {
+                                                    if (i === 0) return null;
+                                                    const prev = pts[i-1];
+                                                    const x1 = prev.time * BEAT_WIDTH;
+                                                    const y1 = getY(prev.value);
+                                                    const x2 = p.time * BEAT_WIDTH;
+                                                    const y2 = getY(p.value);
+                                                    let d = `M ${x1} ${y1} `;
+                                                    if (prev.curve) {
+                                                        const cv = (prev.value + p.value) / 2 + prev.curve;
+                                                        const cy = getY(cv);
+                                                        const cx = (x1 + x2) / 2;
+                                                        d += `Q ${cx} ${cy}, ${x2} ${y2}`;
+                                                    } else {
+                                                        d += `L ${x2} ${y2}`;
+                                                    }
+                                                    return (
+                                                        <g key={`seg-${prev.id}`}>
+                                                            <path d={d} stroke="#3b82f6" strokeWidth="2" fill="none" opacity="0.8" className="pointer-events-none" />
+                                                            <path d={d} stroke="transparent" strokeWidth="12" fill="none" className="cursor-ns-resize pointer-events-auto"
+                                                                onMouseDown={(e) => {
+                                                                    e.stopPropagation();
+                                                                    if (e.button === 2) {
+                                                                        dispatchDawAction({ type: 'UPDATE_AUTOMATION_POINT_CURVE', payload: { trackId: t.id, paramKey, pointId: prev.id, curve: 0 }});
+                                                                    } else {
+                                                                        setDraggingAutoCurve({ trackId: t.id, paramKey, pointId: prev.id, startY: e.clientY, initialCurve: prev.curve || 0 });
+                                                                    }
+                                                                }}
+                                                                onContextMenu={(e) => e.preventDefault()}
+                                                            />
+                                                        </g>
+                                                    );
                                                 });
-                                                return <path d={d} stroke="#3b82f6" strokeWidth="2" fill="none" opacity="0.8" />
                                             })()}
                                         </svg>
                                         {(t.automation?.[paramKey] || []).map(p => {
@@ -6028,7 +6091,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                                             return (
                                                 <div 
                                                     key={p.id}
-                                                    className="absolute w-2.5 h-2.5 bg-white border-2 border-blue-500 rounded-full -ml-[5px] -mt-[5px] cursor-pointer pointer-events-auto shadow-md hover:scale-150 transition-transform"
+                                                    className="absolute w-2.5 h-2.5 bg-white border-2 border-blue-500 rounded-full -ml-[5px] -mt-[5px] cursor-pointer pointer-events-auto shadow-md hover:scale-150 transition-transform z-10"
                                                     style={{ left: `${p.time * BEAT_WIDTH}px`, top: `${y}px` }}
                                                     onMouseDown={(e) => {
                                                         e.stopPropagation();
@@ -6037,6 +6100,15 @@ const initAudioEngine = async (explicitTracks = null) => {
                                                         } else {
                                                             setDraggingAutoPoint({ trackId: t.id, paramKey, pointId: p.id, startX: e.clientX, startY: e.clientY, initialTime: p.time, initialValue: p.value, laneHeight: 64 });
                                                         }
+                                                    }}
+                                                    onWheel={(e) => {
+                                                        e.stopPropagation();
+                                                        e.preventDefault();
+                                                        const delta = e.deltaY > 0 ? -0.05 : 0.05; 
+                                                        const range = minMax.max - minMax.min;
+                                                        const currentCurve = p.curve || 0;
+                                                        const newCurve = Math.max(-range, Math.min(range, currentCurve + delta * range));
+                                                        dispatchDawAction({ type: 'UPDATE_AUTOMATION_POINT_CURVE', payload: { trackId: t.id, paramKey, pointId: p.id, curve: newCurve }});
                                                     }}
                                                     onContextMenu={e => { e.preventDefault(); e.stopPropagation(); }}
                                                 />
@@ -6068,19 +6140,45 @@ const initAudioEngine = async (explicitTracks = null) => {
                                                 const value = minMax.min + ((64 - y) / 64) * (minMax.max - minMax.min);
                                                 dispatchDawAction({ type: 'ADD_LFO_AUTOMATION_POINT', payload: { lfoId: lfo.id, paramKey, point: { id: `pt_${Date.now()}`, time, value } }});
                                             }}>
-                                                <svg width="100%" height="100%" className="pointer-events-none absolute inset-0">
+                                                <svg width="100%" height="100%" className="pointer-events-none absolute inset-0 z-0">
                                                     {(() => {
                                                         const pts = [...(lfo.automation?.[paramKey] || [])].sort((a,b) => a.time - b.time);
-                                                        if (pts.length === 0) return null;
-                                                        let d = "";
+                                                        if (pts.length < 2) return null;
                                                         const minMax = getAutomationConstraints(paramKey);
                                                         const getY = (val) => 64 - ((val - minMax.min) / (minMax.max - minMax.min)) * 64;
-                                                        pts.forEach((p, i) => {
-                                                            const x = p.time * BEAT_WIDTH;
-                                                            const y = getY(p.value);
-                                                            d += `${i === 0 ? 'M' : 'L'} ${x} ${y} `;
+                                                        return pts.map((p, i) => {
+                                                            if (i === 0) return null;
+                                                            const prev = pts[i-1];
+                                                            const x1 = prev.time * BEAT_WIDTH;
+                                                            const y1 = getY(prev.value);
+                                                            const x2 = p.time * BEAT_WIDTH;
+                                                            const y2 = getY(p.value);
+                                                            let d = `M ${x1} ${y1} `;
+                                                            if (prev.curve) {
+                                                                const cv = (prev.value + p.value) / 2 + prev.curve;
+                                                                const cy = getY(cv);
+                                                                const cx = (x1 + x2) / 2;
+                                                                d += `Q ${cx} ${cy}, ${x2} ${y2}`;
+                                                            } else {
+                                                                d += `L ${x2} ${y2}`;
+                                                            }
+                                                            return (
+                                                                <g key={`seg-${prev.id}`}>
+                                                                    <path d={d} stroke="#f59e0b" strokeWidth="2" fill="none" opacity="0.8" className="pointer-events-none" />
+                                                                    <path d={d} stroke="transparent" strokeWidth="12" fill="none" className="cursor-ns-resize pointer-events-auto"
+                                                                        onMouseDown={(e) => {
+                                                                            e.stopPropagation();
+                                                                            if (e.button === 2) {
+                                                                                dispatchDawAction({ type: 'UPDATE_LFO_AUTOMATION_POINT_CURVE', payload: { lfoId: lfo.id, paramKey, pointId: prev.id, curve: 0 }});
+                                                                            } else {
+                                                                                setDraggingAutoCurve({ lfoId: lfo.id, paramKey, pointId: prev.id, startY: e.clientY, initialCurve: prev.curve || 0 });
+                                                                            }
+                                                                        }}
+                                                                        onContextMenu={(e) => e.preventDefault()}
+                                                                    />
+                                                                </g>
+                                                            );
                                                         });
-                                                        return <path d={d} stroke="#f59e0b" strokeWidth="2" fill="none" opacity="0.8" />
                                                     })()}
                                                 </svg>
                                                 {(lfo.automation?.[paramKey] || []).map(p => {
@@ -6089,7 +6187,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                                                     return (
                                                         <div 
                                                             key={p.id}
-                                                            className="absolute w-2.5 h-2.5 bg-white border-2 border-amber-500 rounded-full -ml-[5px] -mt-[5px] cursor-pointer pointer-events-auto shadow-md hover:scale-150 transition-transform"
+                                                            className="absolute w-2.5 h-2.5 bg-white border-2 border-amber-500 rounded-full -ml-[5px] -mt-[5px] cursor-pointer pointer-events-auto shadow-md hover:scale-150 transition-transform z-10"
                                                             style={{ left: `${p.time * BEAT_WIDTH}px`, top: `${y}px` }}
                                                             onMouseDown={(e) => {
                                                                 e.stopPropagation();
@@ -6099,10 +6197,20 @@ const initAudioEngine = async (explicitTracks = null) => {
                                                                     setDraggingAutoPoint({ lfoId: lfo.id, paramKey, pointId: p.id, startX: e.clientX, startY: e.clientY, initialTime: p.time, initialValue: p.value, laneHeight: 64 });
                                                                 }
                                                             }}
+                                                            onWheel={(e) => {
+                                                                e.stopPropagation();
+                                                                e.preventDefault();
+                                                                const delta = e.deltaY > 0 ? -0.05 : 0.05; 
+                                                                const range = minMax.max - minMax.min;
+                                                                const currentCurve = p.curve || 0;
+                                                                const newCurve = Math.max(-range, Math.min(range, currentCurve + delta * range));
+                                                                dispatchDawAction({ type: 'UPDATE_LFO_AUTOMATION_POINT_CURVE', payload: { lfoId: lfo.id, paramKey, pointId: p.id, curve: newCurve }});
+                                                            }}
                                                             onContextMenu={e => { e.preventDefault(); e.stopPropagation(); }}
                                                         />
                                                     );
                                                 })}
+
                                             </div>
                                         ))}
                                     </div>
