@@ -787,17 +787,16 @@ const Knob = React.memo(({ id, param, value, min, max, step, isLog, onChange, on
     const displayName = param.replace(/([A-Z0-9])/g, ' $1').trim();
 
     const getDotStyle = (val) => {
-        // Clamp visual rotation to exactly 180 degrees away from the knob's base position.
-        // 180 degrees mapped to the 0-1 scale (where 1 unit = 270 deg) is 180/270 = 2/3.
-        const base = percent || 0;
-        const clampedVal = Math.max(base - 2/3, Math.min(base + 2/3, val));
+        // Clamp visual rotation strictly to the knob's absolute mechanical bounds
+        const clampedVal = Math.max(0, Math.min(1, val));
         return {
             left: '50%',
             top: `2px`,
-            transformOrigin: `50% 18px`,
+            transformOrigin: `50% 14px`,
             transform: `translate(-50%, 0) rotate(${-135 + clampedVal * 270}deg)`
         };
     };
+
 
     const prevAngleRef = useRef(angle);
 
@@ -845,8 +844,11 @@ const Knob = React.memo(({ id, param, value, min, max, step, isLog, onChange, on
             const minEl = document.getElementById(id ? `lfo-min-${id}` : '');
             const maxEl = document.getElementById(id ? `lfo-max-${id}` : '');
             
-            if (minEl) minEl.style.transform = `translate(-50%, 0) rotate(${centerAngle - spreadDeg / 2}deg)`;
-            if (maxEl) maxEl.style.transform = `translate(-50%, 0) rotate(${centerAngle + spreadDeg / 2}deg)`;
+            const minRot = Math.max(-135, Math.min(135, centerAngle - spreadDeg / 2));
+            const maxRot = Math.max(-135, Math.min(135, centerAngle + spreadDeg / 2));
+
+            if (minEl) minEl.style.transform = `translate(-50%, 0) rotate(${minRot}deg)`;
+            if (maxEl) maxEl.style.transform = `translate(-50%, 0) rotate(${maxRot}deg)`;
             
             reqId = requestAnimationFrame(updateLfoBounds);
         };
@@ -862,18 +864,26 @@ const Knob = React.memo(({ id, param, value, min, max, step, isLog, onChange, on
                 onPointerDown={handlePointerDown}
                 onWheel={handleWheel}
             >
+                <svg className="absolute inset-0 w-full h-full pointer-events-none" viewBox="0 0 100 100" style={{ zIndex: 0 }}>
+                    <path d="M 21.5 85 A 45 45 0 1 1 78.5 85" fill="none" stroke="#222" strokeWidth="6" strokeLinecap="round" />
+                </svg>
                 {mappedRange && (
                     <>
                         <div className="absolute w-[2px] h-[2px] bg-[#4ade80] rounded-full z-10 pointer-events-none" style={getDotStyle(mappedRange.min)} title="MIDI Min" />
                         <div className="absolute w-[2px] h-[2px] bg-[#f87171] rounded-full z-10 pointer-events-none" style={getDotStyle(mappedRange.max)} title="MIDI Max" />
                     </>
                 )}
-                {lfoMappedRange && (
-                    <>
-                        <div id={id ? `lfo-min-${id}` : undefined} className="absolute w-[2px] h-[2px] bg-[#c084fc] rounded-full z-10 pointer-events-none" style={{ left: '50%', top: '2px', transformOrigin: '50% 14px', transform: `translate(-50%, 0) rotate(${angle - ((lfoMappedRange.max - lfoMappedRange.min)*270)/2}deg)` }} title="LFO Min" />
-                        <div id={id ? `lfo-max-${id}` : undefined} className="absolute w-[2px] h-[2px] bg-[#e879f9] rounded-full z-10 pointer-events-none" style={{ left: '50%', top: '2px', transformOrigin: '50% 14px', transform: `translate(-50%, 0) rotate(${angle + ((lfoMappedRange.max - lfoMappedRange.min)*270)/2}deg)` }} title="LFO Max" />
-                    </>
-                )}
+                {lfoMappedRange && (() => {
+                    const spreadDeg = (lfoMappedRange.max - lfoMappedRange.min) * 270;
+                    const minAngle = Math.max(-135, Math.min(135, angle - spreadDeg / 2));
+                    const maxAngle = Math.max(-135, Math.min(135, angle + spreadDeg / 2));
+                    return (
+                        <>
+                            <div id={id ? `lfo-min-${id}` : undefined} className="absolute w-[2px] h-[2px] bg-[#c084fc] rounded-full z-10 pointer-events-none" style={{ left: '50%', top: '2px', transformOrigin: '50% 14px', transform: `translate(-50%, 0) rotate(${minAngle}deg)` }} title="LFO Min" />
+                            <div id={id ? `lfo-max-${id}` : undefined} className="absolute w-[2px] h-[2px] bg-[#e879f9] rounded-full z-10 pointer-events-none" style={{ left: '50%', top: '2px', transformOrigin: '50% 14px', transform: `translate(-50%, 0) rotate(${maxAngle}deg)` }} title="LFO Max" />
+                        </>
+                    );
+                })()}
                 <div id={id ? `knob-rot-${id}` : undefined} className="absolute inset-0" style={{ transform: `rotate(${angle}deg)` }}>
                     <div className="mx-auto mt-0.5 w-[2px] h-3 bg-[#444] group-hover:bg-[#888] transition-colors pointer-events-none" />
                 </div>
@@ -2824,7 +2834,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                           }
                           synth[rawCacheKey] = rawPercent;
 
-                          const clampedPercent = Math.max(-1/6, Math.min(7/6, rawPercent));
+                          const clampedPercent = Math.max(0, Math.min(1, rawPercent));
                           const angle = -135 + clampedPercent * 270;
 
                           const knobLive = document.getElementById(`knob-live-lfo-fx-${mapping.trackId}-${mapping.fxId}-${mapping.param}`);
@@ -2868,7 +2878,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                           synth[cacheKey] = mappedVal;
                           synth[rawCacheKey] = rawPercent;
 
-                          const clampedPercent = Math.max(-1/6, Math.min(7/6, rawPercent));
+                          const clampedPercent = Math.max(0, Math.min(1, rawPercent));
                           const angle = -135 + clampedPercent * 270;
                           
                           const knobLive = document.getElementById(`knob-live-lfo-inst-${mapping.trackId}-${mapping.param}`);
@@ -3588,10 +3598,9 @@ const initAudioEngine = async (explicitTracks = null) => {
                               mappedVal = Math.round(mappedVal / constraints.step) * constraints.step;
                           }
                           
-                        // For the live indicator, we use normalizedVal (the un-clamped percentage) 
-                        // so the dot can visibly rotate past the knob's standard bounds.
+                        // Clamp the live indicator strictly to the knob's absolute 0-100% bounds
                         const rawPercent = normalizedVal;
-                        const clampedPercent = Math.max(-1/6, Math.min(7/6, rawPercent));
+                        const clampedPercent = Math.max(0, Math.min(1, rawPercent));
                         const angle = -135 + clampedPercent * 270;
 
                         if (mapping.type === 'fx_param') {
