@@ -6044,9 +6044,6 @@ const initAudioEngine = async (explicitTracks = null) => {
                                         })}
                                     </div>
                                 ))}
-                                {isAutomationMode && (
-                                    <div className="h-8 border-b border-neutral-800/50 bg-neutral-900/10 relative pointer-events-none" />
-                                )}
                                 </div>
                             )})}
 
