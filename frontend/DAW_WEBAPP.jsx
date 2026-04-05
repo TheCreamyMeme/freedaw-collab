@@ -2294,7 +2294,12 @@ function DAWStudio() {
   useEffect(() => { tracksRef.current = tracks; }, [tracks]);
   useEffect(() => { projectNameRef.current = projectName; }, [projectName]);
   useEffect(() => { selectedTrackIdRef.current = selectedTrackId; }, [selectedTrackId]);
-  useEffect(() => { selectedClipIdsRef.current = selectedClipIds; }, [selectedClipIds]);
+  
+  // Keep local ref synced and broadcast selection status to WebRTC peers
+  useEffect(() => { 
+      selectedClipIdsRef.current = selectedClipIds; 
+      if (socketRef.current) socketRef.current.emit('presence-update', { selectedClipIds });
+  }, [selectedClipIds]);
 
   // Global Undo/Redo History Tracker
   useEffect(() => {
@@ -6795,7 +6800,10 @@ const initAudioEngine = async (explicitTracks = null) => {
                                 return (
                                 <div key={t.id} className="flex flex-col w-full">
                                 <div className={`h-24 border-b border-neutral-800/50 w-full relative transition-all ${t.muted ? 'opacity-40 grayscale' : ''} ${t.armed && isRecording ? 'bg-red-500/5' : ''}`} onDoubleClick={(e) => handleTrackDoubleClick(e, t.id)}>
-                                    {t.clips.map(c => (
+                                    {t.clips.map(c => {
+                                        const peeringUsers = Object.values(peers).filter(p => p.selectedClipIds?.includes(c.id));
+                                        const isPeerSelected = peeringUsers.length > 0;
+                                        return (
                                         <div 
                                           key={c.id} 
                                           onMouseDown={(e) => { 
@@ -6820,9 +6828,21 @@ const initAudioEngine = async (explicitTracks = null) => {
                                               const sliceBeat = snap(x / BEAT_WIDTH);
                                               handleContextMenu(e, 'clip', { trackId: t.id, clipId: c.id, sliceBeat });
                                           }}
-                                          className={`clip-element absolute top-[1px] bottom-[1px] rounded-sm border overflow-hidden cursor-grab active:cursor-grabbing ${t.color.replace('bg-', 'bg-').replace('-500', '-600')} transition-all ${selectedClipIds.includes(c.id) ? 'border-white brightness-125 z-40' : 'border-black/60 hover:brightness-110 z-10'}`} 
-                                          style={{ left: `${c.start * BEAT_WIDTH}px`, width: `${c.duration * BEAT_WIDTH}px`, zIndex: draggingClip?.clipId === c.id || selectedClipIds.includes(c.id) ? 50 : 10 }}
+                                          className={`clip-element absolute top-[1px] bottom-[1px] rounded-sm border overflow-hidden cursor-grab active:cursor-grabbing ${t.color.replace('bg-', 'bg-').replace('-500', '-600')} transition-all group/clip ${selectedClipIds.includes(c.id) ? 'border-white brightness-125 z-40' : isPeerSelected ? `${peeringUsers[0].color.replace('bg-', 'border-')} border-2 brightness-110 z-30` : 'border-black/60 hover:brightness-110 z-10'}`} 
+                                          style={{ left: `${c.start * BEAT_WIDTH}px`, width: `${c.duration * BEAT_WIDTH}px`, zIndex: draggingClip?.clipId === c.id || selectedClipIds.includes(c.id) ? 50 : (isPeerSelected ? 40 : 10) }}
                                         >
+                                            {/* Peer Selection Indicators */}
+                                            {isPeerSelected && (
+                                                <div className="absolute top-0 left-0 flex flex-wrap items-start gap-0.5 opacity-0 group-hover/clip:opacity-100 transition-opacity z-50 pointer-events-none p-1 max-w-full">
+                                                    {peeringUsers.map((p, idx) => (
+                                                        <div key={idx} className={`text-[8px] font-bold text-white px-1 py-0.5 rounded shadow-md flex items-center gap-1 ${p.color || 'bg-blue-500'}`}>
+                                                           {p.avatar ? <img src={p.avatar} alt="Avatar" className="w-2.5 h-2.5 rounded-full object-cover" /> : <Users size={8} />}
+                                                           {p.username}
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            )}
+
                                             {/* Resize Handles */}
                                             <div className="absolute left-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-white/30 z-10" onMouseDown={(e) => { e.stopPropagation(); setDraggingEdge({ trackId: t.id, clipId: c.id, edge: 'left', startX: e.clientX, initialStart: c.start, initialDuration: c.duration, initialSampleOffset: c.sampleOffset || 0, initialNotes: c.notes }); }} data-edge="left" />
                                             <div className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-white/30 z-10" onMouseDown={(e) => { e.stopPropagation(); setDraggingEdge({ trackId: t.id, clipId: c.id, edge: 'right', startX: e.clientX, initialStart: c.start, initialDuration: c.duration, initialSampleOffset: c.sampleOffset || 0, initialNotes: c.notes }); }} data-edge="right" />
@@ -6890,7 +6910,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                                             </div>
 
                                         </div>
-                                    ))}
+                                    )})}
                                     {/* Live Recording Block Preview */}
                                     {t.armed && isRecording && isPlaying && (
                                        <div id={`record-preview-${t.id}`} className="absolute top-2 bottom-2 rounded bg-red-500/50 border border-red-400 pointer-events-none" style={{ left: `${recordingStartTimeRef.current * BEAT_WIDTH}px`, width: `${Math.max(1, (currentTime - recordingStartTimeRef.current) * BEAT_WIDTH)}px` }}>
