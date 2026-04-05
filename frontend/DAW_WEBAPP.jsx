@@ -12,6 +12,13 @@ import { io } from 'socket.io-client';
 
 const API_BASE_URL = 'https://api.sprig.cc';
 
+const USER_COLORS = ['bg-emerald-500', 'bg-blue-500', 'bg-purple-500', 'bg-pink-500', 'bg-red-500', 'bg-orange-500', 'bg-yellow-500', 'bg-cyan-500'];
+const getDeterministicColor = (username) => {
+    if (!username) return USER_COLORS[0];
+    const hash = String(username).split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+    return USER_COLORS[hash % USER_COLORS.length];
+};
+
 const NOTES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 const SCALES = {
     'Chromatic': [1,1,1,1,1,1,1,1,1,1,1,1],
@@ -2294,12 +2301,7 @@ function DAWStudio() {
   useEffect(() => { tracksRef.current = tracks; }, [tracks]);
   useEffect(() => { projectNameRef.current = projectName; }, [projectName]);
   useEffect(() => { selectedTrackIdRef.current = selectedTrackId; }, [selectedTrackId]);
-  
-  // Keep local ref synced and broadcast selection status to WebRTC peers
-  useEffect(() => { 
-      selectedClipIdsRef.current = selectedClipIds; 
-      if (socketRef.current) socketRef.current.emit('presence-update', { selectedClipIds });
-  }, [selectedClipIds]);
+  useEffect(() => { selectedClipIdsRef.current = selectedClipIds; }, [selectedClipIds]);
 
   // Global Undo/Redo History Tracker
   useEffect(() => {
@@ -4604,6 +4606,10 @@ const initAudioEngine = async (explicitTracks = null) => {
       const userStr = localStorage.getItem('freedaw_user');
       if (token && userStr) {
           const user = JSON.parse(userStr);
+          if (!user.color || user.color === 'bg-emerald-500') {
+              user.color = getDeterministicColor(user.username);
+              localStorage.setItem('freedaw_user', JSON.stringify(user));
+          }
           setAuthToken(token);
           setCurrentUser(user);
           setAppView('home');
@@ -4655,7 +4661,7 @@ const initAudioEngine = async (explicitTracks = null) => {
     } else {
         userRecord = {
             password: authPassword,
-            userObj: { id: `u_local_${Date.now()}`, username: uname, offline: true, color: 'bg-purple-500' }
+            userObj: { id: `u_local_${Date.now()}`, username: uname, offline: true, color: getDeterministicColor(uname) }
         };
         localUsers[uname] = userRecord;
         localStorage.setItem('freedaw_local_users', JSON.stringify(localUsers));
@@ -6828,14 +6834,14 @@ const initAudioEngine = async (explicitTracks = null) => {
                                               const sliceBeat = snap(x / BEAT_WIDTH);
                                               handleContextMenu(e, 'clip', { trackId: t.id, clipId: c.id, sliceBeat });
                                           }}
-                                          className={`clip-element absolute top-[1px] bottom-[1px] rounded-sm border overflow-hidden cursor-grab active:cursor-grabbing ${t.color.replace('bg-', 'bg-').replace('-500', '-600')} transition-all group/clip ${selectedClipIds.includes(c.id) ? 'border-white brightness-125 z-40' : isPeerSelected ? `${peeringUsers[0].color.replace('bg-', 'border-')} border-2 brightness-110 z-30` : 'border-black/60 hover:brightness-110 z-10'}`} 
+                                          className={`clip-element absolute top-[1px] bottom-[1px] rounded-sm border overflow-hidden cursor-grab active:cursor-grabbing ${t.color.replace('bg-', 'bg-').replace('-500', '-600')} transition-all group/clip ${selectedClipIds.includes(c.id) ? 'border-white brightness-125 z-40' : isPeerSelected ? `${(peeringUsers[0].color || getDeterministicColor(peeringUsers[0].username)).replace('bg-', 'border-')} border-2 brightness-110 z-30` : 'border-black/60 hover:brightness-110 z-10'}`} 
                                           style={{ left: `${c.start * BEAT_WIDTH}px`, width: `${c.duration * BEAT_WIDTH}px`, zIndex: draggingClip?.clipId === c.id || selectedClipIds.includes(c.id) ? 50 : (isPeerSelected ? 40 : 10) }}
                                         >
                                             {/* Peer Selection Indicators */}
                                             {isPeerSelected && (
                                                 <div className="absolute top-0 left-0 flex flex-wrap items-start gap-0.5 opacity-0 group-hover/clip:opacity-100 transition-opacity z-50 pointer-events-none p-1 max-w-full">
                                                     {peeringUsers.map((p, idx) => (
-                                                        <div key={idx} className={`text-[8px] font-bold text-white px-1 py-0.5 rounded shadow-md flex items-center gap-1 ${p.color || 'bg-blue-500'}`}>
+                                                        <div key={idx} className={`text-[8px] font-bold text-white px-1 py-0.5 rounded shadow-md flex items-center gap-1 ${p.color || getDeterministicColor(p.username)}`}>
                                                            {p.avatar ? <img src={p.avatar} alt="Avatar" className="w-2.5 h-2.5 rounded-full object-cover" /> : <Users size={8} />}
                                                            {p.username}
                                                         </div>
