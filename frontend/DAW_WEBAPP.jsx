@@ -2023,6 +2023,13 @@ function DAWStudio() {
   const [selectedClipIds, setSelectedClipIds] = useState([]);
   const [dragHoverHome, setDragHoverHome] = useState(false);
 
+  // Advanced UI/UX States
+  const [globalKey, setGlobalKey] = useState('C');
+  const [globalScale, setGlobalScale] = useState('Chromatic');
+  const [hoverInfo, setHoverInfo] = useState('Welcome to FreeDaw Live. Hover over elements for details.');
+  const cpuMeterRef = useRef(null);
+  const lastRafTimeRef = useRef(performance.now());
+
   const audioCtxRef = useRef(null);
   const masterGainRef = useRef(null);
   const masterAnalyserRef = useRef(null);
@@ -2966,6 +2973,16 @@ const initAudioEngine = async (explicitTracks = null) => {
       if (timeDisplayRef.current) timeDisplayRef.current.innerText = formatTime(newTime, stateRefs.current.bpm);
       if (posDisplayRef.current) posDisplayRef.current.innerText = `${Math.floor(newTime / 4) + 1}.${Math.floor(newTime % 4) + 1}.1`;
       
+      // CPU Jitter Calculation
+      if (cpuMeterRef.current) {
+          const nowPerf = performance.now();
+          const deltaMs = nowPerf - lastRafTimeRef.current;
+          lastRafTimeRef.current = nowPerf;
+          const load = Math.min(100, Math.max(0, ((deltaMs - 16.6) / 16.6) * 100));
+          cpuMeterRef.current.style.width = `${load}%`;
+          cpuMeterRef.current.style.backgroundColor = load > 80 ? '#ef4444' : load > 40 ? '#eab308' : '#22c55e';
+      }
+
       if (stateRefs.current.isRecording) {
           tracksRef.current.forEach(t => {
               if (t.armed) {
@@ -4967,6 +4984,27 @@ const initAudioEngine = async (explicitTracks = null) => {
                   }, 50);
               }
               break;
+          case 'TOGGLE_EFFECT_BYPASS': 
+              setTracks(prev => prev.map(t => t.id === action.payload.trackId ? { 
+                  ...t, effects: t.effects.map(fx => {
+                      if (fx.id === action.payload.fxId) {
+                          const nextBypass = !fx.bypassed;
+                          const synth = synthsRef.current[action.payload.trackId];
+                          if (synth && synth.fxNodes[action.payload.fxId]) {
+                              const nodeObj = synth.fxNodes[action.payload.fxId];
+                              if (nodeObj.wet && nodeObj.dry) {
+                                  const mixVal = nextBypass ? 0 : (fx.params?.mix ?? 0.5);
+                                  const now = audioCtxRef.current?.currentTime || 0;
+                                  nodeObj.wet.gain.setTargetAtTime(mixVal, now, 0.05);
+                                  nodeObj.dry.gain.setTargetAtTime(1 - mixVal, now, 0.05);
+                              }
+                          }
+                          return { ...fx, bypassed: nextBypass };
+                      }
+                      return fx;
+                  })
+              } : t)); 
+              break;
           case 'DELETE_EFFECT': 
               setTracks(prev => prev.map(t => t.id === action.payload.trackId ? { ...t, effects: t.effects.filter(fx => fx.id !== action.payload.fxId) } : t)); 
               if (!isLocal && audioCtxRef.current) {
@@ -5654,7 +5692,7 @@ const initAudioEngine = async (explicitTracks = null) => {
         </div>
 
         
-        <div className="flex items-center justify-center gap-0.5 bg-[#222222] px-2 py-1 rounded border border-[#111111] shrink-0 mx-2 lg:mx-4">
+        <div className="flex items-center justify-center gap-0.5 bg-[#222222] px-2 py-1 rounded border border-[#111111] shrink-0 mx-2 lg:mx-4" onMouseEnter={() => setHoverInfo("Transport Controls: Right-click any button to map it to a MIDI controller.")} onMouseLeave={() => setHoverInfo("Welcome to FreeDaw Live.")}>
             <button onClick={() => transportActionsRef.current.rewind?.()} onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'transport_rewind' })} className="p-1.5 text-neutral-400 hover:text-white hover:bg-white/10 rounded-sm transition-all" title="Return to Start"><SkipBack size={16} /></button>
             <button onClick={togglePlay} onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'transport_play' })} className={`p-1.5 rounded-sm transition-all duration-100 ${isPlaying ? 'bg-amber-500 text-black' : 'bg-transparent text-white hover:bg-white/10'}`} title="Play/Pause">{isPlaying ? <Pause size={16} /> : <Play size={16} />}</button>
             <button onClick={stopPlayback} onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'transport_stop' })} className="p-1.5 text-neutral-400 hover:text-white hover:bg-white/10 rounded-sm transition-all" title="Stop"><Square size={16}/></button>
@@ -6447,6 +6485,15 @@ const initAudioEngine = async (explicitTracks = null) => {
                                <span className="text-xs font-bold text-neutral-300">Piano Roll Editor</span>
                            </div>
                            <div className="flex items-center gap-1.5 border-l border-neutral-800 pl-4">
+                               <span className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider">Scale:</span>
+                               <select value={globalKey} onChange={e => setGlobalKey(e.target.value)} className="bg-transparent w-10 text-cyan-500 font-bold focus:outline-none text-[10px] cursor-pointer appearance-none text-center">
+                                   {NOTES.map(n => <option key={n} value={n} className="bg-neutral-900 text-neutral-300">{n}</option>)}
+                               </select>
+                               <select value={globalScale} onChange={e => setGlobalScale(e.target.value)} className="bg-transparent w-[80px] text-cyan-500 font-bold focus:outline-none text-[10px] cursor-pointer appearance-none">
+                                   {Object.keys(SCALES).map(s => <option key={s} value={s} className="bg-neutral-900 text-neutral-300">{s}</option>)}
+                               </select>
+                           </div>
+                           <div className="flex items-center gap-1.5 border-l border-neutral-800 pl-4">
                                <span className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider">Snap:</span>
                                <select value={snapGrid} onChange={e => setSnapGrid(Number(e.target.value))} className="bg-transparent w-20 text-blue-400 font-bold focus:outline-none text-xs cursor-pointer">
                                     <option value={4} className="bg-neutral-900 text-neutral-300">1 Bar</option>
@@ -6464,8 +6511,19 @@ const initAudioEngine = async (explicitTracks = null) => {
                         <div className="w-12 bg-neutral-900 border-r border-neutral-800 sticky left-0 z-20 shrink-0">
                             {Array.from({length: 84}).map((_, i) => {
                                 const pitch = 108 - i;
+                                const keyIndex = NOTES.indexOf(globalKey);
+                                const relativePitch = (pitch - keyIndex + 120) % 12;
+                                const inScale = SCALES[globalScale][relativePitch] === 1;
+                                const isRoot = relativePitch === 0;
                                 const isBlack = [1,3,6,8,10].includes(pitch % 12);
-                                return <div key={pitch} className={`h-4 border-b border-neutral-800 text-[8px] flex items-center justify-end pr-1 ${isBlack ? 'bg-neutral-900 text-neutral-600' : 'bg-neutral-200 text-black font-bold'}`}>{pitch % 12 === 0 ? `C${Math.floor(pitch/12)-1}` : ''}</div>
+                                
+                                let bgClass = isBlack ? 'bg-neutral-900 text-neutral-600' : 'bg-neutral-200 text-black font-bold';
+                                if (globalScale !== 'Chromatic') {
+                                    if (isRoot) bgClass = 'bg-cyan-500 text-black font-bold shadow-[inset_4px_0_0_rgba(255,255,255,0.5)]';
+                                    else if (!inScale) bgClass = 'bg-[#111] text-[#333] opacity-40';
+                                }
+
+                                return <div key={pitch} className={`h-4 border-b border-neutral-800 text-[8px] flex items-center justify-end pr-1 transition-colors ${bgClass}`}>{pitch % 12 === 0 || isRoot ? `${NOTES[pitch%12]}${Math.floor(pitch/12)-1}` : ''}</div>
                             })}
                         </div>
                         <div className="bg-[#242424] relative shrink-0" style={{ width: `${rollWidthPx}px`, height: `${84 * 16}px` }} onDoubleClick={(e) => handlePianoGridDoubleClick(e, bottomDock.trackId, bottomDock.clipId)}>
@@ -6711,8 +6769,15 @@ const initAudioEngine = async (explicitTracks = null) => {
                             >
                                 <div className="flex justify-between items-center mb-3 border-b border-[#222] pb-2 shrink-0">
                                    <div className="flex items-center gap-2">
-                                      <div className="w-1.5 h-1.5 rounded-full bg-[#06b6d4]" />
-                                      <span className="text-[10px] font-bold text-[#b3b3b3] whitespace-nowrap uppercase tracking-wider">{fx.name}</span>
+                                      <button 
+                                          onClick={() => dispatchDawAction({ type: 'TOGGLE_EFFECT_BYPASS', payload: { trackId: track.id, fxId: fx.id }})}
+                                          onMouseEnter={() => setHoverInfo(`Toggle Device On/Off: Bypass ${fx.name}`)}
+                                          onMouseLeave={() => setHoverInfo("Welcome to FreeDaw Live.")}
+                                          className={`w-3.5 h-3.5 rounded-sm flex items-center justify-center transition-colors ${fx.bypassed ? 'bg-[#333] text-[#888]' : 'bg-amber-500 text-black shadow-[0_0_8px_rgba(245,158,11,0.5)]'}`}
+                                      >
+                                          <Power size={10} />
+                                      </button>
+                                      <span className={`text-[10px] font-bold whitespace-nowrap uppercase tracking-wider transition-colors ${fx.bypassed ? 'text-[#888]' : 'text-[#e0e0e0]'}`}>{fx.name}</span>
                                    </div>
                                    <button onClick={() => deleteEffect(track.id, fx.id)} className="text-[#888] hover:text-[#f87171] opacity-0 group-hover:opacity-100 transition-opacity ml-4"><X size={12}/></button>
                                 </div>
@@ -7266,6 +7331,20 @@ const initAudioEngine = async (explicitTracks = null) => {
                 </div>
             )}
 
+
+            {/* Global Status Bar */}
+            <div className="h-6 bg-[#1a1a1a] border-t border-[#111] shrink-0 flex items-center justify-between px-4 text-[#888] text-[9px] font-bold uppercase tracking-wider z-50">
+                <div className="flex items-center gap-2 truncate">
+                    <Info size={12} className="text-cyan-500 shrink-0" />
+                    <span className="truncate">{hoverInfo}</span>
+                </div>
+                <div className="flex items-center gap-2 shrink-0" onMouseEnter={() => setHoverInfo("Performance Meter: Measures Audio/UI Thread latency.")} onMouseLeave={() => setHoverInfo("Welcome to FreeDaw Live.")}>
+                    <span>CPU Load</span>
+                    <div className="w-16 h-1.5 bg-[#111] rounded-sm overflow-hidden border border-[#222]">
+                        <div ref={cpuMeterRef} className="h-full bg-green-500 w-0 transition-all duration-75" />
+                    </div>
+                </div>
+            </div>
 
             {/* Share Project Modal */}
             {showShareModal && (
