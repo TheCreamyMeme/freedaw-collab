@@ -440,6 +440,81 @@ const getAutomationConstraints = (paramKey) => {
     return { min: 0, max: 100 };
 };
 
+// --- Recursive Tree Logic for Sample Folders ---
+const buildSampleTree = (samples) => {
+    const root = { name: 'Root', isDir: true, children: {}, path: 'root' };
+    samples.forEach(s => {
+        // Decode our safe separator back into a directory slash
+        const decodedName = s.name.replace(/~~/g, '/');
+        const parts = decodedName.split('/');
+        const fileName = parts.pop();
+        let current = root;
+        let currentPath = '';
+        parts.forEach(part => {
+            currentPath += (currentPath ? '/' : '') + part;
+            if (!current.children[part]) {
+                current.children[part] = { name: part, isDir: true, children: {}, path: currentPath };
+            }
+            current = current.children[part];
+        });
+        if (!current.children[fileName]) {
+            current.children[fileName] = { ...s, displayName: fileName, isDir: false };
+        } else {
+            current.children[s.id] = { ...s, displayName: fileName, isDir: false };
+        }
+    });
+    return root;
+};
+
+const SampleTreeRenderer = React.memo(({ node, level = 0, expandedFolders, toggleFolder, onPreview, onAssign, onDelete }) => {
+    const isRoot = level === 0;
+    const childrenArray = Object.values(node.children || {}).sort((a, b) => {
+        if (a.isDir && !b.isDir) return -1;
+        if (!a.isDir && b.isDir) return 1;
+        return a.name.localeCompare(b.name);
+    });
+
+    return (
+        <div className="flex flex-col w-full">
+            {!isRoot && (
+                <div 
+                    className={`flex items-center gap-2 p-1.5 rounded-sm cursor-pointer transition-colors hover:bg-[#444] mb-[1px] ${level > 1 ? 'ml-3 border-l border-[#333] pl-2' : ''}`}
+                    onClick={() => toggleFolder(node.path)}
+                >
+                    <Folder size={12} className="text-cyan-500 shrink-0" fill={expandedFolders[node.path] ? "currentColor" : "none"} />
+                    <span className="text-[10px] font-bold text-[#e0e0e0] uppercase tracking-wider truncate select-none">{node.name}</span>
+                </div>
+            )}
+            {(isRoot || expandedFolders[node.path]) && (
+                <div className={`flex flex-col ${!isRoot ? 'ml-3 border-l border-[#333] pl-2' : ''}`}>
+                    {childrenArray.map(child => {
+                        if (child.isDir) {
+                            return <SampleTreeRenderer key={child.path} node={child} level={level + 1} expandedFolders={expandedFolders} toggleFolder={toggleFolder} onPreview={onPreview} onAssign={onAssign} onDelete={onDelete} />;
+                        } else {
+                            return (
+                                <div 
+                                    key={child.id} 
+                                    onClick={() => onPreview(child.id)}
+                                    className={`group flex items-center justify-between p-1.5 rounded-sm text-[10px] text-[#b3b3b3] border border-transparent hover:bg-[#444] cursor-pointer transition-colors mb-[1px] ${!isRoot ? '' : 'bg-[#222] border-[#111]'}`}
+                                >
+                                    <div className="flex items-center gap-2 overflow-hidden flex-1">
+                                        <div className="w-6 h-6 rounded-sm bg-[#2d2d2d] border border-[#111] flex items-center justify-center text-emerald-500 shadow-sm shrink-0"><FileAudio size={10}/></div>
+                                        <span className="font-bold text-[#e0e0e0] uppercase tracking-wider truncate" title={child.displayName}>{child.displayName}</span>
+                                    </div>
+                                    <div className="flex items-center gap-1 shrink-0">
+                                        {onAssign && <button onClick={(e) => { e.stopPropagation(); onAssign(child.id); }} className="bg-[#444] hover:bg-cyan-500 text-[#b3b3b3] hover:text-black border border-[#222] px-2 py-1 text-[9px] rounded-sm font-bold uppercase tracking-wider transition-colors shrink-0">Assign</button>}
+                                        {onDelete && <button onClick={(e) => { e.stopPropagation(); onDelete(e, child.id); }} className="text-[#888] hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity p-1 shrink-0" title="Delete Sample"><Trash2 size={12}/></button>}
+                                    </div>
+                                </div>
+                            );
+                        }
+                    })}
+                </div>
+            )}
+        </div>
+    );
+});
+
 // --- Full Internal Engine Definitions ---
 // Pre-define gradient literal strings so the Tailwind production purger knows NOT to delete them
 const TRACK_COLOR_GRADIENTS = {
@@ -1922,8 +1997,12 @@ function DAWStudio() {
   const [browserPluginCode, setBrowserPluginCode] = useState("");
   
   const [userSamples, setUserSamples] = useState([]);
+  const [expandedSampleFolders, setExpandedSampleFolders] = useState({});
   const [samplePickerTarget, setSamplePickerTarget] = useState(null);
   const [isBrowserDragOver, setIsBrowserDragOver] = useState(false);
+
+  const toggleSampleFolder = useCallback((path) => setExpandedSampleFolders(p => ({...p, [path]: !p[path]})), []);
+  const sampleTree = React.useMemo(() => buildSampleTree(userSamples), [userSamples]);
 
   const [contextMenu, setContextMenu] = useState(null);
   const [editingTrackId, setEditingTrackId] = useState(null);
@@ -3395,7 +3474,12 @@ const initAudioEngine = async (explicitTracks = null) => {
               continue; 
           }
 
-          const safeName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
+          // Preserve Folder Structure
+          const relPath = file.webkitRelativePath || file.name;
+          const cleanPath = relPath.replace(/^\//, ''); 
+          // Encode directory slashes securely using a custom delimiter
+          const safeName = cleanPath.replace(/[^a-zA-Z0-9.\-/]/g, '_').replace(/\//g, '~~');
+          
           const sampleId = `sample_${Date.now()}_${Math.floor(Math.random()*1000)}_${safeName}`;
           
           const formData = new FormData(); formData.append('audio', file);
@@ -3409,7 +3493,7 @@ const initAudioEngine = async (explicitTracks = null) => {
           const audioBuffer = await audioCtxRef.current.decodeAudioData(arrayBuffer);
           globalAudioBufferCache.set(sampleId, { buffer: audioBuffer, duration: audioBuffer.duration });
           
-          newSamples.push({ id: sampleId, name: file.name });
+          newSamples.push({ id: sampleId, name: safeName });
       }
 
       if (newSamples.length > 0) {
@@ -5721,33 +5805,33 @@ const initAudioEngine = async (explicitTracks = null) => {
 
                 <div className="text-[9px] font-bold text-emerald-500 mb-2 mt-4 uppercase tracking-wider px-2 border-t border-[#222] pt-4 flex justify-between items-center">
                     <span>Audio Samples</span>
-                    <label className="cursor-pointer hover:text-white transition-colors" title="Upload Audio">
-                         <Plus size={12}/>
-                         <input type="file" multiple accept="audio/*" className="hidden" onChange={e => handleBulkSampleUpload(e)} />
-                    </label>
-                </div>
-                {userSamples.map(s => (
-                  <div 
-                      key={s.id} 
-                      onClick={async () => {
-                          const sampleData = await fetchAudioSample(s.id);
-                          if (sampleData && audioCtxRef.current) {
-                              const src = audioCtxRef.current.createBufferSource();
-                              src.buffer = sampleData.buffer;
-                              if (masterGainRef.current) src.connect(masterGainRef.current);
-                              src.start(0);
-                          }
-                      }}
-                      className="group flex items-center gap-3 p-1.5 rounded-sm text-[10px] text-[#b3b3b3] border border-transparent hover:bg-[#444] cursor-pointer transition-colors"
-                  >
-                    <div className="w-7 h-7 rounded-sm bg-[#2d2d2d] border border-[#111] flex items-center justify-center text-emerald-500 shadow-sm shrink-0"><FileAudio size={12}/></div>
-                    <div className="flex flex-col overflow-hidden flex-1">
-                      <span className="font-bold text-[#e0e0e0] text-[10px] uppercase tracking-wider truncate" title={s.name}>{s.name}</span>
-                      <span className="text-[8px] text-emerald-500 font-bold uppercase truncate">Audio File</span>
+                    <div className="flex gap-2">
+                        <label className="cursor-pointer hover:text-white transition-colors" title="Upload Audio Files">
+                             <FileAudio size={12}/>
+                             <input type="file" multiple accept="audio/*" className="hidden" onChange={e => handleBulkSampleUpload(e)} />
+                        </label>
+                        <label className="cursor-pointer hover:text-white transition-colors" title="Upload Entire Folder">
+                             <Folder size={12}/>
+                             <input type="file" webkitdirectory="true" directory="true" multiple accept="audio/*" className="hidden" onChange={e => handleBulkSampleUpload(e)} />
+                        </label>
                     </div>
-                    <button onClick={(e) => handleDeleteSample(e, s.id)} className="text-[#888] hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity p-1 shrink-0" title="Delete Sample"><Trash2 size={12}/></button>
-                  </div>
-                ))}
+                </div>
+                <SampleTreeRenderer 
+                    node={sampleTree} 
+                    expandedFolders={expandedSampleFolders} 
+                    toggleFolder={toggleSampleFolder}
+                    onPreview={async (id) => {
+                        const sampleData = await fetchAudioSample(id);
+                        if (sampleData && audioCtxRef.current) {
+                            const src = audioCtxRef.current.createBufferSource();
+                            src.buffer = sampleData.buffer;
+                            if (masterGainRef.current) src.connect(masterGainRef.current);
+                            src.start(0);
+                        }
+                    }}
+                    onDelete={handleDeleteSample}
+                />
+                {userSamples.length === 0 && <p className="text-[10px] font-bold uppercase tracking-wider text-[#888] mt-4 text-center">No samples found.</p>}
               </div>
             </div>
             
@@ -7101,28 +7185,22 @@ const initAudioEngine = async (explicitTracks = null) => {
                             {/* Left: Library */}
                             <div className="w-1/2 md:w-1/3 border-r border-[#111] flex flex-col p-4 bg-[#333]">
                                 <h3 className="text-[10px] font-bold text-[#888] uppercase tracking-wider mb-3">Sample Library</h3>
-                                <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col gap-2 pr-2">
-                                    {userSamples.map(s => (
-                                        <div key={s.id} className="flex items-center justify-between bg-[#222] border border-[#111] p-1.5 rounded-sm group hover:border-[#555] transition-colors">
-                                            <div className="flex items-center gap-2 overflow-hidden flex-1">
-                                                <button 
-                                                    className="text-cyan-500 hover:text-white shrink-0 bg-[#333] p-1.5 rounded-sm transition-colors border border-[#111]"
-                                                    onClick={async (e) => {
-                                                        e.stopPropagation();
-                                                        const sampleData = await fetchAudioSample(s.id);
-                                                        if (sampleData && audioCtxRef.current) {
-                                                            const src = audioCtxRef.current.createBufferSource();
-                                                            src.buffer = sampleData.buffer;
-                                                            if (masterGainRef.current) src.connect(masterGainRef.current);
-                                                            src.start(0);
-                                                        }
-                                                    }}
-                                                ><Play size={10} /></button>
-                                                <span className="text-[10px] text-[#e0e0e0] truncate font-bold uppercase tracking-wider" title={s.name}>{s.name}</span>
-                                            </div>
-                                            <button onClick={() => assignSampleToPad(samplePickerTarget.trackId, samplePickerTarget.note, s.id)} className="bg-[#444] hover:bg-cyan-500 text-[#b3b3b3] hover:text-black border border-[#222] px-3 py-1 ml-2 text-[9px] rounded-sm font-bold uppercase tracking-wider transition-colors shrink-0">Assign</button>
-                                        </div>
-                                    ))}
+                                <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col gap-1 pr-2">
+                                    <SampleTreeRenderer 
+                                        node={sampleTree} 
+                                        expandedFolders={expandedSampleFolders} 
+                                        toggleFolder={toggleSampleFolder}
+                                        onPreview={async (id) => {
+                                            const sampleData = await fetchAudioSample(id);
+                                            if (sampleData && audioCtxRef.current) {
+                                                const src = audioCtxRef.current.createBufferSource();
+                                                src.buffer = sampleData.buffer;
+                                                if (masterGainRef.current) src.connect(masterGainRef.current);
+                                                src.start(0);
+                                            }
+                                        }}
+                                        onAssign={(id) => assignSampleToPad(samplePickerTarget.trackId, samplePickerTarget.note, id)}
+                                    />
                                     {userSamples.length === 0 && <p className="text-[10px] font-bold uppercase tracking-wider text-[#888] mt-4 text-center">No samples found. Upload some!</p>}
                                 </div>
                             </div>
@@ -7166,12 +7244,20 @@ const initAudioEngine = async (explicitTracks = null) => {
                                         onDragOver={e => {e.preventDefault(); e.stopPropagation();}}
                                         onDrop={e => {e.preventDefault(); e.stopPropagation(); handleBulkSampleUpload(e, samplePickerTarget); }}
                                     >
-                                        <label className="w-full h-full border-2 border-dashed border-[#444] hover:border-cyan-500 rounded-sm flex flex-col items-center justify-center text-[#888] group transition-colors relative cursor-pointer bg-[#111]/50 hover:bg-cyan-500/5">
-                                            <Upload size={32} className="mb-2 group-hover:text-cyan-500 transition-colors" />
-                                            <span className="text-[10px] font-bold uppercase tracking-wider group-hover:text-cyan-500 transition-colors">Drag & Drop</span>
-                                            <span className="text-[9px] mt-1 text-center px-4 leading-relaxed font-bold uppercase">Audio Files (.wav, .mp3)<br/>or click to browse</span>
-                                            <input type="file" multiple accept="audio/*" onChange={e => handleBulkSampleUpload(e, samplePickerTarget)} className="hidden" />
-                                        </label>
+                                        <div className="w-full h-full border-2 border-dashed border-[#444] rounded-sm flex flex-col items-center justify-center text-[#888] relative bg-[#111]/50">
+                                            <Upload size={32} className="mb-2" />
+                                            <span className="text-[10px] font-bold uppercase tracking-wider mb-3">Drag & Drop Files</span>
+                                            <div className="flex gap-2">
+                                                <label className="bg-[#333] hover:bg-cyan-500 hover:text-black text-[#e0e0e0] border border-[#222] px-4 py-2 rounded-sm text-[9px] font-bold uppercase tracking-wider cursor-pointer transition-colors shadow-sm">
+                                                    Upload Files
+                                                    <input type="file" multiple accept="audio/*" onChange={e => handleBulkSampleUpload(e, samplePickerTarget)} className="hidden" />
+                                                </label>
+                                                <label className="bg-[#333] hover:bg-cyan-500 hover:text-black text-[#e0e0e0] border border-[#222] px-4 py-2 rounded-sm text-[9px] font-bold uppercase tracking-wider cursor-pointer transition-colors shadow-sm">
+                                                    Upload Folder
+                                                    <input type="file" webkitdirectory="true" directory="true" multiple accept="audio/*" onChange={e => handleBulkSampleUpload(e, samplePickerTarget)} className="hidden" />
+                                                </label>
+                                            </div>
+                                        </div>
                                     </div>
                                 );
                             })()}
