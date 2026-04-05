@@ -5814,10 +5814,9 @@ const initAudioEngine = async (explicitTracks = null) => {
       <div className="flex flex-1 overflow-hidden relative">
         {/* Left Toolbar */}
         <div className="w-14 bg-[#333333] border-r border-[#111111] flex flex-col items-center py-4 gap-4 z-20 shrink-0">
-          <button onClick={() => setActiveView('arrangement')} className={`p-2 rounded-sm transition-all duration-100 ${activeView==='arrangement'?'bg-[#444] text-amber-500':'text-neutral-400 hover:bg-[#444] hover:text-white'}`} title="Arrangement View"><Grid size={20}/></button>
           <button onClick={() => setActiveView(activeView === 'mixer' ? 'arrangement' : 'mixer')} className={`p-2 rounded-sm transition-all duration-100 ${activeView==='mixer'?'bg-[#444] text-amber-500':'text-neutral-400 hover:bg-[#444] hover:text-white'}`} title="Mixer Console"><Sliders size={20}/></button>
           <button onClick={() => setActiveView(activeView === 'lfos' ? 'arrangement' : 'lfos')} className={`p-2 rounded-sm transition-all duration-100 ${activeView==='lfos'?'bg-[#444] text-amber-500':'text-neutral-400 hover:bg-[#444] hover:text-white'}`} title="LFO Rack"><Activity size={20}/></button>
-          <button onClick={() => setActiveView(activeView === 'browser' ? 'arrangement' : 'browser')} className={`p-2 rounded-sm transition-all duration-100 mt-auto ${activeView==='browser'?'bg-[#444] text-amber-500':'text-neutral-400 hover:bg-[#444] hover:text-white'}`} title="Plugin Browser"><Folder size={20}/></button>
+          <button onClick={() => setActiveView(activeView === 'browser' ? 'arrangement' : 'browser')} className={`p-2 rounded-sm transition-all duration-100 ${activeView==='browser'?'bg-[#444] text-amber-500':'text-neutral-400 hover:bg-[#444] hover:text-white'}`} title="Plugin Browser"><Folder size={20}/></button>
         </div>
 
         {/* Pop-out Panels */}
