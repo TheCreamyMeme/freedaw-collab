@@ -2645,14 +2645,6 @@ const initAudioEngine = async (explicitTracks = null) => {
       masterGainRef.current.gain.value = masterVolume / 100;
       masterGainRef.current.connect(audioCtxRef.current.destination);
 
-      // CRITICAL FIX: Initialize and connect the Master Analyser for the VU Meters
-      const masterAnalyser = audioCtxRef.current.createAnalyser();
-      masterAnalyser.fftSize = 256;
-      masterGainRef.current.connect(masterAnalyser);
-      masterAnalyserRef.current = masterAnalyser;
-    }
-    if (audioCtxRef.current.state === 'suspended') await audioCtxRef.current.resume();
-    
       // CRITICAL FIX: Initialize and connect the Master Analyser for the VU Meters (Stereo)
       const masterSplitter = audioCtxRef.current.createChannelSplitter(2);
       const masterAnalyserL = audioCtxRef.current.createAnalyser();
@@ -2665,6 +2657,7 @@ const initAudioEngine = async (explicitTracks = null) => {
       masterAnalyserRef.current = { L: masterAnalyserL, R: masterAnalyserR, splitter: masterSplitter };
     }
     if (audioCtxRef.current.state === 'suspended') await audioCtxRef.current.resume();
+
     
     const targetTracks = explicitTracks || tracksRef.current;
     for (const track of targetTracks) {
