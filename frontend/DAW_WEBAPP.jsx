@@ -1428,12 +1428,15 @@ const triggerDrum = (ctx, bus, pitch, time, vol, p={}, vel=100) => {
       const sampleData = globalAudioBufferCache.get(p.samples[pitch]);
       const source = ctx.createBufferSource();
       source.buffer = sampleData.buffer;
+      
+      const settings = p.sampleSettings?.[pitch] || { start: 0, end: 1, volume: 1 };
+      const padVol = settings.volume !== undefined ? settings.volume : 1;
+      
       const gainNode = ctx.createGain();
-      gainNode.gain.setValueAtTime(realVol, time);
+      gainNode.gain.setValueAtTime(realVol * padVol, time);
       source.connect(gainNode);
       gainNode.connect(bus);
       
-      const settings = p.sampleSettings?.[pitch] || { start: 0, end: 1 };
       const startOffset = settings.start * sampleData.duration;
       const playDur = (settings.end - settings.start) * sampleData.duration;
       
@@ -3530,7 +3533,7 @@ const initAudioEngine = async (explicitTracks = null) => {
           const currentSamples = track.instrumentParams?.samples || {};
           const newSamples = { ...currentSamples, [note]: sampleId };
           const newSampleSettings = { ...(track.instrumentParams?.sampleSettings || {}) };
-          newSampleSettings[note] = { start: 0, end: 1 }; // Reset crop on new assign
+          newSampleSettings[note] = { start: 0, end: 1, volume: 1 }; // Reset crop and gain on new assign
           
           dispatchDawAction({ type: 'UPDATE_INSTRUMENT_PARAM', payload: { trackId, param: 'samples', value: newSamples } });
           dispatchDawAction({ type: 'UPDATE_INSTRUMENT_PARAM', payload: { trackId, param: 'sampleSettings', value: newSampleSettings } });
@@ -6685,7 +6688,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                                             </div>
                                         )}
                                         {Object.keys(track.instrumentParams || {}).map(param => {
-                                            if (param === 'samples') return null; // Handled dynamically above
+                                            if (param === 'samples' || param === 'sampleSettings') return null; // Handled dynamically above
                                             if (param === 'oscType') {
                                                 return (
                                                     <div key={param} className="flex flex-col items-center gap-1 w-16 shrink-0 mt-1">
@@ -7287,10 +7290,30 @@ const initAudioEngine = async (explicitTracks = null) => {
                                                       settings={sampleSettings}
                                                       onChange={(newSettings) => {
                                                           const newSampleSettings = { ...(trk.instrumentParams.sampleSettings || {}) };
-                                                          newSampleSettings[samplePickerTarget.note] = newSettings;
+                                                          newSampleSettings[samplePickerTarget.note] = { ...sampleSettings, ...newSettings };
                                                           dispatchDawAction({ type: 'UPDATE_INSTRUMENT_PARAM', payload: { trackId: trk.id, param: 'sampleSettings', value: newSampleSettings } });
                                                       }}
                                                  />
+                                            </div>
+                                            <div className="flex items-center gap-4 mb-4 bg-[#111] p-3 rounded-lg border border-[#333]">
+                                                <Volume2 size={14} className="text-[#888]" />
+                                                <div className="flex-1 flex flex-col gap-1.5">
+                                                    <div className="flex justify-between text-[9px] font-bold text-[#888] uppercase tracking-wider">
+                                                        <span>Pad Gain</span>
+                                                        <span>{Math.round((sampleSettings.volume !== undefined ? sampleSettings.volume : 1) * 100)}%</span>
+                                                    </div>
+                                                    <input 
+                                                        type="range" 
+                                                        min="0" max="2" step="0.01" 
+                                                        value={sampleSettings.volume !== undefined ? sampleSettings.volume : 1}
+                                                        onChange={(e) => {
+                                                            const newSampleSettings = { ...(trk.instrumentParams.sampleSettings || {}) };
+                                                            newSampleSettings[samplePickerTarget.note] = { ...sampleSettings, volume: parseFloat(e.target.value) };
+                                                            dispatchDawAction({ type: 'UPDATE_INSTRUMENT_PARAM', payload: { trackId: trk.id, param: 'sampleSettings', value: newSampleSettings } });
+                                                        }}
+                                                        className="w-full h-1.5 bg-[#222] rounded-full appearance-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-cyan-500 [&::-webkit-slider-thumb]:rounded-full cursor-pointer"
+                                                    />
+                                                </div>
                                             </div>
                                             <div className="flex justify-end">
                                                 <button onClick={() => {
