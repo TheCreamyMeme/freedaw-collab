@@ -2957,11 +2957,19 @@ const initAudioEngine = async (explicitTracks = null) => {
   };
 
   const stopAudio = () => {
+    const now = audioCtxRef.current?.currentTime || 0;
     Object.values(synthsRef.current).forEach(synth => { 
         if (synth.activeNoteIds) synth.activeNoteIds.clear(); 
         if (synth.activeSource) {
-            try { synth.activeSource.stop(); } catch(e){}
+            try { 
+                if (synth.activeSourceGain && audioCtxRef.current) {
+                    synth.activeSourceGain.gain.cancelScheduledValues(now);
+                    synth.activeSourceGain.gain.setTargetAtTime(0, now, 0.01);
+                }
+                synth.activeSource.stop(now + 0.05); 
+            } catch(e){}
             synth.activeSource = null;
+            synth.activeSourceGain = null;
         }
     });
   };
@@ -3423,39 +3431,61 @@ const initAudioEngine = async (explicitTracks = null) => {
         } else if (track.type === 'audio' && shouldPlayTrack) {
             if (!synth.activeNoteIds.has(activeClip.id)) {
                 synth.activeNoteIds.add(activeClip.id);
-                  if (activeClip.sampleId && globalAudioBufferCache.has(activeClip.sampleId)) {
-                      const sampleData = globalAudioBufferCache.get(activeClip.sampleId);
-                      const source = audioCtxRef.current.createBufferSource();
-                      source.buffer = sampleData.buffer;
-                      const beatOffset = (newTime - activeClip.start) + (activeClip.sampleOffset || 0);
-                      const secOffset = beatOffset / (bpm / 60);
-                      
-                      // Calculate how long this clip should play to prevent trailing audio
-                      const beatsRemaining = activeClip.duration - (newTime - activeClip.start);
-                      const secDuration = beatsRemaining / (bpm / 60);
-                      
-                      const clipGain = audioCtxRef.current.createGain();
-                      source.connect(clipGain);
-                      clipGain.connect(synth.inputBus);
-                      
-                      const clipTime = newTime - activeClip.start;
-                      clipGain.gain.setValueAtTime(getFadeVolume(clipTime, activeClip.duration, activeClip.fadeIn || 0, activeClip.fadeOut || 0, activeClip.fadeInCurve || 0, activeClip.fadeOutCurve || 0), now);
+                
+                // PREVENT VOICE STACKING: Clean up any overlapping source from a previous loop iteration
+                if (synth.activeSource) {
+                    try {
+                        if (synth.activeSourceGain) {
+                            synth.activeSourceGain.gain.cancelScheduledValues(now);
+                            synth.activeSourceGain.gain.setTargetAtTime(0, now, 0.01);
+                        }
+                        synth.activeSource.stop(now + 0.05);
+                    } catch(e) {}
+                }
 
-                      source.start(now, Math.max(0, secOffset), Math.max(0, secDuration));
-                      synth.activeSource = source; 
-                      synth.activeSourceGain = clipGain;
-                  }
-              }
-              
-              if (synth.activeSourceGain) {
-                  const clipTime = newTime - activeClip.start;
-                  const vol = getFadeVolume(clipTime, activeClip.duration, activeClip.fadeIn || 0, activeClip.fadeOut || 0, activeClip.fadeInCurve || 0, activeClip.fadeOutCurve || 0);
-                  synth.activeSourceGain.gain.setTargetAtTime(vol, now, 0.02);
-              }
+                if (activeClip.sampleId && globalAudioBufferCache.has(activeClip.sampleId)) {
+                    const sampleData = globalAudioBufferCache.get(activeClip.sampleId);
+                    const source = audioCtxRef.current.createBufferSource();
+                    source.buffer = sampleData.buffer;
+                    const beatOffset = (newTime - activeClip.start) + (activeClip.sampleOffset || 0);
+                    const secOffset = beatOffset / (bpm / 60);
+                    
+                    // Calculate how long this clip should play to prevent trailing audio
+                    const beatsRemaining = activeClip.duration - (newTime - activeClip.start);
+                    const secDuration = beatsRemaining / (bpm / 60);
+                    
+                    const clipGain = audioCtxRef.current.createGain();
+                    source.connect(clipGain);
+                    clipGain.connect(synth.inputBus);
+                    
+                    const clipTime = newTime - activeClip.start;
+                    const targetVol = getFadeVolume(clipTime, activeClip.duration, activeClip.fadeIn || 0, activeClip.fadeOut || 0, activeClip.fadeInCurve || 0, activeClip.fadeOutCurve || 0);
+                    
+                    // Anti-click micro-fade (10ms) to smoothly ramp volume up from 0 instead of popping
+                    clipGain.gain.setValueAtTime(0, now);
+                    clipGain.gain.linearRampToValueAtTime(targetVol, now + 0.01);
+
+                    source.start(now, Math.max(0, secOffset), Math.max(0, secDuration));
+                    synth.activeSource = source; 
+                    synth.activeSourceGain = clipGain;
+                }
+            }
+            
+            if (synth.activeSourceGain) {
+                const clipTime = newTime - activeClip.start;
+                const vol = getFadeVolume(clipTime, activeClip.duration, activeClip.fadeIn || 0, activeClip.fadeOut || 0, activeClip.fadeInCurve || 0, activeClip.fadeOutCurve || 0);
+                synth.activeSourceGain.gain.setTargetAtTime(vol, now, 0.02);
+            }
         } else { 
             synth.activeNoteIds.clear(); 
             if (track.type === 'audio' && synth.activeSource) {
-                try { synth.activeSource.stop(now); } catch(e){}
+                try { 
+                    if (synth.activeSourceGain) {
+                        synth.activeSourceGain.gain.cancelScheduledValues(now);
+                        synth.activeSourceGain.gain.setTargetAtTime(0, now, 0.01);
+                    }
+                    synth.activeSource.stop(now + 0.05); 
+                } catch(e){}
                 synth.activeSource = null;
                 synth.activeSourceGain = null;
             }
