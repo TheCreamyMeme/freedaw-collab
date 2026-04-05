@@ -1819,9 +1819,9 @@ const ImageCropper = ({ src, onComplete, onCancel }) => {
 };
 
 // --- Custom Audio Waveform Preview Component ---
-const WaveformDisplay = React.memo(({ buffer, bpm, beatWidth, sampleOffset = 0 }) => {
+const WaveformDisplay = React.memo(({ buffer, bpm, beatWidth, sampleOffset = 0, playbackRate = 1.0 }) => {
     const canvasRef = useRef(null);
-    const widthPx = buffer.duration * (bpm / 60) * beatWidth;
+    const widthPx = (buffer.duration / playbackRate) * (bpm / 60) * beatWidth;
 
     useEffect(() => {
         const canvas = canvasRef.current;
@@ -1868,11 +1868,11 @@ const WaveformDisplay = React.memo(({ buffer, bpm, beatWidth, sampleOffset = 0 }
     }, [buffer, widthPx]); // Added widthPx to redraw in high-res when zoomed
 
     return (
-        <div className="absolute inset-y-0 overflow-hidden pointer-events-none mix-blend-overlay opacity-60" style={{ width: `${widthPx}px`, left: `-${sampleOffset * beatWidth}px`, top: '16px' }}>
+        <div className="absolute inset-y-0 overflow-hidden pointer-events-none mix-blend-overlay opacity-60" style={{ width: `${widthPx}px`, left: `-${(sampleOffset * beatWidth) / playbackRate}px`, top: '16px' }}>
             <canvas ref={canvasRef} className="w-full h-full object-fill" />
         </div>
     );
-}, (prev, next) => prev.buffer === next.buffer && prev.bpm === next.bpm && prev.beatWidth === next.beatWidth && prev.sampleOffset === next.sampleOffset);
+}, (prev, next) => prev.buffer === next.buffer && prev.bpm === next.bpm && prev.beatWidth === next.beatWidth && prev.sampleOffset === next.sampleOffset && prev.playbackRate === next.playbackRate);
 
 // --- Custom Interactive Sample Cropper ---
 const SampleEditorWaveform = React.memo(({ buffer }) => {
@@ -2100,6 +2100,7 @@ function DAWStudio() {
   const [draggingAutoPoint, setDraggingAutoPoint] = useState(null);
   const [draggingAutoCurve, setDraggingAutoCurve] = useState(null);
   const [draggingFade, setDraggingFade] = useState(null);
+  const [draggingStretch, setDraggingStretch] = useState(null);
   const [isAutomationMode, setIsAutomationMode] = useState(false);
   const [draggingPlayhead, setDraggingPlayhead] = useState(false);
   const [dockHeight, setDockHeight] = useState(260);
@@ -2740,9 +2741,11 @@ const initAudioEngine = async (explicitTracks = null) => {
                           clipGain.connect(synth.inputBus);
                           applyOfflineFade(clipGain, startTimeSec, clip.duration, stateRefs.current.bpm, clip.fadeIn, clip.fadeOut, clip.fadeInCurve, clip.fadeOutCurve);
 
-                          const secOffset = (clip.sampleOffset || 0) * (60 / stateRefs.current.bpm);
-                          const secDuration = clip.duration * (60 / stateRefs.current.bpm);
-                          source.start(startTimeSec, Math.max(0, secOffset), Math.max(0, secDuration));
+                          const secOffset = (clip.sampleOffset || 0) * (60 / stateRefs.current.bpm) * (clip.playbackRate || 1.0);
+                          const secDurationRealtime = clip.duration * (60 / stateRefs.current.bpm);
+                          const secDurationBuffer = secDurationRealtime * (clip.playbackRate || 1.0);
+                          source.playbackRate.value = clip.playbackRate || 1.0;
+                          source.start(startTimeSec, Math.max(0, secOffset), Math.max(0, secDurationBuffer));
                       }
                   });
 
@@ -2942,9 +2945,11 @@ const initAudioEngine = async (explicitTracks = null) => {
                       clipGain.connect(synth.inputBus);
                       applyOfflineFade(clipGain, startTimeSec, clip.duration, stateRefs.current.bpm, clip.fadeIn, clip.fadeOut, clip.fadeInCurve, clip.fadeOutCurve);
 
-                      const secOffset = (clip.sampleOffset || 0) * (60 / stateRefs.current.bpm);
-                      const secDuration = clip.duration * (60 / stateRefs.current.bpm);
-                      source.start(startTimeSec, Math.max(0, secOffset), Math.max(0, secDuration));
+                      const secOffset = (clip.sampleOffset || 0) * (60 / stateRefs.current.bpm) * (clip.playbackRate || 1.0);
+                      const secDurationRealtime = clip.duration * (60 / stateRefs.current.bpm);
+                      const secDurationBuffer = secDurationRealtime * (clip.playbackRate || 1.0);
+                      source.playbackRate.value = clip.playbackRate || 1.0;
+                      source.start(startTimeSec, Math.max(0, secOffset), Math.max(0, secDurationBuffer));
                   }
               });
           }
@@ -3464,11 +3469,12 @@ const initAudioEngine = async (explicitTracks = null) => {
                     const source = audioCtxRef.current.createBufferSource();
                     source.buffer = sampleData.buffer;
                     const beatOffset = (newTime - activeClip.start) + (activeClip.sampleOffset || 0);
-                    const secOffset = beatOffset / (bpm / 60);
+                    const secOffset = (beatOffset / (bpm / 60)) * (activeClip.playbackRate || 1.0);
                     
                     // Calculate how long this clip should play to prevent trailing audio
                     const beatsRemaining = activeClip.duration - (newTime - activeClip.start);
-                    const secDuration = beatsRemaining / (bpm / 60);
+                    const secDurationRealtime = beatsRemaining / (bpm / 60);
+                    const secDurationBuffer = secDurationRealtime * (activeClip.playbackRate || 1.0);
                     
                     const clipGain = audioCtxRef.current.createGain();
                     source.connect(clipGain);
@@ -3481,7 +3487,8 @@ const initAudioEngine = async (explicitTracks = null) => {
                     clipGain.gain.setValueAtTime(0, now);
                     clipGain.gain.linearRampToValueAtTime(targetVol, now + 0.01);
 
-                    source.start(now, Math.max(0, secOffset), Math.max(0, secDuration));
+                    source.playbackRate.value = activeClip.playbackRate || 1.0;
+                    source.start(now, Math.max(0, secOffset), Math.max(0, secDurationBuffer));
                     synth.activeSource = source; 
                     synth.activeSourceGain = clipGain;
                 }
@@ -5071,6 +5078,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                       start: action.payload.start !== undefined ? action.payload.start : c.start, 
                       duration: action.payload.duration !== undefined ? action.payload.duration : c.duration,
                       ...(action.payload.sampleOffset !== undefined ? { sampleOffset: action.payload.sampleOffset } : {}),
+                      ...(action.payload.playbackRate !== undefined ? { playbackRate: action.payload.playbackRate } : {}),
                       ...(action.payload.notes !== undefined ? { notes: action.payload.notes } : {}),
                       ...(action.payload.fadeIn !== undefined ? { fadeIn: action.payload.fadeIn } : {}),
                       ...(action.payload.fadeOut !== undefined ? { fadeOut: action.payload.fadeOut } : {}),
@@ -5502,6 +5510,51 @@ const initAudioEngine = async (explicitTracks = null) => {
             } else {
                 dispatchDawAction({ type: 'UPDATE_AUTOMATION_POINT', payload: { trackId, paramKey, pointId, time: newTime, value: newValue } });
             }
+        } else if (draggingStretch) {
+            const deltaX = e.clientX - draggingStretch.startX;
+            const deltaBeats = snap(deltaX / BEAT_WIDTH);
+
+            let newStart = draggingStretch.initialStart;
+            let newDuration = draggingStretch.initialDuration;
+            let newSampleOffset = draggingStretch.initialSampleOffset || 0;
+            let newPlaybackRate = draggingStretch.initialPlaybackRate || 1.0;
+            let newNotes = draggingStretch.initialNotes;
+
+            if (draggingStretch.edge === 'stretch-right') {
+                newDuration = Math.max(0.25, draggingStretch.initialDuration + deltaBeats);
+            } else {
+                const maxLeftPull = -Infinity;
+                const constrainedDelta = Math.max(maxLeftPull, deltaBeats);
+                newStart = Math.min(draggingStretch.initialStart + draggingStretch.initialDuration - 0.25, draggingStretch.initialStart + constrainedDelta);
+                newDuration = draggingStretch.initialStart + draggingStretch.initialDuration - newStart;
+            }
+
+            const stretchRatio = newDuration / draggingStretch.initialDuration;
+
+            if (draggingStretch.isAudio) {
+                newPlaybackRate = (draggingStretch.initialPlaybackRate || 1.0) / stretchRatio;
+                newSampleOffset = (draggingStretch.initialSampleOffset || 0) * stretchRatio;
+            } else if (newNotes) {
+                newNotes = draggingStretch.initialNotes.map(n => ({
+                    ...n,
+                    start: n.initialRelativeStart * stretchRatio,
+                    duration: n.initialRelativeDuration * stretchRatio
+                }));
+            }
+
+            dragValuesRef.current = { start: newStart, duration: newDuration, sampleOffset: newSampleOffset, playbackRate: newPlaybackRate, notes: newNotes };
+
+            setTracks(prev => prev.map(t => t.id === draggingStretch.trackId ? {
+                ...t, clips: t.clips.map(c => {
+                    if (c.id !== draggingStretch.clipId) return c;
+                    return { ...c, start: newStart, duration: newDuration, sampleOffset: newSampleOffset, playbackRate: newPlaybackRate, ...(newNotes ? { notes: newNotes } : {}) };
+                })
+            } : t));
+
+            broadcastLivePreview({
+                type: 'UPDATE_CLIP_BOUNDS',
+                payload: { trackId: draggingStretch.trackId, clipId: draggingStretch.clipId, start: newStart, duration: newDuration, sampleOffset: newSampleOffset, playbackRate: newPlaybackRate, notes: newNotes }
+            });
         } else if (draggingFade) {
             const deltaX = e.clientX - draggingFade.startX;
             const deltaBeats = deltaX / BEAT_WIDTH;
@@ -5561,7 +5614,7 @@ const initAudioEngine = async (explicitTracks = null) => {
       } else if (draggingSidePanel) {
           setSidePanelWidth(Math.max(300, Math.min(1200, e.clientX - 56)));
       }
-  }, [draggingClip, draggingEdge, draggingNote, draggingNoteEdge, draggingLoop, draggingPlayhead, draggingDockHeight, draggingSidePanel, draggingAutoPoint, draggingAutoCurve, draggingFade, BEAT_WIDTH]);  
+  }, [draggingClip, draggingEdge, draggingNote, draggingNoteEdge, draggingLoop, draggingPlayhead, draggingDockHeight, draggingSidePanel, draggingAutoPoint, draggingAutoCurve, draggingFade, draggingStretch, BEAT_WIDTH]);  
   const handleMouseUp = useCallback(() => {
       if (draggingClip) {
           const finalStart = dragValuesRef.current.start ?? draggingClip.initialStart;
@@ -5591,6 +5644,17 @@ const initAudioEngine = async (explicitTracks = null) => {
       }
       if (draggingAutoPoint) setDraggingAutoPoint(null);
       if (draggingAutoCurve) setDraggingAutoCurve(null);
+      
+      if (draggingStretch) {
+          const finalStart = dragValuesRef.current.start ?? draggingStretch.initialStart;
+          const finalDuration = dragValuesRef.current.duration ?? draggingStretch.initialDuration;
+          const finalSampleOffset = dragValuesRef.current.sampleOffset ?? draggingStretch.initialSampleOffset;
+          const finalPlaybackRate = dragValuesRef.current.playbackRate ?? draggingStretch.initialPlaybackRate;
+          const finalNotes = dragValuesRef.current.notes ?? draggingStretch.initialNotes;
+          dispatchDawAction({ type: 'UPDATE_CLIP_BOUNDS', payload: { trackId: draggingStretch.trackId, clipId: draggingStretch.clipId, start: finalStart, duration: finalDuration, sampleOffset: finalSampleOffset, playbackRate: finalPlaybackRate, notes: finalNotes } });
+          setDraggingStretch(null);
+      }
+
       if (draggingFade) {
           const track = tracksRef.current.find(t => t.id === draggingFade.trackId);
           const clip = track?.clips.find(c => c.id === draggingFade.clipId);
@@ -5608,7 +5672,8 @@ const initAudioEngine = async (explicitTracks = null) => {
       }
       if (draggingDockHeight) setDraggingDockHeight(false);
       if (draggingSidePanel) setDraggingSidePanel(false);
-  }, [draggingClip, draggingEdge, draggingNote, draggingNoteEdge, draggingLoop, draggingPlayhead, draggingDockHeight, draggingSidePanel, draggingAutoPoint, draggingAutoCurve, draggingFade]);
+  }, [draggingClip, draggingEdge, draggingNote, draggingNoteEdge, draggingLoop, draggingPlayhead, draggingDockHeight, draggingSidePanel, draggingAutoPoint, draggingAutoCurve, draggingFade, draggingStretch]);
+
 
   useEffect(() => {
       window.addEventListener('mousemove', handleMouseMove);
@@ -6496,6 +6561,14 @@ const initAudioEngine = async (explicitTracks = null) => {
                                             <div className="absolute left-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-white/30 z-10" onMouseDown={(e) => { e.stopPropagation(); setDraggingEdge({ trackId: t.id, clipId: c.id, edge: 'left', startX: e.clientX, initialStart: c.start, initialDuration: c.duration, initialSampleOffset: c.sampleOffset || 0, initialNotes: c.notes }); }} data-edge="left" />
                                             <div className="absolute right-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-white/30 z-10" onMouseDown={(e) => { e.stopPropagation(); setDraggingEdge({ trackId: t.id, clipId: c.id, edge: 'right', startX: e.clientX, initialStart: c.start, initialDuration: c.duration, initialSampleOffset: c.sampleOffset || 0, initialNotes: c.notes }); }} data-edge="right" />
 
+                                            {/* Stretch Handles (Bottom Corners) */}
+                                            <div className="absolute left-0 bottom-0 w-3 h-3 cursor-ew-resize hover:bg-white/70 z-20" title="Time Stretch" onMouseDown={(e) => { e.stopPropagation(); setDraggingStretch({ trackId: t.id, clipId: c.id, edge: 'stretch-left', startX: e.clientX, initialStart: c.start, initialDuration: c.duration, initialSampleOffset: c.sampleOffset || 0, initialPlaybackRate: c.playbackRate || 1.0, initialNotes: c.notes?.map(n => ({...n, initialRelativeStart: n.start, initialRelativeDuration: n.duration})), isAudio: t.type === 'audio' }); }} data-edge="stretch-left" >
+                                                <div className="absolute bottom-[2px] left-[2px] w-1.5 h-1.5 border-b-[2px] border-l-[2px] border-white/70 pointer-events-none" />
+                                            </div>
+                                            <div className="absolute right-0 bottom-0 w-3 h-3 cursor-ew-resize hover:bg-white/70 z-20" title="Time Stretch" onMouseDown={(e) => { e.stopPropagation(); setDraggingStretch({ trackId: t.id, clipId: c.id, edge: 'stretch-right', startX: e.clientX, initialStart: c.start, initialDuration: c.duration, initialSampleOffset: c.sampleOffset || 0, initialPlaybackRate: c.playbackRate || 1.0, initialNotes: c.notes?.map(n => ({...n, initialRelativeStart: n.start, initialRelativeDuration: n.duration})), isAudio: t.type === 'audio' }); }} data-edge="stretch-right" >
+                                                <div className="absolute bottom-[2px] right-[2px] w-1.5 h-1.5 border-b-[2px] border-r-[2px] border-white/70 pointer-events-none" />
+                                            </div>
+
                                             <div className="h-3 w-full bg-black/20 flex items-center px-1 border-b border-black/20 pointer-events-none z-10 relative">
                                                 <span className="text-[9px] font-bold text-white/90 truncate select-none">{t.type === 'midi' ? 'MIDI Clip' : 'Audio Clip'}</span>
                                             </div>
@@ -6510,6 +6583,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                                                     bpm={bpm} 
                                                     beatWidth={BEAT_WIDTH}
                                                     sampleOffset={c.sampleOffset || 0}
+                                                    playbackRate={c.playbackRate || 1.0}
                                                 />
                                             )}
                                             
