@@ -492,11 +492,17 @@ const SampleTreeRenderer = React.memo(({ node, level = 0, expandedFolders, toggl
                             return <SampleTreeRenderer key={child.path} node={child} level={level + 1} expandedFolders={expandedFolders} toggleFolder={toggleFolder} onPreview={onPreview} onAssign={onAssign} onDelete={onDelete} />;
                         } else {
                             return (
-                                <div 
-                                    key={child.id} 
-                                    onClick={() => onPreview(child.id)}
-                                    className={`group flex items-center justify-between p-1.5 rounded-sm text-[10px] text-[#b3b3b3] border border-transparent hover:bg-[#444] cursor-pointer transition-colors mb-[1px] ${!isRoot ? '' : 'bg-[#222] border-[#111]'}`}
-                                >
+                                    <div 
+                                        key={child.id} 
+                                        draggable
+                                        onDragStart={(e) => {
+                                            e.dataTransfer.setData('internal_sample', child.id);
+                                            e.dataTransfer.setData('internal_sample_name', child.displayName);
+                                        }}
+                                        onClick={() => onPreview(child.id)}
+                                        className={`group flex items-center justify-between p-1.5 rounded-sm text-[10px] text-[#b3b3b3] border border-transparent hover:bg-[#444] cursor-pointer transition-colors mb-[1px] ${!isRoot ? '' : 'bg-[#222] border-[#111]'}`}
+                                    >
+
                                     <div className="flex items-center gap-2 overflow-hidden flex-1">
                                         <div className="w-6 h-6 rounded-sm bg-[#2d2d2d] border border-[#111] flex items-center justify-center text-emerald-500 shadow-sm shrink-0"><FileAudio size={10}/></div>
                                         <span className="font-bold text-[#e0e0e0] uppercase tracking-wider truncate" title={child.displayName}>{child.displayName}</span>
@@ -2020,6 +2026,8 @@ function DAWStudio() {
   const [draggingPlayhead, setDraggingPlayhead] = useState(false);
   const [dockHeight, setDockHeight] = useState(260);
   const [draggingDockHeight, setDraggingDockHeight] = useState(false);
+  const [sidePanelWidth, setSidePanelWidth] = useState(500);
+  const [draggingSidePanel, setDraggingSidePanel] = useState(false);
   const [draggedFxIndex, setDraggedFxIndex] = useState(null);
   const [dragOverFxIndex, setDragOverFxIndex] = useState(null);
   const [selectedTrackId, setSelectedTrackId] = useState(null);
@@ -5367,8 +5375,10 @@ const initAudioEngine = async (explicitTracks = null) => {
         } else if (draggingDockHeight) {
           // Keep a minimum readable bound on the bottom rack (260px) to prevent squished crash behaviors
           setDockHeight(Math.max(260, Math.min(800, window.innerHeight - e.clientY)));
+      } else if (draggingSidePanel) {
+          setSidePanelWidth(Math.max(300, Math.min(1200, e.clientX - 56)));
       }
-  }, [draggingClip, draggingEdge, draggingNote, draggingNoteEdge, draggingLoop, draggingPlayhead, draggingDockHeight, draggingAutoPoint, draggingAutoCurve, BEAT_WIDTH]);
+  }, [draggingClip, draggingEdge, draggingNote, draggingNoteEdge, draggingLoop, draggingPlayhead, draggingDockHeight, draggingSidePanel, draggingAutoPoint, draggingAutoCurve, BEAT_WIDTH]);
   
   const handleMouseUp = useCallback(() => {
       if (draggingClip) {
@@ -5406,7 +5416,8 @@ const initAudioEngine = async (explicitTracks = null) => {
           setCurrentTime(stateRefs.current.currentTime); // Sync react UI state cleanly on release
       }
       if (draggingDockHeight) setDraggingDockHeight(false);
-  }, [draggingClip, draggingEdge, draggingNote, draggingNoteEdge, draggingLoop, draggingPlayhead, draggingDockHeight, draggingAutoPoint, draggingAutoCurve]);
+      if (draggingSidePanel) setDraggingSidePanel(false);
+  }, [draggingClip, draggingEdge, draggingNote, draggingNoteEdge, draggingLoop, draggingPlayhead, draggingDockHeight, draggingSidePanel, draggingAutoPoint, draggingAutoCurve]);
 
   useEffect(() => {
       window.addEventListener('mousemove', handleMouseMove);
@@ -5436,10 +5447,14 @@ const initAudioEngine = async (explicitTracks = null) => {
   const handleDragOver = useCallback((e) => {
       e.preventDefault(); e.stopPropagation();
       let fileType = 'audio';
-      if (e.dataTransfer.items && e.dataTransfer.items.length > 0) {
+      
+      if (e.dataTransfer.types.includes('internal_sample')) {
+          fileType = 'audio';
+      } else if (e.dataTransfer.items && e.dataTransfer.items.length > 0) {
           const item = e.dataTransfer.items[0];
           if (item.type.includes('midi') || item.type === '' || item.type.includes('octet-stream')) fileType = 'midi'; 
       }
+      
       if (timelineRef.current) {
           const rect = timelineRef.current.getBoundingClientRect();
           const y = e.clientY - rect.top + timelineRef.current.scrollTop;
@@ -5460,6 +5475,36 @@ const initAudioEngine = async (explicitTracks = null) => {
       e.preventDefault(); e.stopPropagation();
       if (!dragHover) return;
       const { beat, trackIndex } = dragHover; setDragHover(null);
+
+      const internalSampleId = e.dataTransfer.getData('internal_sample');
+      const internalSampleName = e.dataTransfer.getData('internal_sample_name');
+
+      if (internalSampleId) {
+          let targetTrack = tracksRef.current[trackIndex];
+          let finalTrackId = targetTrack?.id;
+          let needsNewTrack = !targetTrack || targetTrack.type !== 'audio';
+
+          if (needsNewTrack) {
+              finalTrackId = Date.now() + Math.floor(Math.random() * 1000);
+              const newTrack = {
+                  id: finalTrackId,
+                  name: (internalSampleName || 'Audio').substring(0, 16),
+                  type: 'audio',
+                  color: 'bg-emerald-500',
+                  volume: 80, pan: 0, muted: false, solo: false, armed: false, clips: [], effects: [], audioInputId: ''
+              };
+              dispatchDawAction({ type: 'ADD_TRACK', payload: newTrack });
+          }
+
+          const sampleData = await fetchAudioSample(internalSampleId);
+          if (sampleData) {
+              const durBeats = sampleData.duration * (stateRefs.current.bpm / 60);
+              const newClip = { id: Date.now(), start: beat, duration: Math.max(1, durBeats), sampleId: internalSampleId };
+              dispatchDawAction({ type: 'ADD_CLIP', payload: { trackId: finalTrackId, clip: newClip } });
+              showToast(`Added sample: ${internalSampleName || 'Audio'}`, 'success');
+          }
+          return;
+      }
 
       const files = Array.from(e.dataTransfer.files);
       if (files.length === 0) return;
@@ -5768,16 +5813,17 @@ const initAudioEngine = async (explicitTracks = null) => {
 
       <div className="flex flex-1 overflow-hidden relative">
         {/* Left Toolbar */}
-        <div className="w-14 bg-[#333333] border-r border-[#111111] flex flex-col items-center py-4 gap-4 z-20">
+        <div className="w-14 bg-[#333333] border-r border-[#111111] flex flex-col items-center py-4 gap-4 z-20 shrink-0">
           <button onClick={() => setActiveView('arrangement')} className={`p-2 rounded-sm transition-all duration-100 ${activeView==='arrangement'?'bg-[#444] text-amber-500':'text-neutral-400 hover:bg-[#444] hover:text-white'}`} title="Arrangement View"><Grid size={20}/></button>
-          <button onClick={() => setActiveView('mixer')} className={`p-2 rounded-sm transition-all duration-100 ${activeView==='mixer'?'bg-[#444] text-amber-500':'text-neutral-400 hover:bg-[#444] hover:text-white'}`} title="Mixer Console"><Sliders size={20}/></button>
-          <button onClick={() => setActiveView('lfos')} className={`p-2 rounded-sm transition-all duration-100 ${activeView==='lfos'?'bg-[#444] text-amber-500':'text-neutral-400 hover:bg-[#444] hover:text-white'}`} title="LFO Rack"><Activity size={20}/></button>
-          <button onClick={() => setActiveView('browser')} className={`p-2 rounded-sm transition-all duration-100 mt-auto ${activeView==='browser'?'bg-[#444] text-amber-500':'text-neutral-400 hover:bg-[#444] hover:text-white'}`} title="Plugin Browser"><Folder size={20}/></button>
+          <button onClick={() => setActiveView(activeView === 'mixer' ? 'arrangement' : 'mixer')} className={`p-2 rounded-sm transition-all duration-100 ${activeView==='mixer'?'bg-[#444] text-amber-500':'text-neutral-400 hover:bg-[#444] hover:text-white'}`} title="Mixer Console"><Sliders size={20}/></button>
+          <button onClick={() => setActiveView(activeView === 'lfos' ? 'arrangement' : 'lfos')} className={`p-2 rounded-sm transition-all duration-100 ${activeView==='lfos'?'bg-[#444] text-amber-500':'text-neutral-400 hover:bg-[#444] hover:text-white'}`} title="LFO Rack"><Activity size={20}/></button>
+          <button onClick={() => setActiveView(activeView === 'browser' ? 'arrangement' : 'browser')} className={`p-2 rounded-sm transition-all duration-100 mt-auto ${activeView==='browser'?'bg-[#444] text-amber-500':'text-neutral-400 hover:bg-[#444] hover:text-white'}`} title="Plugin Browser"><Folder size={20}/></button>
         </div>
 
-        {/* Main Content Area */}
-        {activeView === 'browser' ? (
-          <div className="flex-1 flex overflow-hidden bg-[#333333] z-10">
+        {/* Pop-out Panels */}
+        {activeView === 'browser' && (
+          <div className="shrink-0 border-r border-[#111111] flex overflow-hidden bg-[#333333] z-10 shadow-[4px_0_24px_rgba(0,0,0,0.5)] relative" style={{ width: `${sidePanelWidth}px` }}>
+            <div className="absolute top-0 right-0 bottom-0 w-1.5 cursor-ew-resize hover:bg-cyan-500 z-50 transition-colors" onMouseDown={() => setDraggingSidePanel(true)} />
             <div 
                 className="w-72 bg-[#3a3a3a] border-r border-[#111] flex flex-col shrink-0 relative"
                 onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setIsBrowserDragOver(true); }}
@@ -5895,8 +5941,10 @@ const initAudioEngine = async (explicitTracks = null) => {
                 </div>
             )}
           </div>
-        ) : activeView === 'mixer' ? (
-          <div className="flex-1 bg-[#333333] flex p-4 gap-2 overflow-x-auto relative custom-scrollbar pb-6">
+        )}
+        {activeView === 'mixer' && (
+          <div className="shrink-0 border-r border-[#111111] bg-[#333333] flex p-4 pr-6 gap-2 overflow-x-auto relative custom-scrollbar pb-6 shadow-[4px_0_24px_rgba(0,0,0,0.5)] z-10" style={{ width: `${sidePanelWidth}px` }}>
+             <div className="absolute top-0 right-0 bottom-0 w-1.5 cursor-ew-resize hover:bg-cyan-500 z-50 transition-colors" onMouseDown={() => setDraggingSidePanel(true)} />
              {tracks.map(t => (
                <div key={t.id} className="w-28 bg-[#3a3a3a] border border-[#111] rounded-sm flex flex-col items-center py-3 shrink-0 relative group transition-colors">
                   <button onClick={(e) => handleContextMenu(e, 'track', { trackId: t.id })} className="absolute top-1.5 right-1.5 text-[#888] hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"><MoreHorizontal size={12}/></button>
@@ -5946,10 +5994,12 @@ const initAudioEngine = async (explicitTracks = null) => {
                   <span className="text-[9px] font-mono text-[#ff5a5a] font-bold mt-1">{masterVolume}</span>
              </div>
           </div>
-        ) : activeView === 'lfos' ? (
-          <div className="flex-1 bg-[#333333] flex p-4 gap-4 overflow-x-auto relative custom-scrollbar pb-6 items-start content-start">
+        )}
+        {activeView === 'lfos' && (
+          <div className="shrink-0 border-r border-[#111111] bg-[#333333] flex flex-col flex-wrap p-4 pr-6 gap-4 overflow-x-auto overflow-y-hidden relative custom-scrollbar pb-6 content-start shadow-[4px_0_24px_rgba(0,0,0,0.5)] z-10" style={{ width: `${sidePanelWidth}px` }}>
+             <div className="absolute top-0 right-0 bottom-0 w-1.5 cursor-ew-resize hover:bg-cyan-500 z-50 transition-colors" onMouseDown={() => setDraggingSidePanel(true)} />
              {lfos.map(lfo => (
-                <div key={lfo.id} className="min-w-[24rem] max-w-lg h-full max-h-[400px] bg-[#3a3a3a] border border-[#222] rounded-sm p-4 flex flex-col shrink-0 relative group hover:border-[#555] transition-colors">
+                <div key={lfo.id} className="min-w-[24rem] max-w-lg h-max max-h-[400px] bg-[#3a3a3a] border border-[#222] rounded-sm p-4 flex flex-col shrink-0 relative group hover:border-[#555] transition-colors">
                     <div className="flex justify-between items-center mb-3 border-b border-[#222] pb-2 shrink-0">
                        <div className="flex items-center gap-2">
                           <Activity size={12} className="text-amber-500" />
@@ -6068,14 +6118,16 @@ const initAudioEngine = async (explicitTracks = null) => {
                 </div>
              ))}
 
-             <div className="w-32 min-w-[8rem] h-full max-h-[400px] border border-[#222] bg-[#3a3a3a] hover:border-[#555] rounded-sm flex flex-col items-center justify-center shrink-0 cursor-pointer group transition-colors" onClick={() => dispatchDawAction({ type: 'ADD_LFO', payload: { id: `lfo_${Date.now()}`, name: `LFO ${lfos.length + 1}`, type: 'sine', rate: 1.0, depth: 100, steps: [0.5,0.5,0.5,0.5,0.5,0.5,0.5,0.5], mappings: [], automation: {}, activeAutomationParam: 'rate' }})}>
+             <div className="w-32 min-w-[8rem] h-48 max-h-[400px] border border-[#222] bg-[#3a3a3a] hover:border-[#555] rounded-sm flex flex-col items-center justify-center shrink-0 cursor-pointer group transition-colors" onClick={() => dispatchDawAction({ type: 'ADD_LFO', payload: { id: `lfo_${Date.now()}`, name: `LFO ${lfos.length + 1}`, type: 'sine', rate: 1.0, depth: 100, steps: [0.5,0.5,0.5,0.5,0.5,0.5,0.5,0.5], mappings: [], automation: {}, activeAutomationParam: 'rate' }})}>
 
                 <Plus size={20} className="text-[#888] group-hover:text-amber-500 mb-2 transition-colors"/>
                 <span className="text-[10px] text-[#888] group-hover:text-[#ccc] font-bold uppercase tracking-wider transition-colors text-center px-2">Add LFO</span>
              </div>
           </div>
-        ) : (
-          <div className="flex-1 flex flex-col overflow-hidden relative">
+        )}
+
+        {/* Main Arrangement View (Always Visible) */}
+        <div className="flex-1 flex flex-col overflow-hidden relative min-w-0 bg-[#242424]">
             <div className="flex-1 flex overflow-hidden">
                 {/* Track Headers */}
                 <div className="w-64 bg-[#3a3a3a] border-r border-[#111] flex flex-col z-20">
@@ -6833,7 +6885,6 @@ const initAudioEngine = async (explicitTracks = null) => {
             })()}
 
           </div>
-        )}
             
         {/* Global Context Menus */}
         {contextMenu && (
