@@ -401,6 +401,67 @@ const getInterpolatedValue = (points, time) => {
     return sorted[sorted.length - 1].value;
 };
 
+const applyFadeCurve = (t, curve) => {
+    if (!curve) return t;
+    if (curve > 0) return Math.pow(t, 1 + (curve * 3));
+    return Math.pow(t, 1 / (1 - (curve * 3)));
+};
+
+const getFadeVolume = (clipTime, duration, fadeIn, fadeOut, fadeInCurve, fadeOutCurve) => {
+    if (fadeIn > 0 && clipTime < fadeIn) {
+        const t = Math.max(0, Math.min(1, clipTime / fadeIn));
+        return applyFadeCurve(t, fadeInCurve);
+    }
+    if (fadeOut > 0 && clipTime > duration - fadeOut) {
+        const t = Math.max(0, Math.min(1, (clipTime - (duration - fadeOut)) / fadeOut));
+        return 1 - applyFadeCurve(t, fadeOutCurve);
+    }
+    return 1;
+};
+
+const getFadeInPath = (fadeInBeats, curve, beatWidth) => {
+    const w = fadeInBeats * beatWidth;
+    if (w <= 0) return '';
+    let d = `M 0 0 L ${w} 0 `;
+    for (let i = 20; i >= 0; i--) {
+        const t = i / 20;
+        const vol = applyFadeCurve(t, curve || 0);
+        d += `L ${t * w} ${100 - (vol * 100)} `;
+    }
+    d += `Z`;
+    return d;
+};
+
+const getFadeOutPath = (fadeOutBeats, durationBeats, curve, beatWidth) => {
+    const w = fadeOutBeats * beatWidth;
+    if (w <= 0) return '';
+    const startX = (durationBeats - fadeOutBeats) * beatWidth;
+    let d = `M ${startX} 0 L ${startX + w} 0 L ${startX + w} 100 `;
+    for (let i = 20; i >= 0; i--) {
+        const t = i / 20;
+        const vol = 1 - applyFadeCurve(t, curve || 0);
+        d += `L ${startX + (t * w)} ${100 - (vol * 100)} `;
+    }
+    d += `Z`;
+    return d;
+};
+
+const applyOfflineFade = (clipGain, startTimeSec, durationBeats, bpm, fadeIn, fadeOut, fadeInCurve, fadeOutCurve) => {
+    if (!fadeIn && !fadeOut) return;
+    clipGain.gain.setValueAtTime(1, startTimeSec);
+    if (fadeIn > 0) {
+        clipGain.gain.setValueAtTime(0, startTimeSec);
+        const curve = new Float32Array(32);
+        for(let i=0; i<32; i++) curve[i] = applyFadeCurve(i/31, fadeInCurve || 0);
+        clipGain.gain.setValueCurveAtTime(curve, startTimeSec, fadeIn * (60/bpm));
+    }
+    if (fadeOut > 0) {
+        const curve = new Float32Array(32);
+        for(let i=0; i<32; i++) curve[i] = 1 - applyFadeCurve(i/31, fadeOutCurve || 0);
+        clipGain.gain.setValueCurveAtTime(curve, startTimeSec + ((durationBeats - fadeOut) * (60/bpm)), fadeOut * (60/bpm));
+    }
+};
+
 const getParamConstraints = (param) => {
     if (!param) return { min: 0, max: 1, step: 0.01 };
     const p = String(param).toLowerCase();
@@ -2022,6 +2083,7 @@ function DAWStudio() {
   const [draggingNoteEdge, setDraggingNoteEdge] = useState(null);
   const [draggingAutoPoint, setDraggingAutoPoint] = useState(null);
   const [draggingAutoCurve, setDraggingAutoCurve] = useState(null);
+  const [draggingFade, setDraggingFade] = useState(null);
   const [isAutomationMode, setIsAutomationMode] = useState(false);
   const [draggingPlayhead, setDraggingPlayhead] = useState(false);
   const [dockHeight, setDockHeight] = useState(260);
@@ -2655,7 +2717,12 @@ const initAudioEngine = async (explicitTracks = null) => {
                           const sampleData = globalAudioBufferCache.get(clip.sampleId);
                           const source = offlineCtx.createBufferSource();
                           source.buffer = sampleData.buffer;
-                          source.connect(synth.inputBus);
+                          
+                          const clipGain = offlineCtx.createGain();
+                          source.connect(clipGain);
+                          clipGain.connect(synth.inputBus);
+                          applyOfflineFade(clipGain, startTimeSec, clip.duration, stateRefs.current.bpm, clip.fadeIn, clip.fadeOut, clip.fadeInCurve, clip.fadeOutCurve);
+
                           const secOffset = (clip.sampleOffset || 0) * (60 / stateRefs.current.bpm);
                           const secDuration = clip.duration * (60 / stateRefs.current.bpm);
                           source.start(startTimeSec, Math.max(0, secOffset), Math.max(0, secDuration));
@@ -2830,7 +2897,14 @@ const initAudioEngine = async (explicitTracks = null) => {
                       clip.notes.forEach(note => {
                           const noteStartSec = startTimeSec + (note.start * (60 / stateRefs.current.bpm));
                           const noteDurSec = note.duration * (60 / stateRefs.current.bpm);
-                          const vel = note.velocity || 100;
+                          
+                          let volMult = 1;
+                          if ((clip.fadeIn || 0) > 0 && note.start < clip.fadeIn) {
+                              volMult = applyFadeCurve(note.start / clip.fadeIn, clip.fadeInCurve || 0);
+                          } else if ((clip.fadeOut || 0) > 0 && note.start > clip.duration - clip.fadeOut) {
+                              volMult = 1 - applyFadeCurve((note.start - (clip.duration - clip.fadeOut)) / clip.fadeOut, clip.fadeOutCurve || 0);
+                          }
+                          const vel = Math.max(1, Math.round((note.velocity || 100) * volMult));
                           
                           const pbNode = synth.pitchBendNode;
                           if (track.instrument === 'inst-drum') triggerDrum(offlineCtx, synth.inputBus, note.pitch, noteStartSec, 1, track.instrumentParams, vel);
@@ -2845,7 +2919,12 @@ const initAudioEngine = async (explicitTracks = null) => {
                       const sampleData = globalAudioBufferCache.get(clip.sampleId);
                       const source = offlineCtx.createBufferSource();
                       source.buffer = sampleData.buffer;
-                      source.connect(synth.inputBus);
+                      
+                      const clipGain = offlineCtx.createGain();
+                      source.connect(clipGain);
+                      clipGain.connect(synth.inputBus);
+                      applyOfflineFade(clipGain, startTimeSec, clip.duration, stateRefs.current.bpm, clip.fadeIn, clip.fadeOut, clip.fadeInCurve, clip.fadeOutCurve);
+
                       const secOffset = (clip.sampleOffset || 0) * (60 / stateRefs.current.bpm);
                       const secDuration = clip.duration * (60 / stateRefs.current.bpm);
                       source.start(startTimeSec, Math.max(0, secOffset), Math.max(0, secDuration));
@@ -3309,25 +3388,35 @@ const initAudioEngine = async (explicitTracks = null) => {
               });
           }
 
-          activeNotes.forEach(note => {
-            if (!synth.activeNoteIds.has(note.id)) {
-              synth.activeNoteIds.add(note.id);
-              const durSeconds = note.duration * (60/bpm);
-              const pbNode = synth.pitchBendNode;
-              const customInst = window.FreeDawPlugins?.find(p => p.id === track.instrument);
-              if (customInst && typeof customInst.triggerNote === 'function') {
-                  try {
-                      customInst.triggerNote(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, note.velocity, pbNode);
-                  } catch(e) { console.error("Custom Instrument crashed", e); }
-              } else if (track.instrument === 'inst-drum') triggerDrum(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, dynamicInstParams, note.velocity);
-              else if (track.instrument === 'inst-fm') triggerFMSynth(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, note.velocity, pbNode);
-              else if (track.instrument === 'inst-supersaw') triggerSupersaw(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, note.velocity, pbNode);
-              else if (track.instrument === 'inst-pluck') triggerPluck(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, note.velocity, pbNode);
-              else if (track.instrument === 'inst-acid') triggerAcid(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, note.velocity, pbNode);
-              else if (track.instrument === 'inst-organ') triggerOrgan(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, note.velocity, pbNode);
-              else triggerSubtractive(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, note.velocity, pbNode);
-            }
-          });
+              activeNotes.forEach(note => {
+                if (!synth.activeNoteIds.has(note.id)) {
+                  synth.activeNoteIds.add(note.id);
+                  const durSeconds = note.duration * (60/bpm);
+                  const pbNode = synth.pitchBendNode;
+                  
+                  let volMult = 1;
+                  if ((activeClip.fadeIn || 0) > 0 && note.start < activeClip.fadeIn) {
+                      volMult = applyFadeCurve(note.start / activeClip.fadeIn, activeClip.fadeInCurve || 0);
+                  } else if ((activeClip.fadeOut || 0) > 0 && note.start > activeClip.duration - activeClip.fadeOut) {
+                      volMult = 1 - applyFadeCurve((note.start - (activeClip.duration - activeClip.fadeOut)) / activeClip.fadeOut, activeClip.fadeOutCurve || 0);
+                  }
+                  const finalVelocity = Math.max(1, Math.round((note.velocity || 100) * volMult));
+
+                  const customInst = window.FreeDawPlugins?.find(p => p.id === track.instrument);
+                  if (customInst && typeof customInst.triggerNote === 'function') {
+                      try {
+                          customInst.triggerNote(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
+                      } catch(e) { console.error("Custom Instrument crashed", e); }
+                  } else if (track.instrument === 'inst-drum') triggerDrum(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, dynamicInstParams, finalVelocity);
+                  else if (track.instrument === 'inst-fm') triggerFMSynth(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
+                  else if (track.instrument === 'inst-supersaw') triggerSupersaw(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
+                  else if (track.instrument === 'inst-pluck') triggerPluck(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
+                  else if (track.instrument === 'inst-acid') triggerAcid(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
+                  else if (track.instrument === 'inst-organ') triggerOrgan(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
+                  else triggerSubtractive(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
+                }
+              });
+
           const activeIds = activeNotes.map(n => n.id);
           for (const id of synth.activeNoteIds) { if (!activeIds.includes(id)) synth.activeNoteIds.delete(id); }
         } else if (track.type === 'audio' && shouldPlayTrack) {
@@ -3344,16 +3433,30 @@ const initAudioEngine = async (explicitTracks = null) => {
                       const beatsRemaining = activeClip.duration - (newTime - activeClip.start);
                       const secDuration = beatsRemaining / (bpm / 60);
                       
-                      source.connect(synth.inputBus);
+                      const clipGain = audioCtxRef.current.createGain();
+                      source.connect(clipGain);
+                      clipGain.connect(synth.inputBus);
+                      
+                      const clipTime = newTime - activeClip.start;
+                      clipGain.gain.setValueAtTime(getFadeVolume(clipTime, activeClip.duration, activeClip.fadeIn || 0, activeClip.fadeOut || 0, activeClip.fadeInCurve || 0, activeClip.fadeOutCurve || 0), now);
+
                       source.start(now, Math.max(0, secOffset), Math.max(0, secDuration));
                       synth.activeSource = source; 
+                      synth.activeSourceGain = clipGain;
                   }
+              }
+              
+              if (synth.activeSourceGain) {
+                  const clipTime = newTime - activeClip.start;
+                  const vol = getFadeVolume(clipTime, activeClip.duration, activeClip.fadeIn || 0, activeClip.fadeOut || 0, activeClip.fadeInCurve || 0, activeClip.fadeOutCurve || 0);
+                  synth.activeSourceGain.gain.setTargetAtTime(vol, now, 0.02);
               }
         } else { 
             synth.activeNoteIds.clear(); 
             if (track.type === 'audio' && synth.activeSource) {
                 try { synth.activeSource.stop(now); } catch(e){}
                 synth.activeSource = null;
+                synth.activeSourceGain = null;
             }
         }
       });
@@ -4918,10 +5021,14 @@ const initAudioEngine = async (explicitTracks = null) => {
               setTracks(prev => prev.map(t => t.id === action.payload.trackId ? { 
                   ...t, clips: t.clips.map(c => c.id === action.payload.clipId ? { 
                       ...c, 
-                      start: action.payload.start, 
-                      duration: action.payload.duration,
+                      start: action.payload.start !== undefined ? action.payload.start : c.start, 
+                      duration: action.payload.duration !== undefined ? action.payload.duration : c.duration,
                       ...(action.payload.sampleOffset !== undefined ? { sampleOffset: action.payload.sampleOffset } : {}),
-                      ...(action.payload.notes !== undefined ? { notes: action.payload.notes } : {})
+                      ...(action.payload.notes !== undefined ? { notes: action.payload.notes } : {}),
+                      ...(action.payload.fadeIn !== undefined ? { fadeIn: action.payload.fadeIn } : {}),
+                      ...(action.payload.fadeOut !== undefined ? { fadeOut: action.payload.fadeOut } : {}),
+                      ...(action.payload.fadeInCurve !== undefined ? { fadeInCurve: action.payload.fadeInCurve } : {}),
+                      ...(action.payload.fadeOutCurve !== undefined ? { fadeOutCurve: action.payload.fadeOutCurve } : {})
                   } : c) 
               } : t)); 
               break;
@@ -5348,6 +5455,35 @@ const initAudioEngine = async (explicitTracks = null) => {
             } else {
                 dispatchDawAction({ type: 'UPDATE_AUTOMATION_POINT', payload: { trackId, paramKey, pointId, time: newTime, value: newValue } });
             }
+        } else if (draggingFade) {
+            const deltaX = e.clientX - draggingFade.startX;
+            const deltaBeats = deltaX / BEAT_WIDTH;
+
+            let newFade = Math.max(0, draggingFade.initialFade + (draggingFade.type === 'in' ? deltaBeats : -deltaBeats));
+
+            const track = tracksRef.current.find(t => t.id === draggingFade.trackId);
+            const clip = track?.clips.find(c => c.id === draggingFade.clipId);
+            if (clip) {
+                if (draggingFade.type === 'in') {
+                    newFade = Math.min(clip.duration - (clip.fadeOut || 0), newFade);
+                } else {
+                    newFade = Math.min(clip.duration - (clip.fadeIn || 0), newFade);
+                }
+
+                dragValuesRef.current = { [draggingFade.type === 'in' ? 'fadeIn' : 'fadeOut']: newFade };
+
+                setTracks(prev => prev.map(t => t.id === draggingFade.trackId ? {
+                    ...t, clips: t.clips.map(c => c.id === draggingFade.clipId ? {
+                        ...c,
+                        [draggingFade.type === 'in' ? 'fadeIn' : 'fadeOut']: newFade
+                    } : c)
+                } : t));
+
+                broadcastLivePreview({
+                    type: 'UPDATE_CLIP_BOUNDS',
+                    payload: { trackId: draggingFade.trackId, clipId: draggingFade.clipId, start: clip.start, duration: clip.duration, [draggingFade.type === 'in' ? 'fadeIn' : 'fadeOut']: newFade }
+                });
+            }
         } else if (draggingAutoCurve) {
             const { trackId, lfoId, paramKey, pointId, startY, initialCurve } = draggingAutoCurve;
             const deltaY = e.clientY - startY;
@@ -5378,8 +5514,7 @@ const initAudioEngine = async (explicitTracks = null) => {
       } else if (draggingSidePanel) {
           setSidePanelWidth(Math.max(300, Math.min(1200, e.clientX - 56)));
       }
-  }, [draggingClip, draggingEdge, draggingNote, draggingNoteEdge, draggingLoop, draggingPlayhead, draggingDockHeight, draggingSidePanel, draggingAutoPoint, draggingAutoCurve, BEAT_WIDTH]);
-  
+  }, [draggingClip, draggingEdge, draggingNote, draggingNoteEdge, draggingLoop, draggingPlayhead, draggingDockHeight, draggingSidePanel, draggingAutoPoint, draggingAutoCurve, draggingFade, BEAT_WIDTH]);  
   const handleMouseUp = useCallback(() => {
       if (draggingClip) {
           const finalStart = dragValuesRef.current.start ?? draggingClip.initialStart;
@@ -5410,6 +5545,15 @@ const initAudioEngine = async (explicitTracks = null) => {
       dragValuesRef.current = {};
       if (draggingAutoPoint) setDraggingAutoPoint(null);
       if (draggingAutoCurve) setDraggingAutoCurve(null);
+      if (draggingFade) {
+          const track = tracksRef.current.find(t => t.id === draggingFade.trackId);
+          const clip = track?.clips.find(c => c.id === draggingFade.clipId);
+          if (clip) {
+              const finalFade = dragValuesRef.current[draggingFade.type === 'in' ? 'fadeIn' : 'fadeOut'] ?? draggingFade.initialFade;
+              dispatchDawAction({ type: 'UPDATE_CLIP_BOUNDS', payload: { trackId: draggingFade.trackId, clipId: draggingFade.clipId, start: clip.start, duration: clip.duration, [draggingFade.type === 'in' ? 'fadeIn' : 'fadeOut']: finalFade }});
+          }
+          setDraggingFade(null);
+      }
       if (draggingLoop) setDraggingLoop(null);
       if (draggingPlayhead) {
           setDraggingPlayhead(false);
@@ -5417,7 +5561,7 @@ const initAudioEngine = async (explicitTracks = null) => {
       }
       if (draggingDockHeight) setDraggingDockHeight(false);
       if (draggingSidePanel) setDraggingSidePanel(false);
-  }, [draggingClip, draggingEdge, draggingNote, draggingNoteEdge, draggingLoop, draggingPlayhead, draggingDockHeight, draggingSidePanel, draggingAutoPoint, draggingAutoCurve]);
+  }, [draggingClip, draggingEdge, draggingNote, draggingNoteEdge, draggingLoop, draggingPlayhead, draggingDockHeight, draggingSidePanel, draggingAutoPoint, draggingAutoCurve, draggingFade]);
 
   useEffect(() => {
       window.addEventListener('mousemove', handleMouseMove);
@@ -6321,6 +6465,43 @@ const initAudioEngine = async (explicitTracks = null) => {
                                                     sampleOffset={c.sampleOffset || 0}
                                                 />
                                             )}
+                                            
+                                            {/* Fade Overlay & Handles */}
+                                            <svg className="absolute inset-0 w-full h-full pointer-events-none opacity-50 z-20">
+                                                {c.fadeIn > 0 && <path d={getFadeInPath(c.fadeIn, c.fadeInCurve || 0, BEAT_WIDTH)} fill="black" />}
+                                                {c.fadeOut > 0 && <path d={getFadeOutPath(c.fadeOut, c.duration, c.fadeOutCurve || 0, BEAT_WIDTH)} fill="black" />}
+                                            </svg>
+                                            
+                                            <div 
+                                                className="absolute top-0 w-3 h-3 cursor-ew-resize z-30 pointer-events-auto group flex justify-center"
+                                                style={{ left: `${(c.fadeIn || 0) * BEAT_WIDTH}px`, marginLeft: '-6px' }}
+                                                onMouseDown={(e) => { e.stopPropagation(); setDraggingFade({ trackId: t.id, clipId: c.id, type: 'in', startX: e.clientX, initialFade: c.fadeIn || 0 }); }}
+                                                onWheel={(e) => {
+                                                    e.stopPropagation(); e.preventDefault();
+                                                    const delta = e.deltaY > 0 ? -0.1 : 0.1;
+                                                    const newCurve = Math.max(-1, Math.min(1, (c.fadeInCurve || 0) + delta));
+                                                    dispatchDawAction({ type: 'UPDATE_CLIP_BOUNDS', payload: { trackId: t.id, clipId: c.id, start: c.start, duration: c.duration, fadeInCurve: newCurve }});
+                                                }}
+                                                title="Fade In (Scroll to adjust curve)"
+                                            >
+                                                <div className="w-1.5 h-1.5 bg-white/70 group-hover:bg-white mt-[1px] rounded-[1px] shadow-sm" />
+                                            </div>
+                                            
+                                            <div 
+                                                className="absolute top-0 w-3 h-3 cursor-ew-resize z-30 pointer-events-auto group flex justify-center"
+                                                style={{ left: `${(c.duration - (c.fadeOut || 0)) * BEAT_WIDTH}px`, marginLeft: '-6px' }}
+                                                onMouseDown={(e) => { e.stopPropagation(); setDraggingFade({ trackId: t.id, clipId: c.id, type: 'out', startX: e.clientX, initialFade: c.fadeOut || 0 }); }}
+                                                onWheel={(e) => {
+                                                    e.stopPropagation(); e.preventDefault();
+                                                    const delta = e.deltaY > 0 ? -0.1 : 0.1;
+                                                    const newCurve = Math.max(-1, Math.min(1, (c.fadeOutCurve || 0) + delta));
+                                                    dispatchDawAction({ type: 'UPDATE_CLIP_BOUNDS', payload: { trackId: t.id, clipId: c.id, start: c.start, duration: c.duration, fadeOutCurve: newCurve }});
+                                                }}
+                                                title="Fade Out (Scroll to adjust curve)"
+                                            >
+                                                <div className="w-1.5 h-1.5 bg-white/70 group-hover:bg-white mt-[1px] rounded-[1px] shadow-sm" />
+                                            </div>
+
                                         </div>
                                     ))}
                                     {/* Live Recording Block Preview */}
