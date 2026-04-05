@@ -7355,20 +7355,6 @@ const initAudioEngine = async (explicitTracks = null) => {
             )}
 
 
-            {/* Global Status Bar */}
-            <div className="h-6 bg-[#1a1a1a] border-t border-[#111] shrink-0 flex items-center justify-between px-4 text-[#888] text-[9px] font-bold uppercase tracking-wider z-50">
-                <div className="flex items-center gap-2 truncate">
-                    <Info size={12} className="text-cyan-500 shrink-0" />
-                    <span className="truncate">{hoverInfo}</span>
-                </div>
-                <div className="flex items-center gap-2 shrink-0" onMouseEnter={() => setHoverInfo("Performance Meter: Measures Audio/UI Thread latency.")} onMouseLeave={() => setHoverInfo("Welcome to FreeDaw Live.")}>
-                    <span>CPU Load</span>
-                    <div className="w-16 h-1.5 bg-[#111] rounded-sm overflow-hidden border border-[#222]">
-                        <div ref={cpuMeterRef} className="h-full bg-green-500 w-0 transition-all duration-75" />
-                    </div>
-                </div>
-            </div>
-
             {/* Share Project Modal */}
             {showShareModal && (
                 <div className="fixed inset-0 z-[200] bg-black/80 backdrop-blur-sm flex items-center justify-center">
@@ -7469,6 +7455,21 @@ const initAudioEngine = async (explicitTracks = null) => {
                 </div>
             )}
       </div>
+
+      {/* Global Status Bar */}
+      <div className="h-6 bg-[#1a1a1a] border-t border-[#111] shrink-0 flex items-center justify-between px-4 text-[#888] text-[9px] font-bold uppercase tracking-wider z-50 w-full relative">
+          <div className="flex items-center gap-2 truncate">
+              <Info size={12} className="text-cyan-500 shrink-0" />
+              <span className="truncate">{hoverInfo}</span>
+          </div>
+          <div className="flex items-center gap-2 shrink-0" onMouseEnter={() => setHoverInfo("Performance Meter: Measures Audio/UI Thread latency.")} onMouseLeave={() => setHoverInfo("Welcome to FreeDaw Live.")}>
+              <span>CPU Load</span>
+              <div className="w-16 h-1.5 bg-[#111] rounded-sm overflow-hidden border border-[#222]">
+                  <div ref={cpuMeterRef} className="h-full bg-green-500 w-0 transition-all duration-75" />
+              </div>
+          </div>
+      </div>
+      
     </div>
   );
 }
