@@ -2115,6 +2115,7 @@ function DAWStudio() {
   const mediaRecorderRef = useRef(null);
   const recordedChunksRef = useRef([]);
   
+  const [latencyCompensationMs, setLatencyCompensationMs] = useState(null);
   const [audioInputsList, setAudioInputsList] = useState([]);
   const [midiInputsList, setMidiInputsList] = useState([]);
   const [midiConfig, setMidiConfig] = useState({ keyboard: '', pad: '', mixer: '' });
