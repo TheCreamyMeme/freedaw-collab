@@ -6834,7 +6834,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                                               const sliceBeat = snap(x / BEAT_WIDTH);
                                               handleContextMenu(e, 'clip', { trackId: t.id, clipId: c.id, sliceBeat });
                                           }}
-                                          className={`clip-element absolute top-[1px] bottom-[1px] rounded-sm border overflow-hidden cursor-grab active:cursor-grabbing ${t.color.replace('bg-', 'bg-').replace('-500', '-600')} transition-all group/clip ${selectedClipIds.includes(c.id) ? 'border-white brightness-125 z-40' : isPeerSelected ? `${(peeringUsers[0].color || getDeterministicColor(peeringUsers[0].username)).replace('bg-', 'border-')} border-2 brightness-110 z-30` : 'border-black/60 hover:brightness-110 z-10'}`} 
+                                          className={`clip-element absolute top-[1px] bottom-[1px] rounded-sm overflow-hidden cursor-grab active:cursor-grabbing ${t.color.replace('bg-', 'bg-').replace('-500', '-600')} transition-all group/clip ${selectedClipIds.includes(c.id) ? 'border-2 border-white brightness-125 z-40' : isPeerSelected ? `border-[4px] ${(peeringUsers[0].color || getDeterministicColor(peeringUsers[0].username)).replace('bg-', 'border-')} brightness-[1.3] shadow-lg z-30` : 'border border-black/60 hover:brightness-110 z-10'}`} 
                                           style={{ left: `${c.start * BEAT_WIDTH}px`, width: `${c.duration * BEAT_WIDTH}px`, zIndex: draggingClip?.clipId === c.id || selectedClipIds.includes(c.id) ? 50 : (isPeerSelected ? 40 : 10) }}
                                         >
                                             {/* Peer Selection Indicators */}
