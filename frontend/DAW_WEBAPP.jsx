@@ -1567,7 +1567,12 @@ const disconnectTrackRouting = (synth) => {
         if (synth.inputBus) synth.inputBus.disconnect();
         if (synth.faderGain) synth.faderGain.disconnect();
         if (synth.panner) synth.panner.disconnect();
-        if (synth.analyser) synth.analyser.disconnect();
+        if (synth.analyser) {
+            if (synth.analyser.L) synth.analyser.L.disconnect();
+            if (synth.analyser.R) synth.analyser.R.disconnect();
+            if (synth.analyser.splitter) synth.analyser.splitter.disconnect();
+            if (typeof synth.analyser.disconnect === 'function') synth.analyser.disconnect();
+        }
         if (synth.fxNodes) {
             Object.values(synth.fxNodes).forEach(nodeObj => {
                 // CRITICAL FIX: Recursively hunt down and sever EVERY audio connection (even inside nested objects)
@@ -1608,100 +1613,132 @@ const initTrackRouting = async (track, ctx, masterGain) => {
   }
   currentOutput.connect(panner); panner.connect(faderGain); faderGain.connect(masterGain);
 
-  const analyser = ctx.createAnalyser();
-  analyser.fftSize = 256;
-  faderGain.connect(analyser);
+  const splitter = ctx.createChannelSplitter(2);
+  const analyserL = ctx.createAnalyser();
+  const analyserR = ctx.createAnalyser();
+  analyserL.fftSize = 256;
+  analyserR.fftSize = 256;
+  faderGain.connect(splitter);
+  splitter.connect(analyserL, 0);
+  splitter.connect(analyserR, 1);
 
-  return { inputBus, faderGain, panner, fxNodes, activeNoteIds: new Set(), activeSource: null, analyser, pitchBendNode, lastTargetVolume: -1 };
+  return { inputBus, faderGain, panner, fxNodes, activeNoteIds: new Set(), activeSource: null, analyser: { L: analyserL, R: analyserR, splitter }, pitchBendNode, lastTargetVolume: -1 };
 };
 
 
 // --- VU Meter Component ---
 const VuMeter = ({ trackId, synthsRef, isMaster, masterAnalyserRef, isVertical = true }) => {
-    const curtainRef = useRef(null);
-    const clipRef = useRef(null);
-    const dotRef = useRef(null);
-    const peakRef = useRef(0);
-    const peakHoldRef = useRef(0);
-    const clipTimeoutRef = useRef(0);
+    const curtainLRef = useRef(null);
+    const curtainRRef = useRef(null);
+    const clipLRef = useRef(null);
+    const clipRRef = useRef(null);
+    const dotLRef = useRef(null);
+    const dotRRef = useRef(null);
+    
+    const peaksRef = useRef({ L: 0, R: 0, holdL: 0, holdR: 0 });
+    const clipTimeoutsRef = useRef({ L: 0, R: 0 });
 
     useEffect(() => {
         let reqId;
         const update = () => {
-            let analyser = null;
-            if (isMaster) analyser = masterAnalyserRef?.current;
-            else analyser = synthsRef?.current[trackId]?.analyser;
+            let analyserObj = null;
+            if (isMaster) analyserObj = masterAnalyserRef?.current;
+            else analyserObj = synthsRef?.current[trackId]?.analyser;
 
-            if (analyser && curtainRef.current) {
-                const dataArray = new Float32Array(analyser.fftSize);
-                analyser.getFloatTimeDomainData(dataArray);
-                let currentPeak = 0;
-                for (let i = 0; i < dataArray.length; i++) {
-                    const abs = Math.abs(dataArray[i]);
-                    if (abs > currentPeak) currentPeak = abs;
-                }
-                
-                // Fast attack, smooth decay for the main meter
-                if (currentPeak > peakRef.current) peakRef.current = currentPeak; 
-                else peakRef.current *= 0.85; 
-
-                // Peak Hold Dot logic (Slow decay)
-                if (currentPeak > peakHoldRef.current) peakHoldRef.current = currentPeak;
-                else peakHoldRef.current *= 0.98;
-                
-                let levelPercent = Math.min(100, peakRef.current * 140); 
-                let dotPercent = Math.min(100, peakHoldRef.current * 140);
-                
-                // Audio Clipping LED
-                if (currentPeak >= 0.95 && clipRef.current) {
-                    clipRef.current.style.backgroundColor = '#ef4444';
-                    clipRef.current.style.boxShadow = '0 0 6px #ef4444';
-                    clearTimeout(clipTimeoutRef.current);
-                    clipTimeoutRef.current = setTimeout(() => {
-                        if (clipRef.current) {
-                            clipRef.current.style.backgroundColor = '#262626';
-                            clipRef.current.style.boxShadow = 'none';
-                        }
-                    }, 1000);
-                }
-                
-                if (isVertical) {
-                    curtainRef.current.style.height = `${100 - levelPercent}%`;
-                    if (dotRef.current) dotRef.current.style.bottom = `${dotPercent}%`;
-                } else {
-                    curtainRef.current.style.width = `${100 - levelPercent}%`;
-                    if (dotRef.current) dotRef.current.style.left = `${dotPercent}%`;
-                }
-            } else if (curtainRef.current) {
-                peakRef.current *= 0.85;
-                peakHoldRef.current *= 0.98;
-                let levelPercent = Math.min(100, peakRef.current * 140);
-                let dotPercent = Math.min(100, peakHoldRef.current * 140);
-                if (isVertical) {
-                    curtainRef.current.style.height = `${100 - levelPercent}%`;
-                    if (dotRef.current) dotRef.current.style.bottom = `${dotPercent}%`;
-                } else {
-                    curtainRef.current.style.width = `${100 - levelPercent}%`;
-                    if (dotRef.current) dotRef.current.style.left = `${dotPercent}%`;
+            let analyserL = null;
+            let analyserR = null;
+            
+            if (analyserObj) {
+                if (analyserObj.L && analyserObj.R) {
+                    analyserL = analyserObj.L;
+                    analyserR = analyserObj.R;
+                } else if (analyserObj.getFloatTimeDomainData) {
+                    analyserL = analyserObj;
+                    analyserR = analyserObj;
                 }
             }
+
+            const processChannel = (analyser, curtain, clip, dot, channel) => {
+                if (analyser && curtain) {
+                    const dataArray = new Float32Array(analyser.fftSize);
+                    analyser.getFloatTimeDomainData(dataArray);
+                    let currentPeak = 0;
+                    for (let i = 0; i < dataArray.length; i++) {
+                        const abs = Math.abs(dataArray[i]);
+                        if (abs > currentPeak) currentPeak = abs;
+                    }
+                    
+                    if (currentPeak > peaksRef.current[channel]) peaksRef.current[channel] = currentPeak; 
+                    else peaksRef.current[channel] *= 0.85; 
+
+                    if (currentPeak > peaksRef.current[`hold${channel}`]) peaksRef.current[`hold${channel}`] = currentPeak;
+                    else peaksRef.current[`hold${channel}`] *= 0.98;
+                    
+                    let levelPercent = Math.min(100, peaksRef.current[channel] * 140); 
+                    let dotPercent = Math.min(100, peaksRef.current[`hold${channel}`] * 140);
+                    
+                    if (currentPeak >= 0.95 && clip) {
+                        clip.style.backgroundColor = '#ef4444';
+                        clip.style.boxShadow = '0 0 6px #ef4444';
+                        clearTimeout(clipTimeoutsRef.current[channel]);
+                        clipTimeoutsRef.current[channel] = setTimeout(() => {
+                            if (clip) {
+                                clip.style.backgroundColor = '#262626';
+                                clip.style.boxShadow = 'none';
+                            }
+                        }, 1000);
+                    }
+                    
+                    if (isVertical) {
+                        curtain.style.height = `${100 - levelPercent}%`;
+                        if (dot) dot.style.bottom = `${dotPercent}%`;
+                    } else {
+                        curtain.style.width = `${100 - levelPercent}%`;
+                        if (dot) dot.style.left = `${dotPercent}%`;
+                    }
+                } else if (curtain) {
+                    peaksRef.current[channel] *= 0.85;
+                    peaksRef.current[`hold${channel}`] *= 0.98;
+                    let levelPercent = Math.min(100, peaksRef.current[channel] * 140);
+                    let dotPercent = Math.min(100, peaksRef.current[`hold${channel}`] * 140);
+                    if (isVertical) {
+                        curtain.style.height = `${100 - levelPercent}%`;
+                        if (dot) dot.style.bottom = `${dotPercent}%`;
+                    } else {
+                        curtain.style.width = `${100 - levelPercent}%`;
+                        if (dot) dot.style.left = `${dotPercent}%`;
+                    }
+                }
+            };
+
+            processChannel(analyserL, curtainLRef.current, clipLRef.current, dotLRef.current, 'L');
+            processChannel(analyserR, curtainRRef.current, clipRRef.current, dotRRef.current, 'R');
+
             reqId = requestAnimationFrame(update);
         };
         reqId = requestAnimationFrame(update);
-        return () => { cancelAnimationFrame(reqId); clearTimeout(clipTimeoutRef.current); };
+        return () => { 
+            cancelAnimationFrame(reqId); 
+            clearTimeout(clipTimeoutsRef.current.L); 
+            clearTimeout(clipTimeoutsRef.current.R); 
+        };
     }, [trackId, synthsRef, isMaster, masterAnalyserRef, isVertical]);
 
-    return (
-        <div className={`flex ${isVertical ? 'flex-col h-full w-2' : 'flex-row w-full h-1.5'} items-center gap-[2px]`}>
-            <div ref={clipRef} className={`bg-neutral-800 rounded-sm transition-colors duration-75 shrink-0 ${isVertical ? 'w-full h-1.5' : 'h-full w-1.5'}`} />
-            <div className={`relative overflow-hidden rounded-sm border border-neutral-900 shadow-inner ${isVertical ? 'w-full flex-1 bg-gradient-to-t' : 'h-full flex-1 bg-gradient-to-r'} from-green-500 via-yellow-400 to-red-500`}>
+    const MeterBar = ({ curtainRef, clipRef, dotRef, isVertical }) => (
+        <div className={`flex ${isVertical ? 'flex-col h-full flex-1' : 'flex-row w-full flex-1'} items-center gap-[1px]`}>
+            <div ref={clipRef} className={`bg-neutral-800 rounded-[1px] transition-colors duration-75 shrink-0 ${isVertical ? 'w-full h-1' : 'h-full w-1'}`} />
+            <div className={`relative overflow-hidden rounded-[1px] border border-neutral-900 shadow-inner ${isVertical ? 'w-full flex-1 bg-gradient-to-t' : 'h-full flex-1 bg-gradient-to-r'} from-green-500 via-yellow-400 to-red-500`}>
                 <div ref={curtainRef} className={`absolute bg-neutral-950/95 backdrop-blur-sm ${isVertical ? 'top-0 left-0 w-full' : 'top-0 right-0 h-full'}`} style={{ [isVertical ? 'height' : 'width']: '100%' }} />
-                
-                {/* Peak Hold Dot */}
-                <div ref={dotRef} className={`absolute bg-white shadow-[0_0_4px_rgba(255,255,255,0.8)] z-10 ${isVertical ? 'left-0 w-full h-[2px]' : 'top-0 h-full w-[2px]'}`} style={{ [isVertical ? 'bottom' : 'left']: '0%' }} />
-
+                <div ref={dotRef} className={`absolute bg-white shadow-[0_0_4px_rgba(255,255,255,0.8)] z-10 ${isVertical ? 'left-0 w-full h-[1px]' : 'top-0 h-full w-[1px]'}`} style={{ [isVertical ? 'bottom' : 'left']: '0%' }} />
                 <div className={`absolute inset-0 pointer-events-none ${isVertical ? 'bg-[linear-gradient(to_bottom,transparent_1px,rgba(0,0,0,0.6)_1px)] bg-[length:100%_3px]' : 'bg-[linear-gradient(to_right,transparent_1px,rgba(0,0,0,0.6)_1px)] bg-[length:3px_100%]'}`} />
             </div>
+        </div>
+    );
+
+    return (
+        <div className={`flex ${isVertical ? 'flex-row w-3' : 'flex-col h-3'} gap-[1px] h-full w-full justify-between shrink-0`}>
+            <MeterBar curtainRef={curtainLRef} clipRef={clipLRef} dotRef={dotLRef} isVertical={isVertical} />
+            <MeterBar curtainRef={curtainRRef} clipRef={clipRRef} dotRef={dotRRef} isVertical={isVertical} />
         </div>
     );
 };
@@ -2613,6 +2650,19 @@ const initAudioEngine = async (explicitTracks = null) => {
       masterAnalyser.fftSize = 256;
       masterGainRef.current.connect(masterAnalyser);
       masterAnalyserRef.current = masterAnalyser;
+    }
+    if (audioCtxRef.current.state === 'suspended') await audioCtxRef.current.resume();
+    
+      // CRITICAL FIX: Initialize and connect the Master Analyser for the VU Meters (Stereo)
+      const masterSplitter = audioCtxRef.current.createChannelSplitter(2);
+      const masterAnalyserL = audioCtxRef.current.createAnalyser();
+      const masterAnalyserR = audioCtxRef.current.createAnalyser();
+      masterAnalyserL.fftSize = 256;
+      masterAnalyserR.fftSize = 256;
+      masterGainRef.current.connect(masterSplitter);
+      masterSplitter.connect(masterAnalyserL, 0);
+      masterSplitter.connect(masterAnalyserR, 1);
+      masterAnalyserRef.current = { L: masterAnalyserL, R: masterAnalyserR, splitter: masterSplitter };
     }
     if (audioCtxRef.current.state === 'suspended') await audioCtxRef.current.resume();
     
@@ -6035,7 +6085,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                    <Volume2 size={12} className="text-neutral-500" />
                    <div className="flex flex-col gap-1 w-20">
                        <input type="range" min="0" max="100" value={masterVolume} onChange={(e) => handleMasterVolumeChange(e.target.value)} onWheel={(e) => { e.stopPropagation(); handleMasterVolumeChange(Math.min(100, Math.max(0, masterVolume + (e.deltaY < 0 ? 5 : -5)))); }} className="w-full h-1 bg-black rounded-full appearance-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-2 [&::-webkit-slider-thumb]:h-2 [&::-webkit-slider-thumb]:bg-white cursor-pointer" />
-                       <div className="h-1.5 w-full">
+                       <div className="h-3 w-full">
                            <VuMeter isMaster={true} masterAnalyserRef={masterAnalyserRef} isVertical={false} />
                        </div>
                    </div>
