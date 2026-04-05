@@ -1357,7 +1357,14 @@ const triggerDrum = (ctx, bus, pitch, time, vol, p={}, vel=100) => {
       gainNode.gain.setValueAtTime(realVol, time);
       source.connect(gainNode);
       gainNode.connect(bus);
-      source.start(time);
+      
+      const settings = p.sampleSettings?.[pitch] || { start: 0, end: 1 };
+      const startOffset = settings.start * sampleData.duration;
+      const playDur = (settings.end - settings.start) * sampleData.duration;
+      
+      if (playDur > 0) {
+          source.start(time, startOffset, playDur);
+      }
       return; // Skip default synthesized drum generation if a custom sample overrides it
   }
 
@@ -1705,6 +1712,116 @@ const WaveformDisplay = React.memo(({ buffer, bpm, beatWidth, sampleOffset = 0 }
         </div>
     );
 }, (prev, next) => prev.buffer === next.buffer && prev.bpm === next.bpm && prev.beatWidth === next.beatWidth && prev.sampleOffset === next.sampleOffset);
+
+// --- Custom Interactive Sample Cropper ---
+const SampleEditorWaveform = React.memo(({ buffer }) => {
+    const canvasRef = useRef(null);
+
+    useEffect(() => {
+        const canvas = canvasRef.current;
+        if (!canvas || !buffer) return;
+        const ctx = canvas.getContext('2d');
+        
+        const parent = canvas.parentElement;
+        if (!parent) return;
+        
+        const renderWidth = parent.clientWidth || 600; 
+        const height = parent.clientHeight || 200;
+        
+        canvas.width = renderWidth;
+        canvas.height = height;
+
+        const data = buffer.getChannelData(0);
+        const step = Math.max(1, Math.floor(data.length / renderWidth));
+        const amp = height / 2;
+
+        ctx.clearRect(0, 0, renderWidth, height);
+        ctx.fillStyle = '#06b6d4'; // cyan-500
+        
+        const maxSamplesPerPixel = 100;
+        const skip = Math.max(1, Math.floor(step / maxSamplesPerPixel));
+
+        for (let i = 0; i < renderWidth; i++) {
+            let min = 0;
+            let max = 0;
+            const startIdx = i * step;
+            const endIdx = Math.min(startIdx + step, data.length);
+            
+            for (let j = startIdx; j < endIdx; j += skip) {
+                const val = data[j];
+                if (val < min) min = val;
+                if (val > max) max = val;
+            }
+            
+            const y = (1 - max) * amp;
+            const h = Math.max(1, (max - min) * amp);
+            ctx.fillRect(i, y, 1, h);
+        }
+    }, [buffer]);
+
+    return <canvas ref={canvasRef} className="absolute inset-0 w-full h-full object-fill opacity-60" />;
+});
+
+const SampleCropper = React.memo(({ sampleId, settings, onChange }) => {
+    const containerRef = useRef(null);
+    const [dragging, setDragging] = useState(null);
+
+    const handlePointerDown = (e, type) => {
+        e.preventDefault(); e.stopPropagation();
+        e.target.setPointerCapture(e.pointerId);
+        setDragging({ type, startX: e.clientX, initStart: settings.start, initEnd: settings.end });
+    };
+
+    const handlePointerMove = (e) => {
+        if (!dragging || !containerRef.current) return;
+        const rect = containerRef.current.getBoundingClientRect();
+        const deltaX = e.clientX - dragging.startX;
+        const deltaPercent = deltaX / rect.width;
+
+        let newStart = dragging.initStart;
+        let newEnd = dragging.initEnd;
+
+        if (dragging.type === 'start') {
+            newStart = Math.max(0, Math.min(newEnd - 0.01, dragging.initStart + deltaPercent));
+        } else if (dragging.type === 'end') {
+            newEnd = Math.min(1, Math.max(newStart + 0.01, dragging.initEnd + deltaPercent));
+        } else if (dragging.type === 'body') {
+            const width = dragging.initEnd - dragging.initStart;
+            newStart = Math.max(0, Math.min(1 - width, dragging.initStart + deltaPercent));
+            newEnd = newStart + width;
+        }
+        onChange({ start: newStart, end: newEnd });
+    };
+
+    const handlePointerUp = (e) => {
+        if (dragging) {
+            e.target.releasePointerCapture(e.pointerId);
+            setDragging(null);
+        }
+    };
+
+    const bufferData = globalAudioBufferCache.get(sampleId);
+    if (!bufferData) return null;
+
+    return (
+        <div ref={containerRef} className="absolute inset-0 touch-none" onPointerMove={handlePointerMove} onPointerUp={handlePointerUp} onPointerCancel={handlePointerUp}>
+            <SampleEditorWaveform buffer={bufferData.buffer} />
+            
+            <div className="absolute top-0 bottom-0 left-0 bg-black/60 pointer-events-none" style={{ width: `${settings.start * 100}%` }} />
+            <div className="absolute top-0 bottom-0 right-0 bg-black/60 pointer-events-none" style={{ width: `${(1 - settings.end) * 100}%` }} />
+            
+            <div className="absolute top-0 bottom-0 border-x border-cyan-500 bg-cyan-500/10 cursor-grab active:cursor-grabbing" style={{ left: `${settings.start * 100}%`, width: `${(settings.end - settings.start) * 100}%` }} onPointerDown={(e) => handlePointerDown(e, 'body')}>
+                <div className="absolute top-0 bottom-0 left-0 w-6 -translate-x-1/2 cursor-ew-resize flex items-center justify-center group z-10" onPointerDown={(e) => handlePointerDown(e, 'start')}>
+                    <div className="w-1 h-8 bg-cyan-500 rounded-full group-hover:bg-white transition-colors" />
+                </div>
+                <div className="absolute top-0 bottom-0 right-0 w-6 translate-x-1/2 cursor-ew-resize flex items-center justify-center group z-10" onPointerDown={(e) => handlePointerDown(e, 'end')}>
+                    <div className="w-1 h-8 bg-cyan-500 rounded-full group-hover:bg-white transition-colors" />
+                </div>
+            </div>
+        </div>
+    );
+});
+
 export default class App extends Component {
   constructor(props) { super(props); this.state = { hasError: false, error: null }; }
   static getDerivedStateFromError(error) { return { hasError: true, error }; }
@@ -3311,9 +3428,12 @@ const initAudioEngine = async (explicitTracks = null) => {
       if (track) {
           const currentSamples = track.instrumentParams?.samples || {};
           const newSamples = { ...currentSamples, [note]: sampleId };
+          const newSampleSettings = { ...(track.instrumentParams?.sampleSettings || {}) };
+          newSampleSettings[note] = { start: 0, end: 1 }; // Reset crop on new assign
+          
           dispatchDawAction({ type: 'UPDATE_INSTRUMENT_PARAM', payload: { trackId, param: 'samples', value: newSamples } });
+          dispatchDawAction({ type: 'UPDATE_INSTRUMENT_PARAM', payload: { trackId, param: 'sampleSettings', value: newSampleSettings } });
       }
-      setSamplePickerTarget(null);
       showToast(`Assigned sample to pad ${note}`, 'success');
   };
 
@@ -6970,23 +7090,23 @@ const initAudioEngine = async (explicitTracks = null) => {
             {/* Sample Picker & Bulk Upload Modal */}
             {samplePickerTarget && (
                 <div className="fixed inset-0 z-[400] bg-black/80 backdrop-blur-sm flex items-center justify-center">
-                    <div className="bg-neutral-900 border border-neutral-700 rounded-2xl w-full max-w-3xl h-[60vh] p-0 shadow-2xl flex flex-col overflow-hidden">
-                        <div className="flex justify-between items-center p-4 border-b border-neutral-800 shrink-0">
-                            <h2 className="text-lg font-bold text-white flex items-center gap-2">
-                                <FileAudio size={18}/> Assign Sample to Pad {samplePickerTarget.note}
+                    <div className="bg-[#3a3a3a] border border-[#111] rounded-sm w-full max-w-3xl h-[60vh] p-0 shadow-2xl flex flex-col overflow-hidden">
+                        <div className="flex justify-between items-center p-4 border-b border-[#222] shrink-0 bg-[#2d2d2d]">
+                            <h2 className="text-sm font-bold text-[#e0e0e0] flex items-center gap-2 uppercase tracking-wider">
+                                <FileAudio size={16} className="text-cyan-500" /> Pad {samplePickerTarget.note} Editor
                             </h2>
-                            <button onClick={() => setSamplePickerTarget(null)} className="text-neutral-500 hover:text-white transition-colors"><X size={18}/></button>
+                            <button onClick={() => setSamplePickerTarget(null)} className="text-[#888] hover:text-white transition-colors"><X size={16}/></button>
                         </div>
                         <div className="flex flex-1 overflow-hidden">
                             {/* Left: Library */}
-                            <div className="w-1/2 md:w-2/3 border-r border-neutral-800 flex flex-col p-4 bg-neutral-950">
-                                <h3 className="text-xs font-bold text-neutral-500 uppercase tracking-wider mb-3">Sample Library</h3>
+                            <div className="w-1/2 md:w-1/3 border-r border-[#111] flex flex-col p-4 bg-[#333]">
+                                <h3 className="text-[10px] font-bold text-[#888] uppercase tracking-wider mb-3">Sample Library</h3>
                                 <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col gap-2 pr-2">
                                     {userSamples.map(s => (
-                                        <div key={s.id} className="flex items-center justify-between bg-neutral-900 border border-neutral-800 p-2 rounded-lg group hover:border-emerald-500/50 transition-colors">
-                                            <div className="flex items-center gap-3 overflow-hidden flex-1">
+                                        <div key={s.id} className="flex items-center justify-between bg-[#222] border border-[#111] p-1.5 rounded-sm group hover:border-[#555] transition-colors">
+                                            <div className="flex items-center gap-2 overflow-hidden flex-1">
                                                 <button 
-                                                    className="text-emerald-400 hover:text-white shrink-0 bg-neutral-800 p-1.5 rounded transition-colors"
+                                                    className="text-cyan-500 hover:text-white shrink-0 bg-[#333] p-1.5 rounded-sm transition-colors border border-[#111]"
                                                     onClick={async (e) => {
                                                         e.stopPropagation();
                                                         const sampleData = await fetchAudioSample(s.id);
@@ -6998,31 +7118,68 @@ const initAudioEngine = async (explicitTracks = null) => {
                                                         }
                                                     }}
                                                 ><Play size={10} /></button>
-                                                <span className="text-xs text-neutral-300 truncate font-mono" title={s.name}>{s.name}</span>
+                                                <span className="text-[10px] text-[#e0e0e0] truncate font-bold uppercase tracking-wider" title={s.name}>{s.name}</span>
                                             </div>
-                                            <button onClick={() => assignSampleToPad(samplePickerTarget.trackId, samplePickerTarget.note, s.id)} className="bg-neutral-800 hover:bg-emerald-600 text-white px-3 py-1.5 ml-2 text-[10px] rounded font-bold uppercase transition-colors shrink-0">Assign</button>
+                                            <button onClick={() => assignSampleToPad(samplePickerTarget.trackId, samplePickerTarget.note, s.id)} className="bg-[#444] hover:bg-cyan-500 text-[#b3b3b3] hover:text-black border border-[#222] px-3 py-1 ml-2 text-[9px] rounded-sm font-bold uppercase tracking-wider transition-colors shrink-0">Assign</button>
                                         </div>
                                     ))}
-                                    {userSamples.length === 0 && <p className="text-xs text-neutral-500 italic mt-4 text-center">No samples found. Upload some!</p>}
+                                    {userSamples.length === 0 && <p className="text-[10px] font-bold uppercase tracking-wider text-[#888] mt-4 text-center">No samples found. Upload some!</p>}
                                 </div>
                             </div>
-                            {/* Right: Upload Dropzone */}
-                            <div 
-                                className="flex-1 flex flex-col items-center justify-center p-6 bg-neutral-900"
-                                onDragOver={e => {e.preventDefault(); e.stopPropagation();}}
-                                onDrop={e => {e.preventDefault(); e.stopPropagation(); handleBulkSampleUpload(e, samplePickerTarget); }}
-                            >
-                                <label className="w-full h-full border-2 border-dashed border-neutral-700 hover:border-emerald-500 rounded-xl flex flex-col items-center justify-center text-neutral-500 group transition-colors relative cursor-pointer bg-neutral-950/50 hover:bg-emerald-500/5">
-                                    <Upload size={32} className="mb-2 group-hover:text-emerald-400 transition-colors" />
-                                    <span className="text-xs font-bold uppercase tracking-wider group-hover:text-emerald-400 transition-colors">Drag & Drop</span>
-                                    <span className="text-[10px] mt-1 text-center px-4 leading-relaxed">Audio Files (.wav, .mp3)<br/>or click to browse</span>
-                                    <input type="file" multiple accept="audio/*" onChange={e => handleBulkSampleUpload(e, samplePickerTarget)} className="hidden" />
-                                </label>
-                            </div>
+                            {/* Right: Upload Dropzone or Editor */}
+                            {(() => {
+                                const trk = tracks.find(t => t.id === samplePickerTarget.trackId);
+                                const assignedSampleId = trk?.instrumentParams?.samples?.[samplePickerTarget.note];
+                                const sampleSettings = trk?.instrumentParams?.sampleSettings?.[samplePickerTarget.note] || { start: 0, end: 1 };
+                                
+                                if (assignedSampleId && globalAudioBufferCache.has(assignedSampleId)) {
+                                    return (
+                                        <div className="flex-1 flex flex-col p-6 bg-[#222]">
+                                            <h3 className="text-[10px] font-bold text-[#b3b3b3] uppercase tracking-wider mb-3 flex justify-between items-center">
+                                                <span>Edit Pad {samplePickerTarget.note} Sample</span>
+                                            </h3>
+                                            <div className="flex-1 relative bg-[#111] border border-[#333] rounded-lg overflow-hidden mb-4">
+                                                 <SampleCropper 
+                                                      sampleId={assignedSampleId}
+                                                      settings={sampleSettings}
+                                                      onChange={(newSettings) => {
+                                                          const newSampleSettings = { ...(trk.instrumentParams.sampleSettings || {}) };
+                                                          newSampleSettings[samplePickerTarget.note] = newSettings;
+                                                          dispatchDawAction({ type: 'UPDATE_INSTRUMENT_PARAM', payload: { trackId: trk.id, param: 'sampleSettings', value: newSampleSettings } });
+                                                      }}
+                                                 />
+                                            </div>
+                                            <div className="flex justify-end">
+                                                <button onClick={() => {
+                                                     const newSamples = { ...trk.instrumentParams.samples };
+                                                     delete newSamples[samplePickerTarget.note];
+                                                     dispatchDawAction({ type: 'UPDATE_INSTRUMENT_PARAM', payload: { trackId: trk.id, param: 'samples', value: newSamples } });
+                                                }} className="text-[10px] font-bold text-red-500 hover:text-red-400 px-4 py-2 border border-red-500/30 rounded-sm bg-red-500/10 transition-colors uppercase tracking-wider">Remove Sample</button>
+                                            </div>
+                                        </div>
+                                    );
+                                }
+                                
+                                return (
+                                    <div 
+                                        className="flex-1 flex flex-col items-center justify-center p-6 bg-[#222]"
+                                        onDragOver={e => {e.preventDefault(); e.stopPropagation();}}
+                                        onDrop={e => {e.preventDefault(); e.stopPropagation(); handleBulkSampleUpload(e, samplePickerTarget); }}
+                                    >
+                                        <label className="w-full h-full border-2 border-dashed border-[#444] hover:border-cyan-500 rounded-sm flex flex-col items-center justify-center text-[#888] group transition-colors relative cursor-pointer bg-[#111]/50 hover:bg-cyan-500/5">
+                                            <Upload size={32} className="mb-2 group-hover:text-cyan-500 transition-colors" />
+                                            <span className="text-[10px] font-bold uppercase tracking-wider group-hover:text-cyan-500 transition-colors">Drag & Drop</span>
+                                            <span className="text-[9px] mt-1 text-center px-4 leading-relaxed font-bold uppercase">Audio Files (.wav, .mp3)<br/>or click to browse</span>
+                                            <input type="file" multiple accept="audio/*" onChange={e => handleBulkSampleUpload(e, samplePickerTarget)} className="hidden" />
+                                        </label>
+                                    </div>
+                                );
+                            })()}
                         </div>
                     </div>
                 </div>
             )}
+
 
             {/* Share Project Modal */}
             {showShareModal && (
