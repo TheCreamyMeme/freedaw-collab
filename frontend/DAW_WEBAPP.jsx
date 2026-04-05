@@ -2131,6 +2131,8 @@ function DAWStudio() {
   
   const [loopRegion, setLoopRegion] = useState({ start: 0, end: 8, enabled: false });
   const [draggingLoop, setDraggingLoop] = useState(null);
+  const [exportRegion, setExportRegion] = useState({ start: 0, end: 64 });
+  const [draggingExport, setDraggingExport] = useState(null);
   
   const [snapGrid, setSnapGrid] = useState(0.25);
   const BEAT_WIDTH = 64 * zoom;
@@ -2225,6 +2227,7 @@ function DAWStudio() {
   const tracksRef = useRef(tracks);
   const timelineRef = useRef(null);
   const loopRegionRef = useRef(loopRegion);
+  const exportRegionRef = useRef(exportRegion);
   const midiConfigRef = useRef(midiConfig);
   const midiMappingsRef = useRef(midiMappings);
   const midiLearnTargetRef = useRef(midiLearnTarget);
@@ -2375,6 +2378,7 @@ function DAWStudio() {
   useEffect(() => { currentProjectIdRef.current = projectId; }, [projectId]);
   useEffect(() => { authTokenRef.current = authToken; }, [authToken]);
   useEffect(() => { loopRegionRef.current = loopRegion; }, [loopRegion]);
+  useEffect(() => { exportRegionRef.current = exportRegion; }, [exportRegion]);
   useEffect(() => { midiConfigRef.current = midiConfig; }, [midiConfig]);
   useEffect(() => { midiMappingsRef.current = midiMappings; }, [midiMappings]);
   useEffect(() => { midiLearnTargetRef.current = midiLearnTarget; }, [midiLearnTarget]);
@@ -2662,7 +2666,12 @@ function DAWStudio() {
 
   const loadProjectToDaw = async (p) => {
       setIsProcessingAudio(true);
-      setProjectId(p.id); setProjectName(p.name); setProjectOwnerId(p.ownerId || null); setProjectOwnerName(p.ownerName || ''); setTracks(p.tracks || []); setLfos(p.lfos || []); setMasterEffects(p.masterEffects || []); setBpm(p.bpm || 120); setSharedWith(p.sharedWith || []); setIsPublic(p.isPublic || false); setAppView('daw');
+      let maxBeat = 0;
+      (p.tracks || []).forEach(t => t.clips.forEach(c => { if (c.start + c.duration > maxBeat) maxBeat = c.start + c.duration; }));
+      const defaultEnd = Math.max(32, Math.ceil(maxBeat / 4) * 4 + 8);
+      
+      setProjectId(p.id); setProjectName(p.name); setProjectOwnerId(p.ownerId || null); setProjectOwnerName(p.ownerName || ''); setTracks(p.tracks || []); setLfos(p.lfos || []); setMasterEffects(p.masterEffects || []); setExportRegion(p.exportRegion || { start: 0, end: defaultEnd }); setBpm(p.bpm || 120); setSharedWith(p.sharedWith || []); setIsPublic(p.isPublic || false); setAppView('daw');
+
       
       // Let React render the DAW + loading spinner before locking the thread with audio
       await new Promise(r => setTimeout(r, 100)); 
@@ -2821,22 +2830,39 @@ const initAudioEngine = async (explicitTracks = null) => {
           const JSZip = await loadJSZip();
           const zip = new JSZip();
 
-          let maxBeat = 0;
-          tracksRef.current.forEach(t => t.clips.forEach(c => {
-              if (c.start + c.duration > maxBeat) maxBeat = c.start + c.duration;
-          }));
-          if (maxBeat === 0) maxBeat = 4;
+          const region = exportRegionRef.current;
+          const durationBeats = region.end - region.start;
+          if (durationBeats <= 0) {
+              showToast("Mixdown bounds are invalid.", "error");
+              setIsExporting(false);
+              return;
+          }
+          const exportStartSec = region.start * (60 / stateRefs.current.bpm);
+          const exportEndSec = region.end * (60 / stateRefs.current.bpm);
 
           let trackIndex = 1;
           for (const track of tracksRef.current) {
               const safeName = `track_${String(trackIndex).padStart(2, '0')}_${track.name.replace(/[^a-z0-9]/gi, '_').toLowerCase()}`;
               
               if (track.type === 'midi') {
-                  const midiBytes = writeMidiFile(track.clips, track.name, stateRefs.current.bpm);
+                  const adjustedClips = [];
+                  track.clips.forEach(c => {
+                      if (c.start + c.duration <= region.start || c.start >= region.end) return;
+                      const newClip = JSON.parse(JSON.stringify(c));
+                      newClip.start -= region.start;
+                      if (newClip.notes) {
+                          newClip.notes = newClip.notes.filter(n => {
+                              const absStart = newClip.start + n.start;
+                              return absStart >= 0 && absStart < (region.end - region.start);
+                          });
+                      }
+                      adjustedClips.push(newClip);
+                  });
+                  const midiBytes = writeMidiFile(adjustedClips, track.name, stateRefs.current.bpm);
                   // JSZip perfectly handles Uint8Array internally, {binary: true} can incorrectly invoke string parsers
                   if (midiBytes.length > 0) zip.file(`${safeName}.mid`, midiBytes);
               } else if (track.type === 'audio' && track.clips.length > 0) {
-                  const durationSec = (maxBeat * (60 / stateRefs.current.bpm)) + 4.0;
+                  const durationSec = exportEndSec;
                   const sampleRate = 44100;
                   const offlineCtx = new (window.OfflineAudioContext || window.webkitOfflineAudioContext)(2, sampleRate * durationSec, sampleRate);
                   const trackGain = offlineCtx.createGain();
@@ -2866,7 +2892,16 @@ const initAudioEngine = async (explicitTracks = null) => {
                   });
 
                   const renderedBuffer = await offlineCtx.startRendering();
-                  const wavBlob = audioBufferToWav(renderedBuffer);
+                  const startSample = Math.floor(exportStartSec * sampleRate);
+                  const endSample = Math.floor(exportEndSec * sampleRate);
+                  const slicedLength = Math.max(1, endSample - startSample);
+                  
+                  const slicedBuffer = audioCtxRef.current.createBuffer(renderedBuffer.numberOfChannels, slicedLength, renderedBuffer.sampleRate);
+                  for (let channel = 0; channel < renderedBuffer.numberOfChannels; channel++) {
+                      slicedBuffer.getChannelData(channel).set(renderedBuffer.getChannelData(channel).subarray(startSample, endSample));
+                  }
+                  
+                  const wavBlob = audioBufferToWav(slicedBuffer);
                   zip.file(`${safeName}.wav`, wavBlob);
               }
               trackIndex++;
@@ -2996,21 +3031,18 @@ const initAudioEngine = async (explicitTracks = null) => {
       showToast("Rendering Mixdown (WAV)...", "info");
 
       try {
-          let maxBeat = 0;
-          tracksRef.current.forEach(t => {
-              t.clips.forEach(c => {
-                  if (c.start + c.duration > maxBeat) maxBeat = c.start + c.duration;
-              });
-          });
-
-          if (maxBeat === 0) {
-              showToast("Project is empty.", "error");
+          const region = exportRegionRef.current;
+          const durationBeats = region.end - region.start;
+          if (durationBeats <= 0) {
+              showToast("Mixdown bounds are invalid.", "error");
               setIsExporting(false);
               return;
           }
 
-          // Convert beats to seconds, and add 4 seconds to let reverb/delay tails decay
-          const durationSec = (maxBeat * (60 / stateRefs.current.bpm)) + 4.0;
+          const exportStartSec = region.start * (60 / stateRefs.current.bpm);
+          const exportEndSec = region.end * (60 / stateRefs.current.bpm);
+          const durationSec = exportEndSec; // Render from 0 up to the end bound
+          
           const sampleRate = 44100;
           const offlineCtx = new (window.OfflineAudioContext || window.webkitOfflineAudioContext)(2, sampleRate * durationSec, sampleRate);
           
@@ -3083,8 +3115,20 @@ const initAudioEngine = async (explicitTracks = null) => {
           }
 
           const renderedBuffer = await offlineCtx.startRendering();
-          setMasterMixdownBuffer(renderedBuffer);
-          const wavBlob = audioBufferToWav(renderedBuffer);
+          
+          // Slice buffer to match the exact Mixdown Bounds
+          const startSample = Math.floor(exportStartSec * sampleRate);
+          const endSample = Math.floor(exportEndSec * sampleRate);
+          const slicedLength = Math.max(1, endSample - startSample);
+          
+          const slicedBuffer = audioCtxRef.current.createBuffer(renderedBuffer.numberOfChannels, slicedLength, renderedBuffer.sampleRate);
+          
+          for (let channel = 0; channel < renderedBuffer.numberOfChannels; channel++) {
+              slicedBuffer.getChannelData(channel).set(renderedBuffer.getChannelData(channel).subarray(startSample, endSample));
+          }
+
+          setMasterMixdownBuffer(slicedBuffer);
+          const wavBlob = audioBufferToWav(slicedBuffer);
           const url = URL.createObjectURL(wavBlob);
           
           const a = document.createElement('a');
@@ -5094,6 +5138,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                   setTracks(action.payload.tracks); 
                   if (action.payload.lfos) setLfos(action.payload.lfos);
                   if (action.payload.masterEffects) setMasterEffects(action.payload.masterEffects);
+                  if (action.payload.exportRegion) setExportRegion(action.payload.exportRegion);
                   setBpm(action.payload.bpm); 
                   if (audioCtxRef.current) {
                       setIsProcessingAudio(true);
@@ -5211,6 +5256,7 @@ const initAudioEngine = async (explicitTracks = null) => {
               if (masterGainRef.current && audioCtxRef.current) masterGainRef.current.gain.setTargetAtTime(action.payload.volume / 100, audioCtxRef.current.currentTime, 0.05);
               break;
           case 'UPDATE_LOOP_REGION': setLoopRegion(action.payload); break;
+          case 'UPDATE_EXPORT_REGION': setExportRegion(action.payload); break;
           case 'UPDATE_TIME': 
               setCurrentTime(action.payload.currentTime); 
               stateRefs.current.currentTime = action.payload.currentTime; 
@@ -5733,6 +5779,24 @@ const initAudioEngine = async (explicitTracks = null) => {
               broadcastLivePreview({ type: 'UPDATE_LOOP_REGION', payload: newLoop });
               return newLoop;
           });
+        } else if (draggingExport) {
+          const deltaX = e.clientX - draggingExport.startX;
+          const deltaBeats = snap(deltaX / BEAT_WIDTH);
+          setExportRegion(prev => {
+              let newStart = prev.start; let newEnd = prev.end;
+              if (draggingExport.edge === 'start') {
+                  newStart = Math.max(0, Math.min(draggingExport.initialStart + deltaBeats, prev.end - 1));
+              } else if (draggingExport.edge === 'end') {
+                  newEnd = Math.max(prev.start + 1, draggingExport.initialEnd + deltaBeats);
+              } else if (draggingExport.edge === 'body') {
+                  const width = draggingExport.initialEnd - draggingExport.initialStart;
+                  newStart = Math.max(0, draggingExport.initialStart + deltaBeats);
+                  newEnd = newStart + width;
+              }
+              const newRegion = { start: newStart, end: newEnd };
+              broadcastLivePreview({ type: 'UPDATE_EXPORT_REGION', payload: newRegion });
+              return newRegion;
+          });
         } else if (draggingAutoPoint) {
             const { trackId, lfoId, paramKey, pointId, startX, startY, initialTime, initialValue } = draggingAutoPoint;
             const deltaX = e.clientX - startX;
@@ -5910,6 +5974,10 @@ const initAudioEngine = async (explicitTracks = null) => {
       }
       dragValuesRef.current = {};
       if (draggingLoop) setDraggingLoop(null);
+      if (draggingExport) {
+          dispatchDawAction({ type: 'UPDATE_EXPORT_REGION', payload: exportRegionRef.current });
+          setDraggingExport(null);
+      }
       if (draggingPlayhead) {
           setDraggingPlayhead(false);
           setCurrentTime(stateRefs.current.currentTime); // Sync react UI state cleanly on release
@@ -5917,8 +5985,7 @@ const initAudioEngine = async (explicitTracks = null) => {
       if (draggingDockHeight) setDraggingDockHeight(false);
       if (draggingSidePanel) setDraggingSidePanel(false);
       if (draggingTrackHeader) setDraggingTrackHeader(false);
-  }, [draggingClip, draggingEdge, draggingNote, draggingNoteEdge, draggingLoop, draggingPlayhead, draggingDockHeight, draggingSidePanel, draggingTrackHeader, draggingAutoPoint, draggingAutoCurve, draggingFade, draggingStretch]);
-
+  }, [draggingClip, draggingEdge, draggingNote, draggingNoteEdge, draggingLoop, draggingExport, draggingPlayhead, draggingDockHeight, draggingSidePanel, draggingTrackHeader, draggingAutoPoint, draggingAutoCurve, draggingFade, draggingStretch]);
 
   useEffect(() => {
       window.addEventListener('mousemove', handleMouseMove);
@@ -6760,6 +6827,17 @@ const initAudioEngine = async (explicitTracks = null) => {
                        <div className="absolute top-0 bottom-0 pointer-events-none text-[10px] text-neutral-600 font-mono" style={{ width: `${dynamicTotalBeats * BEAT_WIDTH}px`, left: timelineRef.current ? -timelineRef.current.scrollLeft : 0 }}>
                           {Array.from({length: dynamicTotalBeats/4}).map((_, i) => <div key={i} className="absolute border-l border-neutral-700 pl-1 h-full" style={{ left: `${i * 4 * BEAT_WIDTH}px` }}>{i + 1}</div>)}
                           
+                          {/* Export Region Marker */}
+                          <div
+                             className="absolute top-0 h-1.5 z-10 transition-colors bg-neutral-400/40 border-b border-neutral-500 pointer-events-auto cursor-grab hover:bg-neutral-400/60"
+                             style={{ left: `${exportRegion.start * BEAT_WIDTH}px`, width: `${(exportRegion.end - exportRegion.start) * BEAT_WIDTH}px` }}
+                             onMouseDown={(e) => { e.stopPropagation(); setDraggingExport({ edge: 'body', startX: e.clientX, initialStart: exportRegion.start, initialEnd: exportRegion.end }); }}
+                             title="Mixdown / Export Bounds"
+                          >
+                             <div className="absolute left-0 top-0 bottom-0 w-2 cursor-ew-resize -ml-1 flex items-center justify-center" onMouseDown={(e) => { e.stopPropagation(); setDraggingExport({ edge: 'start', startX: e.clientX, initialStart: exportRegion.start, initialEnd: exportRegion.end }); }}><div className="w-[3px] h-full bg-neutral-300 rounded-sm" /></div>
+                             <div className="absolute right-0 top-0 bottom-0 w-2 cursor-ew-resize -mr-1 flex items-center justify-center" onMouseDown={(e) => { e.stopPropagation(); setDraggingExport({ edge: 'end', startX: e.clientX, initialStart: exportRegion.start, initialEnd: exportRegion.end }); }}><div className="w-[3px] h-full bg-neutral-300 rounded-sm" /></div>
+                          </div>
+
                           {/* Loop Region Brace */}
                           {loopRegion.enabled && (
                              <div 
