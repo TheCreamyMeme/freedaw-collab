@@ -1543,6 +1543,7 @@ const triggerDrum = (ctx, bus, pitch, time, vol, p={}, vel=100) => {
   // Check for custom MPC-style sample mapping first
   if (p.samples && p.samples[pitch] && globalAudioBufferCache.has(p.samples[pitch])) {
       const sampleData = globalAudioBufferCache.get(p.samples[pitch]);
+      if (!sampleData || !sampleData.buffer) return;
       const source = ctx.createBufferSource();
       source.buffer = sampleData.buffer;
       
@@ -2033,7 +2034,7 @@ const SampleCropper = React.memo(({ sampleId, settings, onChange }) => {
     };
 
     const bufferData = globalAudioBufferCache.get(sampleId);
-    if (!bufferData) return null;
+    if (!bufferData || !bufferData.buffer) return null;
 
     return (
         <div ref={containerRef} className="absolute inset-0 touch-none" onPointerMove={handlePointerMove} onPointerUp={handlePointerUp} onPointerCancel={handlePointerUp}>
@@ -2318,38 +2319,45 @@ function DAWStudio() {
 
   const fetchAudioSample = useCallback(async (sampleId) => {
       if (!sampleId) return null;
-      if (globalAudioBufferCache.has(sampleId)) return globalAudioBufferCache.get(sampleId);
-      if (globalAudioBufferCache.has(`loading_${sampleId}`)) return null; // Currently loading
-
-      globalAudioBufferCache.set(`loading_${sampleId}`, true);
       
-      try {
-          let ab;
-          // 1. Try fetching from Local Offline Database first!
-          const cached = await idb.get('samples', sampleId).catch(() => null);
-          if (cached && cached.data) {
-              ab = cached.data;
-          } else {
-              // 2. If not local, fetch from server
-              const res = await fetch(`${API_BASE_URL}/api/samples/${sampleId}.wav`);
-              if (!res.ok) throw new Error("Audio missing on server");
-              ab = await res.arrayBuffer();
-              // Save to local DB so it survives offline and server restarts
-              await idb.set('samples', { id: sampleId, data: ab.slice(0) }).catch(() => {});
-          }
-
-          const ctx = audioCtxRef.current || new (window.AudioContext || window.webkitAudioContext)();
-          const buffer = await ctx.decodeAudioData(ab.slice(0));
-          const sampleData = { buffer, duration: buffer.duration };
-          globalAudioBufferCache.set(sampleId, sampleData);
-          globalAudioBufferCache.delete(`loading_${sampleId}`);
-          setTracks(prev => [...prev]); // Trigger re-render to show waveform
-          return sampleData;
-      } catch (err) {
-          console.error("Missing or failed audio sample", sampleId);
-          globalAudioBufferCache.delete(`loading_${sampleId}`);
-          return null;
+      if (globalAudioBufferCache.has(sampleId)) {
+          const cached = globalAudioBufferCache.get(sampleId);
+          if (cached instanceof Promise) return await cached;
+          return cached;
       }
+
+      const fetchPromise = (async () => {
+          try {
+              let ab;
+              // 1. Try fetching from Local Offline Database first!
+              const cached = await idb.get('samples', sampleId).catch(() => null);
+              if (cached && cached.data) {
+                  ab = cached.data;
+              } else {
+                  // 2. If not local, fetch from server
+                  const res = await fetch(`${API_BASE_URL}/api/samples/${sampleId}.wav`);
+                  if (!res.ok) throw new Error("Audio missing on server");
+                  ab = await res.arrayBuffer();
+                  // Save to local DB so it survives offline and server restarts
+                  await idb.set('samples', { id: sampleId, data: ab.slice(0) }).catch(() => {});
+              }
+
+              const ctx = audioCtxRef.current || new (window.AudioContext || window.webkitAudioContext)();
+              const buffer = await ctx.decodeAudioData(ab.slice(0));
+              const sampleData = { buffer, duration: buffer.duration };
+              
+              globalAudioBufferCache.set(sampleId, sampleData);
+              setTracks(prev => [...prev]); // Trigger re-render to show waveform
+              return sampleData;
+          } catch (err) {
+              console.error("Missing or failed audio sample", sampleId);
+              globalAudioBufferCache.delete(sampleId);
+              return null;
+          }
+      })();
+
+      globalAudioBufferCache.set(sampleId, fetchPromise);
+      return await fetchPromise;
   }, []);
 
   // Auto-fetch missing audio clips on project load/sync
@@ -2661,6 +2669,25 @@ function DAWStudio() {
       
       try {
           await initAudioEngine(p.tracks);
+          
+          // Pre-load all audio samples used in the project before dropping the loading screen
+          const samplePromises = [];
+          (p.tracks || []).forEach(t => {
+              if (t.type === 'audio') {
+                  t.clips.forEach(c => {
+                      if (c.sampleId) samplePromises.push(fetchAudioSample(c.sampleId));
+                  });
+              }
+              if (t.instrument === 'inst-drum' && t.instrumentParams?.samples) {
+                  Object.values(t.instrumentParams.samples).forEach(sampleId => {
+                      if (sampleId) samplePromises.push(fetchAudioSample(sampleId));
+                  });
+              }
+          });
+          
+          if (samplePromises.length > 0) {
+              await Promise.all(samplePromises);
+          }
       } catch (err) {
           console.error("Audio engine failed to start on load:", err);
       } finally {
@@ -3037,6 +3064,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                       });
                   } else if (track.type === 'audio' && clip.sampleId && globalAudioBufferCache.has(clip.sampleId)) {
                       const sampleData = globalAudioBufferCache.get(clip.sampleId);
+                      if (!sampleData || !sampleData.buffer) return;
                       const source = offlineCtx.createBufferSource();
                       source.buffer = sampleData.buffer;
                       
@@ -6869,7 +6897,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                                                 {c.notes.map(n => <div key={n.id} className="absolute bg-white rounded-sm h-[2px]" style={{ left: `${n.start * BEAT_WIDTH}px`, width: `${n.duration * BEAT_WIDTH}px`, top: `${100 - ((n.pitch - 24) / (108 - 24) * 100)}%` }} />)}
                                               </div>
                                             )}
-                                            {t.type === 'audio' && c.sampleId && globalAudioBufferCache.has(c.sampleId) && (
+                                            {t.type === 'audio' && c.sampleId && globalAudioBufferCache.has(c.sampleId) && globalAudioBufferCache.get(c.sampleId).buffer && (
                                                 <WaveformDisplay 
                                                     buffer={globalAudioBufferCache.get(c.sampleId).buffer} 
                                                     bpm={bpm} 
