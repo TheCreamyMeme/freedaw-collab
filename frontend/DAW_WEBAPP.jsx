@@ -2985,9 +2985,9 @@ const initAudioEngine = async (explicitTracks = null) => {
             try { 
                 if (synth.activeSourceGain && audioCtxRef.current) {
                     synth.activeSourceGain.gain.cancelScheduledValues(now);
-                    synth.activeSourceGain.gain.setTargetAtTime(0, now, 0.01);
+                    synth.activeSourceGain.gain.setTargetAtTime(0, now, 0.001);
                 }
-                synth.activeSource.stop(now + 0.05); 
+                synth.activeSource.stop(now + 0.005); 
             } catch(e){}
             synth.activeSource = null;
             synth.activeSourceGain = null;
@@ -3458,9 +3458,10 @@ const initAudioEngine = async (explicitTracks = null) => {
                     try {
                         if (synth.activeSourceGain) {
                             synth.activeSourceGain.gain.cancelScheduledValues(now);
-                            synth.activeSourceGain.gain.setTargetAtTime(0, now, 0.01);
+                            // Extremely fast fade to absolutely eliminate comb-filtering/phasing from overlap
+                            synth.activeSourceGain.gain.setTargetAtTime(0, now, 0.001);
                         }
-                        synth.activeSource.stop(now + 0.05);
+                        synth.activeSource.stop(now + 0.005);
                     } catch(e) {}
                 }
 
@@ -3505,9 +3506,9 @@ const initAudioEngine = async (explicitTracks = null) => {
                 try { 
                     if (synth.activeSourceGain) {
                         synth.activeSourceGain.gain.cancelScheduledValues(now);
-                        synth.activeSourceGain.gain.setTargetAtTime(0, now, 0.01);
+                        synth.activeSourceGain.gain.setTargetAtTime(0, now, 0.001);
                     }
-                    synth.activeSource.stop(now + 0.05); 
+                    synth.activeSource.stop(now + 0.005); 
                 } catch(e){}
                 synth.activeSource = null;
                 synth.activeSourceGain = null;
