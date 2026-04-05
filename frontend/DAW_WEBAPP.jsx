@@ -1944,48 +1944,53 @@ function DAWStudio() {
       historyPtrRef.current = hist.length - 1;
   }, [tracks]);
 
+  const fetchAudioSample = useCallback(async (sampleId) => {
+      if (!sampleId) return null;
+      if (globalAudioBufferCache.has(sampleId)) return globalAudioBufferCache.get(sampleId);
+      if (globalAudioBufferCache.has(`loading_${sampleId}`)) return null; // Currently loading
+
+      globalAudioBufferCache.set(`loading_${sampleId}`, true);
+      
+      try {
+          let ab;
+          // 1. Try fetching from Local Offline Database first!
+          const cached = await idb.get('samples', sampleId).catch(() => null);
+          if (cached && cached.data) {
+              ab = cached.data;
+          } else {
+              // 2. If not local, fetch from server
+              const res = await fetch(`${API_BASE_URL}/api/samples/${sampleId}.wav`);
+              if (!res.ok) throw new Error("Audio missing on server");
+              ab = await res.arrayBuffer();
+              // Save to local DB so it survives offline and server restarts
+              await idb.set('samples', { id: sampleId, data: ab.slice(0) }).catch(() => {});
+          }
+
+          const ctx = audioCtxRef.current || new (window.AudioContext || window.webkitAudioContext)();
+          const buffer = await ctx.decodeAudioData(ab.slice(0));
+          const sampleData = { buffer, duration: buffer.duration };
+          globalAudioBufferCache.set(sampleId, sampleData);
+          globalAudioBufferCache.delete(`loading_${sampleId}`);
+          setTracks(prev => [...prev]); // Trigger re-render to show waveform
+          return sampleData;
+      } catch (err) {
+          console.error("Missing or failed audio sample", sampleId);
+          globalAudioBufferCache.delete(`loading_${sampleId}`);
+          return null;
+      }
+  }, []);
+
   // Auto-fetch missing audio clips on project load/sync
   useEffect(() => {
       tracks.forEach(t => {
-          const fetchSample = async (sampleId) => {
-              if (sampleId && !globalAudioBufferCache.has(sampleId) && !globalAudioBufferCache.has(`loading_${sampleId}`)) {
-                  globalAudioBufferCache.set(`loading_${sampleId}`, true);
-                  
-                  try {
-                      let ab;
-                      // 1. Try fetching from Local Offline Database first!
-                      const cached = await idb.get('samples', sampleId).catch(() => null);
-                      if (cached && cached.data) {
-                          ab = cached.data;
-                      } else {
-                          // 2. If not local, fetch from server
-                          const res = await fetch(`${API_BASE_URL}/api/samples/${sampleId}.wav`);
-                          if (!res.ok) throw new Error("Audio missing on server");
-                          ab = await res.arrayBuffer();
-                          // Save to local DB so it survives offline and server restarts
-                          await idb.set('samples', { id: sampleId, data: ab.slice(0) }).catch(() => {});
-                      }
-
-                      const ctx = audioCtxRef.current || new (window.AudioContext || window.webkitAudioContext)();
-                      const buffer = await ctx.decodeAudioData(ab);
-                      globalAudioBufferCache.set(sampleId, { buffer, duration: buffer.duration });
-                      globalAudioBufferCache.delete(`loading_${sampleId}`);
-                      setTracks(prev => [...prev]); // Trigger re-render to show waveform
-                  } catch (err) {
-                      console.error("Missing or failed audio sample", sampleId);
-                      globalAudioBufferCache.delete(`loading_${sampleId}`);
-                  }
-              }
-          };
-
           if (t.type === 'audio') {
-              t.clips.forEach(c => fetchSample(c.sampleId));
+              t.clips.forEach(c => fetchAudioSample(c.sampleId));
           }
           if (t.instrument === 'inst-drum' && t.instrumentParams?.samples) {
-              Object.values(t.instrumentParams.samples).forEach(fetchSample);
+              Object.values(t.instrumentParams.samples).forEach(fetchAudioSample);
           }
       });
-  }, [tracks]);
+  }, [tracks, fetchAudioSample]);
 
   useEffect(() => { currentProjectIdRef.current = projectId; }, [projectId]);
   useEffect(() => { authTokenRef.current = authToken; }, [authToken]);
@@ -5604,11 +5609,11 @@ const initAudioEngine = async (explicitTracks = null) => {
                 {userSamples.map(s => (
                   <div 
                       key={s.id} 
-                      onClick={() => {
-                          if (globalAudioBufferCache.has(s.id)) {
-                              const buf = globalAudioBufferCache.get(s.id).buffer;
+                      onClick={async () => {
+                          const sampleData = await fetchAudioSample(s.id);
+                          if (sampleData && audioCtxRef.current) {
                               const src = audioCtxRef.current.createBufferSource();
-                              src.buffer = buf;
+                              src.buffer = sampleData.buffer;
                               if (masterGainRef.current) src.connect(masterGainRef.current);
                               src.start(0);
                           }
@@ -6982,11 +6987,12 @@ const initAudioEngine = async (explicitTracks = null) => {
                                             <div className="flex items-center gap-3 overflow-hidden flex-1">
                                                 <button 
                                                     className="text-emerald-400 hover:text-white shrink-0 bg-neutral-800 p-1.5 rounded transition-colors"
-                                                    onClick={() => {
-                                                        if (globalAudioBufferCache.has(s.id)) {
-                                                            const buf = globalAudioBufferCache.get(s.id).buffer;
+                                                    onClick={async (e) => {
+                                                        e.stopPropagation();
+                                                        const sampleData = await fetchAudioSample(s.id);
+                                                        if (sampleData && audioCtxRef.current) {
                                                             const src = audioCtxRef.current.createBufferSource();
-                                                            src.buffer = buf;
+                                                            src.buffer = sampleData.buffer;
                                                             if (masterGainRef.current) src.connect(masterGainRef.current);
                                                             src.start(0);
                                                         }
