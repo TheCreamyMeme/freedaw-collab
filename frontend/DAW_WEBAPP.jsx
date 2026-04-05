@@ -2119,6 +2119,7 @@ function DAWStudio() {
   const [isProcessingAudio, setIsProcessingAudio] = useState(false);
   const [lfos, setLfos] = useState([]);
   const [masterEffects, setMasterEffects] = useState([]);
+  const [masterMixdownBuffer, setMasterMixdownBuffer] = useState(null);
   
   const [loopRegion, setLoopRegion] = useState({ start: 0, end: 8, enabled: false });
   const [draggingLoop, setDraggingLoop] = useState(null);
@@ -2172,6 +2173,8 @@ function DAWStudio() {
   const [draggingDockHeight, setDraggingDockHeight] = useState(false);
   const [sidePanelWidth, setSidePanelWidth] = useState(500);
   const [draggingSidePanel, setDraggingSidePanel] = useState(false);
+  const [trackHeaderWidth, setTrackHeaderWidth] = useState(256);
+  const [draggingTrackHeader, setDraggingTrackHeader] = useState(false);
   const [draggedFxIndex, setDraggedFxIndex] = useState(null);
   const [dragOverFxIndex, setDragOverFxIndex] = useState(null);
   const [selectedTrackId, setSelectedTrackId] = useState(null);
@@ -3045,6 +3048,7 @@ const initAudioEngine = async (explicitTracks = null) => {
           }
 
           const renderedBuffer = await offlineCtx.startRendering();
+          setMasterMixdownBuffer(renderedBuffer);
           const wavBlob = audioBufferToWav(renderedBuffer);
           const url = URL.createObjectURL(wavBlob);
           
@@ -5514,8 +5518,8 @@ const initAudioEngine = async (explicitTracks = null) => {
           if (timelineRef.current) {
               const rect = timelineRef.current.getBoundingClientRect();
               const y = e.clientY - rect.top + timelineRef.current.scrollTop;
-              if (y >= 0) {
-                  const trackIndex = Math.floor(y / 96); 
+              if (y >= 100) { // Offset for the Master Lane at the top
+                  const trackIndex = Math.floor((y - 100) / 96); 
                   if (trackIndex >= 0 && trackIndex < tracksRef.current.length) {
                       const targetTrack = tracksRef.current[trackIndex];
                       const sourceTrack = tracksRef.current.find(t => t.id === draggingClip.trackId);
@@ -5812,8 +5816,10 @@ const initAudioEngine = async (explicitTracks = null) => {
           setDockHeight(Math.max(260, Math.min(800, window.innerHeight - e.clientY)));
       } else if (draggingSidePanel) {
           setSidePanelWidth(Math.max(300, Math.min(1200, e.clientX - 56)));
+      } else if (draggingTrackHeader) {
+          setTrackHeaderWidth(Math.max(160, Math.min(800, e.clientX - 56)));
       }
-  }, [draggingClip, draggingEdge, draggingNote, draggingNoteEdge, draggingLoop, draggingPlayhead, draggingDockHeight, draggingSidePanel, draggingAutoPoint, draggingAutoCurve, draggingFade, draggingStretch, BEAT_WIDTH]);  
+  }, [draggingClip, draggingEdge, draggingNote, draggingNoteEdge, draggingLoop, draggingPlayhead, draggingDockHeight, draggingSidePanel, draggingTrackHeader, draggingAutoPoint, draggingAutoCurve, draggingFade, draggingStretch, BEAT_WIDTH]);  
   const handleMouseUp = useCallback(() => {
       if (draggingClip) {
           const finalStart = dragValuesRef.current.start ?? draggingClip.initialStart;
@@ -5871,7 +5877,8 @@ const initAudioEngine = async (explicitTracks = null) => {
       }
       if (draggingDockHeight) setDraggingDockHeight(false);
       if (draggingSidePanel) setDraggingSidePanel(false);
-  }, [draggingClip, draggingEdge, draggingNote, draggingNoteEdge, draggingLoop, draggingPlayhead, draggingDockHeight, draggingSidePanel, draggingAutoPoint, draggingAutoCurve, draggingFade, draggingStretch]);
+      if (draggingTrackHeader) setDraggingTrackHeader(false);
+  }, [draggingClip, draggingEdge, draggingNote, draggingNoteEdge, draggingLoop, draggingPlayhead, draggingDockHeight, draggingSidePanel, draggingTrackHeader, draggingAutoPoint, draggingAutoCurve, draggingFade, draggingStretch]);
 
 
   useEffect(() => {
@@ -5916,7 +5923,7 @@ const initAudioEngine = async (explicitTracks = null) => {
           const x = e.clientX - rect.left + timelineRef.current.scrollLeft;
           const sg = snapGridRef.current; const snap = (val) => sg === 0 ? val : Math.round(val / sg) * sg;
           const beat = Math.max(0, snap(x / BEAT_WIDTH));
-          const trackIndex = Math.max(0, Math.floor(y / 96));
+          const trackIndex = Math.max(0, Math.floor((y - 100) / 96));
           setDragHover({ active: true, beat, trackIndex, fileType });
       }
   }, [BEAT_WIDTH]);
@@ -6589,17 +6596,47 @@ const initAudioEngine = async (explicitTracks = null) => {
         <div className="flex-1 flex flex-col overflow-hidden relative min-w-0 bg-[#242424]">
             <div className="flex-1 flex overflow-hidden">
                 {/* Track Headers */}
-                <div className="w-64 bg-[#3a3a3a] border-r border-[#111] flex flex-col z-20">
+                <div className="bg-[#3a3a3a] border-r border-[#111] flex flex-col z-20 shrink-0 relative" style={{ width: `${trackHeaderWidth}px` }}>
+                    <div className="absolute top-0 right-0 bottom-0 w-1.5 cursor-ew-resize hover:bg-cyan-500 z-50 transition-colors translate-x-1/2" onMouseDown={(e) => { e.stopPropagation(); setDraggingTrackHeader(true); }} />
                     <div className="h-8 bg-[#2d2d2d] border-b border-[#111] flex items-center justify-between px-2 shrink-0">
                         <span className="text-[10px] font-bold text-[#888]">TRACKS</span>
-                        <div className="flex gap-1">
+                        <div className="flex gap-1 overflow-hidden flex-nowrap">
                             {/* Auto Tracks Toggle Button */}
-                            <button onClick={() => setIsAutomationMode(!isAutomationMode)} className={`text-[9px] uppercase font-bold flex items-center gap-1 px-1.5 py-0.5 rounded-sm transition-colors ${isAutomationMode ? 'bg-cyan-500 text-black' : 'bg-[#444] text-neutral-400 hover:text-white hover:bg-[#555]'}`} title="Toggle Automation Lanes (Ctrl+Shift+A)"><Activity size={10}/> Auto</button>
-                            <button onClick={() => dispatchDawAction({ type: 'ADD_TRACK', payload: { id: Date.now(), name: 'New MIDI', type: 'midi', instrument: 'inst-subtractive', instrumentParams: {cutoff:2000, res:1}, color: 'bg-pink-500', volume: 80, pan: 0, automation: {}, activeAutomationParam: 'volume', clips: [], effects: [] }})} className="text-[9px] uppercase text-neutral-400 hover:text-white font-bold flex items-center gap-1 bg-[#444] hover:bg-[#555] px-1.5 py-0.5 rounded-sm transition-colors"><Plus size={10}/> MIDI</button>
-                            <button onClick={() => dispatchDawAction({ type: 'ADD_TRACK', payload: { id: Date.now(), name: 'New Audio', type: 'audio', color: 'bg-emerald-500', volume: 80, pan: 0, automation: {}, activeAutomationParam: 'volume', clips: [], effects: [] }})} className="text-[9px] uppercase text-neutral-400 hover:text-white font-bold flex items-center gap-1 bg-[#444] hover:bg-[#555] px-1.5 py-0.5 rounded-sm transition-colors"><Plus size={10}/> Audio</button>
+                            <button onClick={() => setIsAutomationMode(!isAutomationMode)} className={`text-[9px] uppercase font-bold flex items-center gap-1 px-1.5 py-0.5 rounded-sm transition-colors ${isAutomationMode ? 'bg-cyan-500 text-black' : 'bg-[#444] text-neutral-400 hover:text-white hover:bg-[#555]'}`} title="Toggle Automation Lanes (Ctrl+Shift+A)"><Activity size={10} className="shrink-0"/> <span className="hidden min-[180px]:inline">Auto</span></button>
+                            <button onClick={() => dispatchDawAction({ type: 'ADD_TRACK', payload: { id: Date.now(), name: 'New MIDI', type: 'midi', instrument: 'inst-subtractive', instrumentParams: {cutoff:2000, res:1}, color: 'bg-pink-500', volume: 80, pan: 0, automation: {}, activeAutomationParam: 'volume', clips: [], effects: [] }})} className="text-[9px] uppercase text-neutral-400 hover:text-white font-bold flex items-center gap-1 bg-[#444] hover:bg-[#555] px-1.5 py-0.5 rounded-sm transition-colors"><Plus size={10} className="shrink-0"/> <span className="hidden min-[210px]:inline">MIDI</span></button>
+                            <button onClick={() => dispatchDawAction({ type: 'ADD_TRACK', payload: { id: Date.now(), name: 'New Audio', type: 'audio', color: 'bg-emerald-500', volume: 80, pan: 0, automation: {}, activeAutomationParam: 'volume', clips: [], effects: [] }})} className="text-[9px] uppercase text-neutral-400 hover:text-white font-bold flex items-center gap-1 bg-[#444] hover:bg-[#555] px-1.5 py-0.5 rounded-sm transition-colors"><Plus size={10} className="shrink-0"/> <span className="hidden min-[240px]:inline">Audio</span></button>
                         </div>
                     </div>
                     <div className="flex-1 overflow-y-auto overflow-x-hidden custom-scrollbar pr-1">
+                        
+                        {/* Master Track Header (Moved to Top) */}
+                        <div className="flex flex-col w-full mb-1 border-b-2 border-[#111]">
+                            <div onClick={() => dispatchPresence('master')} onContextMenu={(e) => handleContextMenu(e, 'track', { trackId: 'master' })} className={`h-24 border-b border-[#222] p-2 flex flex-col justify-between hover:bg-[#444] bg-[#3a3a3a] relative transition-all duration-100 ${bottomDock?.trackId === 'master' && bottomDock?.type === 'devices' ? 'bg-[#4a4a4a]' : ''}`}>
+                                <div className="flex justify-between items-center">
+                                    <div className="flex items-center gap-2 pl-1 overflow-hidden flex-1 mr-2">
+                                        <div className="w-2.5 h-2.5 rounded-sm bg-[#ff5a5a] shrink-0" />
+                                        <span className="text-[10px] uppercase tracking-wider font-bold text-[#ff5a5a] truncate w-full">MASTER</span>
+                                    </div>
+                                    <div className="flex items-center gap-0.5 shrink-0">
+                                        <button onClick={(e) => { e.stopPropagation(); setBottomDock(bottomDock?.trackId === 'master' && bottomDock?.type === 'devices' ? null : { type: 'devices', trackId: 'master' }); }} className={`w-5 h-5 flex items-center justify-center rounded-sm transition-colors ${bottomDock?.trackId === 'master' && bottomDock?.type === 'devices' ? 'bg-cyan-500 text-black' : 'text-[#888] bg-[#222] hover:bg-[#555]'}`}><Plug size={10}/></button>
+                                    </div>
+                                </div>
+                                <div className="flex flex-col gap-1 px-1 mt-auto">
+                                    <div className="flex gap-2 items-center relative">
+                                        <Volume2 size={10} className="text-neutral-500 shrink-0 z-10"/>
+                                        <div className="flex-1 h-1 bg-black rounded-full relative border border-neutral-800 pointer-events-none">
+                                            <div className="absolute left-0 top-0 bottom-0 rounded-full opacity-60 bg-[#ff5a5a]" style={{ width: `${masterVolume}%` }} />
+                                        </div>
+                                        <input type="range" min="0" max="100" value={masterVolume} onChange={(e) => handleMasterVolumeChange(e.target.value)} onWheel={(e) => { e.stopPropagation(); handleMasterVolumeChange(Math.min(100, Math.max(0, masterVolume + (e.deltaY < 0 ? 5 : -5)))); }} className="absolute inset-0 opacity-0 cursor-pointer w-full pl-4" />
+                                    </div>
+                                    <div className="flex gap-2 items-center mb-1 pr-2">
+                                        <Activity size={10} className="text-neutral-600 shrink-0"/>
+                                        <VuMeter isMaster={true} masterAnalyserRef={masterAnalyserRef} isVertical={false} />
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
                         {tracks.map(t => {
                             const isPeered = Object.values(peers).find(p => p.activeTrack === t.id);
                             const autoKeys = isAutomationMode ? Array.from(new Set([...Object.keys(t.automation || {}).filter(k => t.automation[k]?.length > 0), t.activeAutomationParam].filter(Boolean))) : [];
@@ -6608,19 +6645,19 @@ const initAudioEngine = async (explicitTracks = null) => {
                             <div onClick={() => dispatchPresence(t.id)} onContextMenu={(e) => handleContextMenu(e, 'track', { trackId: t.id })} className={`h-24 border-b border-[#222] p-2 flex flex-col justify-between hover:bg-[#444] bg-[#3a3a3a] relative transition-all duration-100 ${bottomDock?.trackId === t.id && bottomDock?.type === 'devices' ? 'bg-[#4a4a4a]' : ''}`}>
                                 {isPeered && <div className={`absolute left-0 top-0 bottom-0 w-1 ${isPeered.color || 'bg-cyan-500'}`} title={`${isPeered.username} is active`} />}
                                 <div className="flex justify-between items-center">
-                                    <div className="flex items-center gap-2 pl-1">
+                                    <div className="flex items-center gap-2 pl-1 overflow-hidden flex-1 mr-2">
                                         <div 
                                           className={`w-2.5 h-2.5 rounded-sm ${t.color.replace('bg-', 'bg-').replace('-500', '-400')} shrink-0 cursor-pointer`} 
                                           title="Click to cycle color"
                                           onClick={(e) => { e.stopPropagation(); const colors = ['bg-emerald-500', 'bg-blue-500', 'bg-purple-500', 'bg-pink-500', 'bg-red-500', 'bg-orange-500', 'bg-yellow-500', 'bg-cyan-500']; dispatchDawAction({ type: 'UPDATE_TRACK_COLOR', payload: { trackId: t.id, color: colors[(colors.indexOf(t.color) + 1) % colors.length] }}); }}
                                         />
                                         {editingTrackId === t.id ? (
-                                            <input autoFocus onBlur={() => setEditingTrackId(null)} onKeyDown={(e) => e.key === 'Enter' && setEditingTrackId(null)} value={t.name} onChange={(e) => dispatchDawAction({ type: 'RENAME_TRACK', payload: { id: t.id, name: e.target.value } })} className="bg-[#222] text-xs font-bold text-white outline-none border border-[#111] rounded-sm px-1 w-24" />
+                                            <input autoFocus onBlur={() => setEditingTrackId(null)} onKeyDown={(e) => e.key === 'Enter' && setEditingTrackId(null)} value={t.name} onChange={(e) => dispatchDawAction({ type: 'RENAME_TRACK', payload: { id: t.id, name: e.target.value } })} className="bg-[#222] text-xs font-bold text-white outline-none border border-[#111] rounded-sm px-1 w-full" />
                                         ) : (
-                                            <span onDoubleClick={() => setEditingTrackId(t.id)} className="text-[10px] uppercase tracking-wider font-bold text-white truncate w-24 cursor-text">{t.name}</span>
+                                            <span onDoubleClick={() => setEditingTrackId(t.id)} className="text-[10px] uppercase tracking-wider font-bold text-white truncate w-full cursor-text">{t.name}</span>
                                         )}
                                     </div>
-                                    <div className="flex items-center gap-0.5">
+                                    <div className="flex items-center gap-0.5 shrink-0">
                                         <button onClick={(e) => { e.stopPropagation(); dispatchDawAction({ type: 'TOGGLE_ARM', payload: { trackId: t.id } }); }} className={`w-5 h-5 rounded-sm flex items-center justify-center transition-colors ${t.armed ? 'text-black bg-[#ff5a5a]' : 'text-[#888] bg-[#222] hover:bg-[#555]'}`}><Circle size={8} fill={t.armed ? "currentColor" : "none"}/></button>
                                         <button onClick={(e) => { e.stopPropagation(); dispatchDawAction({ type: 'TOGGLE_MUTE', payload: { trackId: t.id } }); }} className={`w-5 h-5 rounded-sm text-[9px] font-bold transition-colors ${t.muted ? 'bg-[#ffae00] text-black' : 'text-[#888] bg-[#222] hover:bg-[#555]'}`}>M</button>
                                         <button onClick={(e) => { e.stopPropagation(); dispatchDawAction({ type: 'TOGGLE_SOLO', payload: { trackId: t.id } }); }} className={`w-5 h-5 rounded-sm text-[9px] font-bold transition-colors ${t.solo ? 'bg-[#00d0ff] text-black' : 'text-[#888] bg-[#222] hover:bg-[#555]'}`}>S</button>
@@ -6649,11 +6686,12 @@ const initAudioEngine = async (explicitTracks = null) => {
                                           {formatAutoName(t, paramKey)}
                                      </span>
                                 </div>
-                            ))}
-                            </div>
-                        )})}
+                                ))}
+                                </div>
+                            )})}
 
-                        {/* LFO Automation Headers */}
+                            {/* LFO Automation Headers */}
+
                         {isAutomationMode && lfos.map(lfo => {
                             const autoKeys = Array.from(new Set([...Object.keys(lfo.automation || {}).filter(k => lfo.automation[k]?.length > 0), lfo.activeAutomationParam].filter(Boolean)));
                             if (autoKeys.length === 0) return null;
@@ -6711,7 +6749,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                                     className={`absolute z-[100] rounded-xl border-2 border-dashed pointer-events-none flex items-center justify-center backdrop-blur-md shadow-2xl transition-all ${
                                         dragHover.fileType === 'midi' ? 'border-pink-400 bg-pink-500/20 text-pink-300' : 'border-emerald-400 bg-emerald-500/20 text-emerald-300'
                                     }`}
-                                    style={{ left: `${dragHover.beat * BEAT_WIDTH}px`, top: `${dragHover.trackIndex * 96 + 8}px`, width: `${4 * BEAT_WIDTH}px`, height: `80px` }}
+                                    style={{ left: `${dragHover.beat * BEAT_WIDTH}px`, top: `${dragHover.trackIndex * 96 + 108}px`, width: `${4 * BEAT_WIDTH}px`, height: `80px` }}
                                 >
                                     <div className="flex flex-col items-center gap-1 font-bold text-xs uppercase tracking-wider opacity-90">
                                         {dragHover.fileType === 'midi' ? <FileCode size={24} /> : <FileAudio size={24} />}
@@ -6728,6 +6766,30 @@ const initAudioEngine = async (explicitTracks = null) => {
                             <div ref={playheadRef} className="absolute top-0 bottom-0 w-px bg-blue-500 z-30 shadow-[0_0_10px_rgba(59,130,246,0.8)] pointer-events-none" style={{ left: `${currentTime * BEAT_WIDTH}px` }}><div className="w-3 h-3 bg-blue-500 rotate-45 absolute -top-1.5 -left-1.5"/></div>
 
                             {/* Tracks Lanes */}
+                            
+                            {/* Master Track Lane (Moved to Top) */}
+                            <div className="flex flex-col w-full mb-1 border-b-2 border-[#111]">
+                                <div className="h-24 border-b border-neutral-800/50 w-full relative bg-[#1a1a1a]">
+                                    {masterMixdownBuffer && (
+                                        <div 
+                                            className="absolute top-[1px] bottom-[1px] rounded-sm border overflow-hidden border-[#ff5a5a]/50 bg-[#ff5a5a]/10 pointer-events-none"
+                                            style={{ left: `0px`, width: `${(masterMixdownBuffer.duration * (bpm / 60)) * BEAT_WIDTH}px` }}
+                                        >
+                                            <div className="h-3 w-full bg-black/40 flex items-center px-1 border-b border-black/40 pointer-events-none z-10 relative">
+                                                <span className="text-[9px] font-bold text-[#ff5a5a] truncate select-none">Latest Mixdown Preview</span>
+                                            </div>
+                                            <WaveformDisplay 
+                                                buffer={masterMixdownBuffer} 
+                                                bpm={bpm} 
+                                                beatWidth={BEAT_WIDTH}
+                                                sampleOffset={0}
+                                                playbackRate={1.0}
+                                            />
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+
                             {tracks.map(t => {
                                 const autoKeys = isAutomationMode ? Array.from(new Set([...Object.keys(t.automation || {}).filter(k => t.automation[k]?.length > 0), t.activeAutomationParam].filter(Boolean))) : [];
                                 return (
@@ -7407,10 +7469,14 @@ const initAudioEngine = async (explicitTracks = null) => {
               <div className="fixed z-[100] bg-neutral-900 border border-neutral-700 rounded-lg shadow-xl py-1 min-w-[180px] max-h-[80vh] overflow-y-auto custom-scrollbar" style={{ left: contextMenu.x, top: contextMenu.y }}>
                 {contextMenu.type === 'track' && (
                   <>
-                    <button onClick={() => { setEditingTrackId(contextMenu.payload.trackId); setContextMenu(null); }} className="w-full text-left px-4 py-2 text-sm text-neutral-300 hover:bg-neutral-800 hover:text-white flex items-center gap-2"><Pencil size={14}/> Rename Track</button>
+                    {contextMenu.payload.trackId !== 'master' && <button onClick={() => { setEditingTrackId(contextMenu.payload.trackId); setContextMenu(null); }} className="w-full text-left px-4 py-2 text-sm text-neutral-300 hover:bg-neutral-800 hover:text-white flex items-center gap-2"><Pencil size={14}/> Rename Track</button>}
                     <button onClick={() => { setBottomDock({ type: 'devices', trackId: contextMenu.payload.trackId }); setContextMenu(null); }} className="w-full text-left px-4 py-2 text-sm text-neutral-300 hover:bg-neutral-800 hover:text-white flex items-center gap-2"><Plug size={14}/> Device Rack</button>
-                    <div className="h-px bg-neutral-800 my-1"/>
-                    <button onClick={() => { dispatchDawAction({ type: 'DELETE_TRACK', payload: { id: contextMenu.payload.trackId }}); setContextMenu(null); }} className="w-full text-left px-4 py-2 text-sm text-red-400 hover:bg-neutral-800 hover:text-red-300 flex items-center gap-2"><Trash2 size={14}/> Delete Track</button>
+                    {contextMenu.payload.trackId !== 'master' && (
+                        <>
+                            <div className="h-px bg-neutral-800 my-1"/>
+                            <button onClick={() => { dispatchDawAction({ type: 'DELETE_TRACK', payload: { id: contextMenu.payload.trackId }}); setContextMenu(null); }} className="w-full text-left px-4 py-2 text-sm text-red-400 hover:bg-neutral-800 hover:text-red-300 flex items-center gap-2"><Trash2 size={14}/> Delete Track</button>
+                        </>
+                    )}
                   </>
                 )}
                 {contextMenu.type === 'clip' && (
