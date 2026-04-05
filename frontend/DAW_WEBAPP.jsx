@@ -5573,7 +5573,6 @@ const initAudioEngine = async (explicitTracks = null) => {
           }
           setDraggingNoteEdge(null);
       }
-      dragValuesRef.current = {};
       if (draggingAutoPoint) setDraggingAutoPoint(null);
       if (draggingAutoCurve) setDraggingAutoCurve(null);
       if (draggingFade) {
@@ -5585,6 +5584,7 @@ const initAudioEngine = async (explicitTracks = null) => {
           }
           setDraggingFade(null);
       }
+      dragValuesRef.current = {};
       if (draggingLoop) setDraggingLoop(null);
       if (draggingPlayhead) {
           setDraggingPlayhead(false);
