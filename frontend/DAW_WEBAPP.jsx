@@ -478,6 +478,34 @@ const applyOfflineFade = (clipGain, startTimeSec, durationBeats, bpm, fadeIn, fa
     }
 };
 
+const buildMasterFxChain = async (effects, ctx, summingBus, finalGain, fxRefObject) => {
+    if (!ctx || !summingBus || !finalGain) return;
+    summingBus.disconnect();
+    if (fxRefObject && fxRefObject.current) {
+        Object.values(fxRefObject.current).forEach(nodeObj => {
+            const safeDisconnect = (item) => {
+                if (!item) return;
+                if (typeof item.disconnect === 'function') { try { item.disconnect(); } catch(e){} }
+                else if (Array.isArray(item)) item.forEach(safeDisconnect);
+                else if (typeof item === 'object') Object.values(item).forEach(safeDisconnect);
+            };
+            safeDisconnect(nodeObj);
+        });
+    }
+    let currentOutput = summingBus;
+    const newFxNodes = {};
+    for (const fx of effects) {
+        const nodeObj = await createFXNode(ctx, fx);
+        if (nodeObj) {
+            currentOutput.connect(nodeObj.input);
+            currentOutput = nodeObj.output;
+            newFxNodes[fx.id] = nodeObj;
+        }
+    }
+    currentOutput.connect(finalGain);
+    if (fxRefObject) fxRefObject.current = newFxNodes;
+};
+
 const getParamConstraints = (param) => {
     if (!param) return { min: 0, max: 1, step: 0.01 };
     const p = String(param).toLowerCase();
@@ -1273,7 +1301,7 @@ const createFXNode = async (ctx, fx) => {
 };
 
 // --- Custom Canvas EQ Node Visualizer ---
-const ParametricEqVisualizer = React.memo(({ trackId, fxId, params, onParamChange, synthsRef, audioCtxRef }) => {
+const ParametricEqVisualizer = React.memo(({ trackId, fxId, params, onParamChange, synthsRef, audioCtxRef, masterFxNodesRef }) => {
     const canvasRef = useRef(null);
     const eqCurveRef = useRef(new Float32Array(300)); 
 
@@ -1317,8 +1345,7 @@ const ParametricEqVisualizer = React.memo(({ trackId, fxId, params, onParamChang
             const width = canvas.width;
             const height = canvas.height;
 
-            const synth = synthsRef.current[trackId];
-            const fxNode = synth?.fxNodes[fxId];
+            const fxNode = trackId === 'master' ? masterFxNodesRef?.current[fxId] : synthsRef.current[trackId]?.fxNodes[fxId];
             
             ctx.clearRect(0, 0, width, height);
             
@@ -1594,7 +1621,7 @@ const disconnectTrackRouting = (synth) => {
     }
 };
 
-const initTrackRouting = async (track, ctx, masterGain) => {
+const initTrackRouting = async (track, ctx, masterSummingBus) => {
   const inputBus = ctx.createGain(), faderGain = ctx.createGain(), panner = ctx.createStereoPanner ? ctx.createStereoPanner() : ctx.createPanner();
   if (panner.pan) panner.pan.value = (track.pan || 0) / 50; 
   faderGain.gain.value = track.volume / 100;
@@ -1611,7 +1638,7 @@ const initTrackRouting = async (track, ctx, masterGain) => {
       if (nodeObj) { currentOutput.connect(nodeObj.input); currentOutput = nodeObj.output; fxNodes[fx.id] = nodeObj; }
   }
   }
-  currentOutput.connect(panner); panner.connect(faderGain); faderGain.connect(masterGain);
+  currentOutput.connect(panner); panner.connect(faderGain); faderGain.connect(masterSummingBus);
 
   const splitter = ctx.createChannelSplitter(2);
   const analyserL = ctx.createAnalyser();
@@ -2091,6 +2118,7 @@ function DAWStudio() {
   const [toasts, setToasts] = useState([]);
   const [isProcessingAudio, setIsProcessingAudio] = useState(false);
   const [lfos, setLfos] = useState([]);
+  const [masterEffects, setMasterEffects] = useState([]);
   
   const [loopRegion, setLoopRegion] = useState({ start: 0, end: 8, enabled: false });
   const [draggingLoop, setDraggingLoop] = useState(null);
@@ -2158,8 +2186,10 @@ function DAWStudio() {
   const lastRafTimeRef = useRef(performance.now());
 
   const audioCtxRef = useRef(null);
+  const masterSummingBusRef = useRef(null);
   const masterGainRef = useRef(null);
   const masterAnalyserRef = useRef(null);
+  const masterFxNodesRef = useRef({});
   const synthsRef = useRef({});
   const lastTimeRef = useRef(0);
   
@@ -2194,6 +2224,7 @@ function DAWStudio() {
   const isInitialMount = useRef(true);
   const lastEmitRef = useRef(0);
   const lfosRef = useRef(lfos);
+  const masterEffectsRef = useRef(masterEffects);
   const lastAutoUiUpdateRef = useRef(0);
   
   // NEW REFS FOR PERFORMANCE FIX
@@ -2332,6 +2363,7 @@ function DAWStudio() {
   useEffect(() => { snapGridRef.current = snapGrid; }, [snapGrid]);
   useEffect(() => { isMetronomeEnabledRef.current = isMetronomeEnabled; }, [isMetronomeEnabled]);
   useEffect(() => { lfosRef.current = lfos; }, [lfos]);
+  useEffect(() => { masterEffectsRef.current = masterEffects; }, [masterEffects]);
   useEffect(() => { 
     stateRefs.current.isPlaying = isPlaying; 
     stateRefs.current.isRecording = isRecording;
@@ -2521,7 +2553,7 @@ function DAWStudio() {
             });
             for (const track of newTracks) {
                 disconnectTrackRouting(synthsRef.current[track.id]);
-                synthsRef.current[track.id] = await initTrackRouting(track, audioCtxRef.current, masterGainRef.current);
+                synthsRef.current[track.id] = await initTrackRouting(track, audioCtxRef.current, masterSummingBusRef.current);
             }
         } finally {
             setIsProcessingAudio(false);
@@ -2565,6 +2597,7 @@ function DAWStudio() {
               name: finalName, 
               tracks: tracksRef.current, 
               lfos: lfosRef.current || [],
+              masterEffects: masterEffectsRef.current || [],
               bpm: stateRefs.current.bpm, 
               lastModified: Date.now(),
               ownerId: projectOwnerId || currentUser?.id,
@@ -2611,7 +2644,7 @@ function DAWStudio() {
 
   const loadProjectToDaw = async (p) => {
       setIsProcessingAudio(true);
-      setProjectId(p.id); setProjectName(p.name); setProjectOwnerId(p.ownerId || null); setProjectOwnerName(p.ownerName || ''); setTracks(p.tracks || []); setLfos(p.lfos || []); setBpm(p.bpm || 120); setSharedWith(p.sharedWith || []); setIsPublic(p.isPublic || false); setAppView('daw');
+      setProjectId(p.id); setProjectName(p.name); setProjectOwnerId(p.ownerId || null); setProjectOwnerName(p.ownerName || ''); setTracks(p.tracks || []); setLfos(p.lfos || []); setMasterEffects(p.masterEffects || []); setBpm(p.bpm || 120); setSharedWith(p.sharedWith || []); setIsPublic(p.isPublic || false); setAppView('daw');
       
       // Let React render the DAW + loading spinner before locking the thread with audio
       await new Promise(r => setTimeout(r, 100)); 
@@ -2641,6 +2674,7 @@ const initAudioEngine = async (explicitTracks = null) => {
         console.warn("AudioWorklet fallback to main thread standard nodes.");
     }
 
+    if (!masterSummingBusRef.current) masterSummingBusRef.current = audioCtxRef.current.createGain();
     masterGainRef.current = audioCtxRef.current.createGain();
       masterGainRef.current.gain.value = masterVolume / 100;
       masterGainRef.current.connect(audioCtxRef.current.destination);
@@ -2659,10 +2693,12 @@ const initAudioEngine = async (explicitTracks = null) => {
     if (audioCtxRef.current.state === 'suspended') await audioCtxRef.current.resume();
 
     
+    await buildMasterFxChain(masterEffectsRef.current, audioCtxRef.current, masterSummingBusRef.current, masterGainRef.current, masterFxNodesRef);
+
     const targetTracks = explicitTracks || tracksRef.current;
     for (const track of targetTracks) {
       if (!synthsRef.current[track.id]) {
-          synthsRef.current[track.id] = await initTrackRouting(track, audioCtxRef.current, masterGainRef.current);
+          synthsRef.current[track.id] = await initTrackRouting(track, audioCtxRef.current, masterSummingBusRef.current);
           await new Promise(r => setTimeout(r, 20)); // Yield to prevent browser freeze during initialization
       }
     }
@@ -2941,9 +2977,20 @@ const initAudioEngine = async (explicitTracks = null) => {
           const sampleRate = 44100;
           const offlineCtx = new (window.OfflineAudioContext || window.webkitOfflineAudioContext)(2, sampleRate * durationSec, sampleRate);
           
+          const masterOfflineSummingBus = offlineCtx.createGain();
           const masterOfflineGain = offlineCtx.createGain();
           masterOfflineGain.gain.value = masterVolume / 100;
           masterOfflineGain.connect(offlineCtx.destination);
+          
+          let currentMasterOut = masterOfflineSummingBus;
+          for (const fx of masterEffectsRef.current) {
+              const nodeObj = await createFXNode(offlineCtx, fx);
+              if (nodeObj) {
+                  currentMasterOut.connect(nodeObj.input);
+                  currentMasterOut = nodeObj.output;
+              }
+          }
+          currentMasterOut.connect(masterOfflineGain);
 
           const anySolo = tracksRef.current.some(t => t.solo);
           
@@ -2951,7 +2998,7 @@ const initAudioEngine = async (explicitTracks = null) => {
               const isMuted = track.muted || (anySolo && !track.solo);
               if (isMuted) continue;
 
-              const synth = await initTrackRouting(track, offlineCtx, masterOfflineGain);
+              const synth = await initTrackRouting(track, offlineCtx, masterOfflineSummingBus);
 
               track.clips.forEach(clip => {
                   const startTimeSec = clip.start * (60 / stateRefs.current.bpm);
@@ -3753,10 +3800,21 @@ const initAudioEngine = async (explicitTracks = null) => {
   const applyAudioEffectParam = (trackId, fxId, param, val, time = null) => {
       const numVal = Number(val);
       if (isNaN(numVal)) return; // Protect against NaN crashes mapping to Web Audio
-      const synth = synthsRef.current[trackId];
-      if (!synth || !synth.fxNodes[fxId]) return;
-      const nodeObj = synth.fxNodes[fxId];
       const now = time !== null ? time : (audioCtxRef.current?.currentTime || 0);
+
+      let nodeObj;
+      let fxDef;
+      if (trackId === 'master') {
+          nodeObj = masterFxNodesRef.current[fxId];
+          fxDef = masterEffectsRef.current.find(f => f.id === fxId);
+      } else {
+          const synth = synthsRef.current[trackId];
+          if (!synth || !synth.fxNodes[fxId]) return;
+          nodeObj = synth.fxNodes[fxId];
+          fxDef = tracksRef.current.find(t => t.id === trackId)?.effects?.find(f => f.id === fxId);
+      }
+      
+      if (!nodeObj) return;
 
       if (nodeObj.fxType === 'custom') {
           if (typeof nodeObj.updateParam === 'function') {
@@ -3771,8 +3829,8 @@ const initAudioEngine = async (explicitTracks = null) => {
       if (param === 'cutoff' && nodeObj.filter) nodeObj.filter.frequency.setTargetAtTime(numVal, now, 0.05);
       if (param === 'mix') { nodeObj.wet.gain.setTargetAtTime(numVal, now, 0.05); nodeObj.dry.gain.setTargetAtTime(1-numVal, now, 0.05); }
   } else if (nodeObj.fxType === 'reverb') {
-      if (param === 'decay') {
-          getReverbIR(audioCtxRef.current, synth.fxNodes[fxId].type, numVal).then(buffer => {
+      if (param === 'decay' && fxDef) {
+          getReverbIR(audioCtxRef.current, fxDef.type, numVal).then(buffer => {
               if (nodeObj.conv) nodeObj.conv.buffer = buffer;
           });
       }
@@ -3853,15 +3911,24 @@ const initAudioEngine = async (explicitTracks = null) => {
     setIsProcessingAudio(true);
     await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))); // Force loader paint
     
+    if (trackId === 'master') {
+        dispatchDawAction({ type: 'ADD_EFFECT', payload: { trackId, effect: newFx } });
+        if (audioCtxRef.current) {
+            try { await buildMasterFxChain([...masterEffectsRef.current, newFx], audioCtxRef.current, masterSummingBusRef.current, masterGainRef.current, masterFxNodesRef); } 
+            finally { setIsProcessingAudio(false); }
+        } else { setIsProcessingAudio(false); }
+        return;
+    }
+
     dispatchDawAction({ type: 'ADD_EFFECT', payload: { trackId, effect: newFx } });
     const updatedTrack = { ...tracksRef.current.find(t => t.id === trackId) };
     
-    if (updatedTrack) {
+    if (updatedTrack && updatedTrack.id) {
         updatedTrack.effects = [...(updatedTrack.effects || []), newFx];
         if (audioCtxRef.current) {
             try {
                 disconnectTrackRouting(synthsRef.current[trackId]);
-                synthsRef.current[trackId] = await initTrackRouting(updatedTrack, audioCtxRef.current, masterGainRef.current);
+                synthsRef.current[trackId] = await initTrackRouting(updatedTrack, audioCtxRef.current, masterSummingBusRef.current);
             } finally {
                 setIsProcessingAudio(false);
             }
@@ -3877,15 +3944,24 @@ const initAudioEngine = async (explicitTracks = null) => {
     setIsProcessingAudio(true);
     await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
     
+    if (trackId === 'master') {
+        dispatchDawAction({ type: 'DELETE_EFFECT', payload: { trackId, fxId } });
+        if (audioCtxRef.current) {
+            try { await buildMasterFxChain(masterEffectsRef.current.filter(fx => fx.id !== fxId), audioCtxRef.current, masterSummingBusRef.current, masterGainRef.current, masterFxNodesRef); } 
+            finally { setIsProcessingAudio(false); }
+        } else { setIsProcessingAudio(false); }
+        return;
+    }
+
     dispatchDawAction({ type: 'DELETE_EFFECT', payload: { trackId, fxId } });
     const updatedTrack = { ...tracksRef.current.find(t => t.id === trackId) };
     
-    if (updatedTrack) {
+    if (updatedTrack && updatedTrack.id) {
         updatedTrack.effects = updatedTrack.effects.filter(fx => fx.id !== fxId);
         if (audioCtxRef.current) {
             try {
                 disconnectTrackRouting(synthsRef.current[trackId]);
-                synthsRef.current[trackId] = await initTrackRouting(updatedTrack, audioCtxRef.current, masterGainRef.current);
+                synthsRef.current[trackId] = await initTrackRouting(updatedTrack, audioCtxRef.current, masterSummingBusRef.current);
             } finally {
                 setIsProcessingAudio(false);
             }
@@ -3903,6 +3979,20 @@ const initAudioEngine = async (explicitTracks = null) => {
     setIsProcessingAudio(true);
     await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
     
+    if (trackId === 'master') {
+        dispatchDawAction({ type: 'REORDER_EFFECTS', payload: { trackId, startIndex, endIndex } });
+        if (audioCtxRef.current) {
+            try {
+                const newEffects = [...masterEffectsRef.current];
+                const temp = newEffects[startIndex];
+                newEffects[startIndex] = newEffects[endIndex];
+                newEffects[endIndex] = temp;
+                await buildMasterFxChain(newEffects, audioCtxRef.current, masterSummingBusRef.current, masterGainRef.current, masterFxNodesRef);
+            } finally { setIsProcessingAudio(false); }
+        } else { setIsProcessingAudio(false); }
+        return;
+    }
+
     dispatchDawAction({ type: 'REORDER_EFFECTS', payload: { trackId, startIndex, endIndex } });
     const updatedTrack = { ...tracksRef.current.find(t => t.id === trackId) };
     
@@ -3914,7 +4004,7 @@ const initAudioEngine = async (explicitTracks = null) => {
         if (audioCtxRef.current) {
             try {
                 disconnectTrackRouting(synthsRef.current[trackId]);
-                synthsRef.current[trackId] = await initTrackRouting(updatedTrack, audioCtxRef.current, masterGainRef.current);
+                synthsRef.current[trackId] = await initTrackRouting(updatedTrack, audioCtxRef.current, masterSummingBusRef.current);
             } finally {
                 setIsProcessingAudio(false);
             }
@@ -4960,6 +5050,7 @@ const initAudioEngine = async (explicitTracks = null) => {
               if(!isLocal) { 
                   setTracks(action.payload.tracks); 
                   if (action.payload.lfos) setLfos(action.payload.lfos);
+                  if (action.payload.masterEffects) setMasterEffects(action.payload.masterEffects);
                   setBpm(action.payload.bpm); 
                   if (audioCtxRef.current) {
                       setIsProcessingAudio(true);
@@ -5190,79 +5281,143 @@ const initAudioEngine = async (explicitTracks = null) => {
               break;
           }
           case 'ADD_EFFECT': 
-              setTracks(prev => prev.map(t => t.id === action.payload.trackId ? { ...t, effects: [...t.effects, action.payload.effect] } : t)); 
-              if (!isLocal && audioCtxRef.current) {
-                  const updatedTrack = { ...tracksRef.current.find(t => t.id === action.payload.trackId), effects: [...tracksRef.current.find(t => t.id === action.payload.trackId).effects, action.payload.effect] };
-                  setIsProcessingAudio(true);
-                  setTimeout(async () => {
-                      disconnectTrackRouting(synthsRef.current[action.payload.trackId]);
-                      synthsRef.current[action.payload.trackId] = await initTrackRouting(updatedTrack, audioCtxRef.current, masterGainRef.current);
-                      setIsProcessingAudio(false);
-                  }, 50);
+              if (action.payload.trackId === 'master') {
+                  setMasterEffects(prev => [...prev, action.payload.effect]);
+                  if (!isLocal && audioCtxRef.current) {
+                      setIsProcessingAudio(true);
+                      setTimeout(async () => {
+                          await buildMasterFxChain([...masterEffectsRef.current, action.payload.effect], audioCtxRef.current, masterSummingBusRef.current, masterGainRef.current, masterFxNodesRef);
+                          setIsProcessingAudio(false);
+                      }, 50);
+                  }
+              } else {
+                  setTracks(prev => prev.map(t => t.id === action.payload.trackId ? { ...t, effects: [...t.effects, action.payload.effect] } : t)); 
+                  if (!isLocal && audioCtxRef.current) {
+                      const updatedTrack = { ...tracksRef.current.find(t => t.id === action.payload.trackId), effects: [...tracksRef.current.find(t => t.id === action.payload.trackId).effects, action.payload.effect] };
+                      setIsProcessingAudio(true);
+                      setTimeout(async () => {
+                          disconnectTrackRouting(synthsRef.current[action.payload.trackId]);
+                          synthsRef.current[action.payload.trackId] = await initTrackRouting(updatedTrack, audioCtxRef.current, masterSummingBusRef.current);
+                          setIsProcessingAudio(false);
+                      }, 50);
+                  }
               }
               break;
           case 'TOGGLE_EFFECT_BYPASS': 
-              setTracks(prev => prev.map(t => t.id === action.payload.trackId ? { 
-                  ...t, effects: t.effects.map(fx => {
+              if (action.payload.trackId === 'master') {
+                  setMasterEffects(prev => prev.map(fx => {
                       if (fx.id === action.payload.fxId) {
                           const nextBypass = !fx.bypassed;
-                          const synth = synthsRef.current[action.payload.trackId];
-                          if (synth && synth.fxNodes[action.payload.fxId]) {
-                              const nodeObj = synth.fxNodes[action.payload.fxId];
-                              if (nodeObj.wet && nodeObj.dry) {
-                                  const mixVal = nextBypass ? 0 : (fx.params?.mix ?? 0.5);
-                                  const now = audioCtxRef.current?.currentTime || 0;
-                                  nodeObj.wet.gain.setTargetAtTime(mixVal, now, 0.05);
-                                  nodeObj.dry.gain.setTargetAtTime(1 - mixVal, now, 0.05);
-                              }
+                          const nodeObj = masterFxNodesRef.current[action.payload.fxId];
+                          if (nodeObj && nodeObj.wet && nodeObj.dry) {
+                              const mixVal = nextBypass ? 0 : (fx.params?.mix ?? 0.5);
+                              const now = audioCtxRef.current?.currentTime || 0;
+                              nodeObj.wet.gain.setTargetAtTime(mixVal, now, 0.05);
+                              nodeObj.dry.gain.setTargetAtTime(1 - mixVal, now, 0.05);
                           }
                           return { ...fx, bypassed: nextBypass };
                       }
                       return fx;
-                  })
-              } : t)); 
+                  }));
+              } else {
+                  setTracks(prev => prev.map(t => t.id === action.payload.trackId ? { 
+                      ...t, effects: t.effects.map(fx => {
+                          if (fx.id === action.payload.fxId) {
+                              const nextBypass = !fx.bypassed;
+                              const synth = synthsRef.current[action.payload.trackId];
+                              if (synth && synth.fxNodes[action.payload.fxId]) {
+                                  const nodeObj = synth.fxNodes[action.payload.fxId];
+                                  if (nodeObj.wet && nodeObj.dry) {
+                                      const mixVal = nextBypass ? 0 : (fx.params?.mix ?? 0.5);
+                                      const now = audioCtxRef.current?.currentTime || 0;
+                                      nodeObj.wet.gain.setTargetAtTime(mixVal, now, 0.05);
+                                      nodeObj.dry.gain.setTargetAtTime(1 - mixVal, now, 0.05);
+                                  }
+                              }
+                              return { ...fx, bypassed: nextBypass };
+                          }
+                          return fx;
+                      })
+                  } : t)); 
+              }
               break;
           case 'DELETE_EFFECT': 
-              setTracks(prev => prev.map(t => t.id === action.payload.trackId ? { ...t, effects: t.effects.filter(fx => fx.id !== action.payload.fxId) } : t)); 
-              if (!isLocal && audioCtxRef.current) {
-                  const updatedTrack = { ...tracksRef.current.find(t => t.id === action.payload.trackId) };
-                  updatedTrack.effects = updatedTrack.effects.filter(fx => fx.id !== action.payload.fxId);
-                  setIsProcessingAudio(true);
-                  setTimeout(async () => {
-                      disconnectTrackRouting(synthsRef.current[action.payload.trackId]);
-                      synthsRef.current[action.payload.trackId] = await initTrackRouting(updatedTrack, audioCtxRef.current, masterGainRef.current);
-                      setIsProcessingAudio(false);
-                  }, 50);
+              if (action.payload.trackId === 'master') {
+                  setMasterEffects(prev => prev.filter(fx => fx.id !== action.payload.fxId));
+                  if (!isLocal && audioCtxRef.current) {
+                      setIsProcessingAudio(true);
+                      setTimeout(async () => {
+                          await buildMasterFxChain(masterEffectsRef.current.filter(fx => fx.id !== action.payload.fxId), audioCtxRef.current, masterSummingBusRef.current, masterGainRef.current, masterFxNodesRef);
+                          setIsProcessingAudio(false);
+                      }, 50);
+                  }
+              } else {
+                  setTracks(prev => prev.map(t => t.id === action.payload.trackId ? { ...t, effects: t.effects.filter(fx => fx.id !== action.payload.fxId) } : t)); 
+                  if (!isLocal && audioCtxRef.current) {
+                      const updatedTrack = { ...tracksRef.current.find(t => t.id === action.payload.trackId) };
+                      updatedTrack.effects = updatedTrack.effects.filter(fx => fx.id !== action.payload.fxId);
+                      setIsProcessingAudio(true);
+                      setTimeout(async () => {
+                          disconnectTrackRouting(synthsRef.current[action.payload.trackId]);
+                          synthsRef.current[action.payload.trackId] = await initTrackRouting(updatedTrack, audioCtxRef.current, masterSummingBusRef.current);
+                          setIsProcessingAudio(false);
+                      }, 50);
+                  }
               }
               break;
           case 'UPDATE_EFFECT_PARAM': 
-              setTracks(prev => prev.map(t => t.id === action.payload.trackId ? { ...t, effects: t.effects.map(fx => fx.id === action.payload.fxId ? { ...fx, params: { ...fx.params, [action.payload.param]: action.payload.value } } : fx) } : t)); 
+              if (action.payload.trackId === 'master') {
+                  setMasterEffects(prev => prev.map(fx => fx.id === action.payload.fxId ? { ...fx, params: { ...fx.params, [action.payload.param]: action.payload.value } } : fx));
+              } else {
+                  setTracks(prev => prev.map(t => t.id === action.payload.trackId ? { ...t, effects: t.effects.map(fx => fx.id === action.payload.fxId ? { ...fx, params: { ...fx.params, [action.payload.param]: action.payload.value } } : fx) } : t)); 
+              }
               applyAudioEffectParam(action.payload.trackId, action.payload.fxId, action.payload.param, action.payload.value);
               break;
           case 'REORDER_EFFECTS': {
               const { trackId, startIndex, endIndex } = action.payload;
-              setTracks(prev => prev.map(t => {
-                  if (t.id !== trackId) return t;
-                  const newEffects = [...t.effects];
-                  const temp = newEffects[startIndex];
-                  newEffects[startIndex] = newEffects[endIndex];
-                  newEffects[endIndex] = temp;
-                  return { ...t, effects: newEffects };
-              }));
-              if (!isLocal && audioCtxRef.current) {
-                  const updatedTrack = { ...tracksRef.current.find(t => t.id === trackId) };
-                  if (updatedTrack && updatedTrack.effects) {
-                      const newEffects = [...updatedTrack.effects];
+              if (trackId === 'master') {
+                  setMasterEffects(prev => {
+                      const newEffects = [...prev];
                       const temp = newEffects[startIndex];
                       newEffects[startIndex] = newEffects[endIndex];
                       newEffects[endIndex] = temp;
-                      updatedTrack.effects = newEffects;
+                      return newEffects;
+                  });
+                  if (!isLocal && audioCtxRef.current) {
                       setIsProcessingAudio(true);
                       setTimeout(async () => {
-                          disconnectTrackRouting(synthsRef.current[trackId]);
-                          synthsRef.current[trackId] = await initTrackRouting(updatedTrack, audioCtxRef.current, masterGainRef.current);
+                          const newEffects = [...masterEffectsRef.current];
+                          const temp = newEffects[startIndex];
+                          newEffects[startIndex] = newEffects[endIndex];
+                          newEffects[endIndex] = temp;
+                          await buildMasterFxChain(newEffects, audioCtxRef.current, masterSummingBusRef.current, masterGainRef.current, masterFxNodesRef);
                           setIsProcessingAudio(false);
                       }, 50);
+                  }
+              } else {
+                  setTracks(prev => prev.map(t => {
+                      if (t.id !== trackId) return t;
+                      const newEffects = [...t.effects];
+                      const temp = newEffects[startIndex];
+                      newEffects[startIndex] = newEffects[endIndex];
+                      newEffects[endIndex] = temp;
+                      return { ...t, effects: newEffects };
+                  }));
+                  if (!isLocal && audioCtxRef.current) {
+                      const updatedTrack = { ...tracksRef.current.find(t => t.id === trackId) };
+                      if (updatedTrack && updatedTrack.effects) {
+                          const newEffects = [...updatedTrack.effects];
+                          const temp = newEffects[startIndex];
+                          newEffects[startIndex] = newEffects[endIndex];
+                          newEffects[endIndex] = temp;
+                          updatedTrack.effects = newEffects;
+                          setIsProcessingAudio(true);
+                          setTimeout(async () => {
+                              disconnectTrackRouting(synthsRef.current[trackId]);
+                              synthsRef.current[trackId] = await initTrackRouting(updatedTrack, audioCtxRef.current, masterSummingBusRef.current);
+                              setIsProcessingAudio(false);
+                          }, 50);
+                      }
                   }
               }
               break;
@@ -6281,7 +6436,12 @@ const initAudioEngine = async (explicitTracks = null) => {
              <div className="w-28 bg-[#3a3a3a] border border-[#111] rounded-sm flex flex-col items-center py-3 shrink-0 relative shadow-md ml-auto">
                   <div className="w-2 h-2 rounded-sm mb-1.5 bg-[#ff5a5a] border border-[#111]" />
                   <span className="text-[10px] font-bold text-[#e0e0e0] uppercase tracking-wider truncate w-full text-center px-1">MASTER</span>
-                  <div className="flex-1 w-full flex justify-center py-3 relative mt-8 min-h-[180px]" onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'master_vol' })}>
+                  
+                  <div className="flex gap-1 mt-3">
+                      <button onClick={(e) => { e.stopPropagation(); setBottomDock(bottomDock?.trackId === 'master' && bottomDock?.type === 'devices' ? null : { type: 'devices', trackId: 'master' }); }} className={`w-6 h-6 flex items-center justify-center rounded-sm transition-colors border ${bottomDock?.trackId === 'master' && bottomDock?.type === 'devices' ? 'bg-cyan-500 text-black border-cyan-500' : 'bg-[#222] text-[#888] border-[#111] hover:bg-[#444]'}`} title="Master Effects Rack"><Plug size={12}/></button>
+                  </div>
+
+                  <div className="flex-1 w-full flex justify-center py-3 relative mt-2 min-h-[180px]" onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'master_vol' })}>
                      <div className="flex justify-center gap-1.5 h-full w-full pointer-events-none">
                          <div className="w-1.5 bg-[#111] rounded-sm h-full relative">
                             <div className="absolute bottom-0 w-full rounded-sm bg-[#ff5a5a] opacity-90" style={{ height: `${masterVolume}%` }} />
@@ -6964,21 +7124,32 @@ const initAudioEngine = async (explicitTracks = null) => {
             
             {/* Device Rack (Effects Dock) */}
             {bottomDock?.type === 'devices' && (() => {
-                const track = tracks.find(t => t.id === bottomDock.trackId);
-                if (!track) return null;
+                let track, trackName, trackType, effects;
+                if (bottomDock.trackId === 'master') {
+                    trackName = 'Master Bus';
+                    trackType = 'master';
+                    effects = masterEffects;
+                } else {
+                    track = tracks.find(t => t.id === bottomDock.trackId);
+                    if (!track) return null;
+                    trackName = track.name;
+                    trackType = track.type;
+                    effects = track.effects;
+                }
+
                 return (
                 <div style={{ height: dockHeight }} className="bg-[#333333] border-t border-[#111111] flex flex-col shrink-0 z-30 relative">
                     <div className="absolute top-0 left-0 right-0 h-1.5 -translate-y-1/2 cursor-ns-resize hover:bg-cyan-500 z-50 transition-colors" onMouseDown={() => setDraggingDockHeight(true)} />
                     <div className="h-6 bg-[#444444] flex justify-between items-center px-4 border-b border-[#222222] shrink-0">
                         <div className="flex items-center gap-2">
-                           <span className="text-[10px] font-bold text-[#b3b3b3] uppercase">{track.name}</span>
+                           <span className={`text-[10px] font-bold uppercase tracking-wider ${trackType === 'master' ? 'text-[#ff5a5a]' : 'text-[#b3b3b3]'}`}>{trackName}</span>
                         </div>
                         <button onClick={() => setBottomDock(null)} className="text-[#888] hover:text-white transition-colors"><X size={12}/></button>
                     </div>
                     <div className="flex-1 flex overflow-x-auto p-2 gap-2 items-start bg-[#333333] custom-scrollbar pb-6">
                         
                         {/* Audio Track specific Input block */}
-                        {track.type === 'audio' && (
+                        {trackType === 'audio' && (
                             <div className="min-w-[12rem] h-max bg-[#444] border border-[#222] rounded-sm p-3 flex flex-col shrink-0 relative">
                                 <div className="flex items-center gap-2 mb-3 border-b border-[#222] pb-2">
                                     <span className="text-[10px] font-bold text-[#b3b3b3] uppercase tracking-wider">Audio Input</span>
@@ -6999,7 +7170,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                         )}
 
                         {/* Instrument Selector & Controls for MIDI Tracks */}
-                        {track.type === 'midi' && (
+                        {trackType === 'midi' && (
                             <div className="min-w-[16rem] max-w-md w-max h-max bg-[#444] border border-[#222] rounded-sm p-3 flex flex-col shrink-0 relative">
                                 <div className="flex items-center gap-2 mb-3 border-b border-[#222] pb-2 shrink-0">
                                     <span className="text-[10px] font-bold text-[#b3b3b3] uppercase tracking-wider">Instrument</span>
@@ -7126,7 +7297,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                             </div>
                         )}
 
-                        {track.effects.map((fx, index) => (
+                        {effects.map((fx, index) => (
                             <div 
                                 key={fx.id} 
                                 draggable
@@ -7151,7 +7322,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                                     
                                     const srcIdx = dragValuesRef.current.draggedFxIndex;
                                     if (srcIdx !== undefined && srcIdx !== null && srcIdx !== index) {
-                                        reorderEffects(track.id, srcIdx, index);
+                                        reorderEffects(bottomDock.trackId, srcIdx, index);
                                     }
                                     
                                     dragValuesRef.current.draggedFxIndex = null;
@@ -7163,14 +7334,14 @@ const initAudioEngine = async (explicitTracks = null) => {
                                     setDraggedFxIndex(null); 
                                     setDragOverFxIndex(null); 
                                 }}
-                                onContextMenu={(e) => handleContextMenu(e, 'effect', { trackId: track.id, fxId: fx.id })} 
+                                onContextMenu={(e) => handleContextMenu(e, 'effect', { trackId: bottomDock.trackId, fxId: fx.id })} 
                                 // Added [&_*]:pointer-events-none to prevent child knobs from stealing drag events!
                                 className={`min-w-[12rem] max-w-lg w-max h-max bg-[#444] border rounded-sm p-3 flex flex-col shrink-0 relative group transition-all duration-100 cursor-grab active:cursor-grabbing ${draggedFxIndex === index ? 'opacity-40 border-[#222]' : dragOverFxIndex === index && draggedFxIndex !== null ? 'border-cyan-500 bg-[#555] z-10' : 'border-[#222]'} ${draggedFxIndex !== null ? '[&_*]:pointer-events-none' : ''}`}
                             >
                                 <div className="flex justify-between items-center mb-3 border-b border-[#222] pb-2 shrink-0">
                                    <div className="flex items-center gap-2">
                                       <button 
-                                          onClick={() => dispatchDawAction({ type: 'TOGGLE_EFFECT_BYPASS', payload: { trackId: track.id, fxId: fx.id }})}
+                                          onClick={() => dispatchDawAction({ type: 'TOGGLE_EFFECT_BYPASS', payload: { trackId: bottomDock.trackId, fxId: fx.id }})}
                                           onMouseEnter={() => setHoverInfo(`Toggle Device On/Off: Bypass ${fx.name}`)}
                                           onMouseLeave={() => setHoverInfo("Welcome to FreeDaw Live.")}
                                           className={`w-3.5 h-3.5 rounded-sm flex items-center justify-center transition-colors ${fx.bypassed ? 'bg-[#333] text-[#888]' : 'bg-amber-500 text-black shadow-[0_0_8px_rgba(245,158,11,0.5)]'}`}
@@ -7179,30 +7350,30 @@ const initAudioEngine = async (explicitTracks = null) => {
                                       </button>
                                       <span className={`text-[10px] font-bold whitespace-nowrap uppercase tracking-wider transition-colors ${fx.bypassed ? 'text-[#888]' : 'text-[#e0e0e0]'}`}>{fx.name}</span>
                                    </div>
-                                   <button onClick={() => deleteEffect(track.id, fx.id)} className="text-[#888] hover:text-[#f87171] opacity-0 group-hover:opacity-100 transition-opacity ml-4"><X size={12}/></button>
+                                   <button onClick={() => deleteEffect(bottomDock.trackId, fx.id)} className="text-[#888] hover:text-[#f87171] opacity-0 group-hover:opacity-100 transition-opacity ml-4"><X size={12}/></button>
                                 </div>
-                                {fx.type === 'parametric-eq' && <ParametricEqVisualizer trackId={track.id} fxId={fx.id} params={fx.params} onParamChange={(p, v) => handleEffectParamChange(track.id, fx.id, p, v)} synthsRef={synthsRef} audioCtxRef={audioCtxRef} />}
+                                {fx.type === 'parametric-eq' && <ParametricEqVisualizer trackId={bottomDock.trackId} fxId={fx.id} params={fx.params} onParamChange={(p, v) => handleEffectParamChange(bottomDock.trackId, fx.id, p, v)} synthsRef={synthsRef} audioCtxRef={audioCtxRef} masterFxNodesRef={masterFxNodesRef} />}
                                 <div className="flex-1 flex flex-wrap gap-x-6 gap-y-4 overflow-y-auto custom-scrollbar pt-2 pr-2 content-start">
                                    {Object.keys(fx.params || {}).map(param => {
                                      const constraints = getParamConstraints(param);
-                                     const mappedRange = getMappedRangeForKnob(track.id, fx.id, param);
-                                     const lfoMappedRange = getLfoMappedRangeForKnob(track.id, fx.id, param);
+                                     const mappedRange = getMappedRangeForKnob(bottomDock.trackId, fx.id, param);
+                                     const lfoMappedRange = getLfoMappedRangeForKnob(bottomDock.trackId, fx.id, param);
                                      return (
                                         <Knob 
                                             key={param}
-                                            id={`fx-${track.id}-${fx.id}-${param}`}
+                                            id={`fx-${bottomDock.trackId}-${fx.id}-${param}`}
                                             param={param} 
                                             value={fx.params[param]} 
                                             min={constraints.min} 
                                             max={constraints.max} 
                                             step={constraints.step} 
                                             isLog={constraints.isLog}
-                                            onChange={(p, v) => handleEffectParamChange(track.id, fx.id, p, v)} 
-                                            onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'fx_param', trackId: track.id, fxId: fx.id, param: param })}
+                                            onChange={(p, v) => handleEffectParamChange(bottomDock.trackId, fx.id, p, v)} 
+                                            onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'fx_param', trackId: bottomDock.trackId, fxId: fx.id, param: param })}
                                             mappedRange={mappedRange}
-                                            onRangeAdjust={(p, min, max) => handleKnobRangeAdjust(track.id, fx.id, p, min, max)}
+                                            onRangeAdjust={(p, min, max) => handleKnobRangeAdjust(bottomDock.trackId, fx.id, p, min, max)}
                                             lfoMappedRange={lfoMappedRange}
-                                            onLfoRangeAdjust={(p, min, max) => handleLfoKnobRangeAdjust(track.id, fx.id, p, min, max)}
+                                            onLfoRangeAdjust={(p, min, max) => handleLfoKnobRangeAdjust(bottomDock.trackId, fx.id, p, min, max)}
                                         />
                                      );
                                    })}
@@ -7220,7 +7391,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                             >
                                <div className="text-[9px] font-bold text-neutral-500 mb-1 uppercase tracking-wider px-1 mt-1 shrink-0">Engines</div>
                                {[...INTERNAL_PLUGINS, ...customPlugins].filter(p => p.category === 'effect').map(p => (
-                                    <button key={p.id} onClick={() => addEffect(track.id, p)} className="w-full text-[10px] font-bold text-neutral-300 hover:text-white bg-neutral-950 border border-neutral-800 hover:border-blue-500 hover:bg-blue-600/20 px-3 py-2 rounded-lg transition-colors text-left truncate shrink-0">{p.name}</button>
+                                    <button key={p.id} onClick={() => addEffect(bottomDock.trackId, p)} className="w-full text-[10px] font-bold text-neutral-300 hover:text-white bg-neutral-950 border border-neutral-800 hover:border-blue-500 hover:bg-blue-600/20 px-3 py-2 rounded-lg transition-colors text-left truncate shrink-0">{p.name}</button>
                                ))}
                             </div>
                         </div>
