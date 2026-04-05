@@ -2985,9 +2985,10 @@ const initAudioEngine = async (explicitTracks = null) => {
             try { 
                 if (synth.activeSourceGain && audioCtxRef.current) {
                     synth.activeSourceGain.gain.cancelScheduledValues(now);
-                    synth.activeSourceGain.gain.setTargetAtTime(0, now, 0.001);
+                    synth.activeSourceGain.gain.value = 0;
                 }
-                synth.activeSource.stop(now + 0.005); 
+                synth.activeSource.stop(now);
+                synth.activeSource.disconnect();
             } catch(e){}
             synth.activeSource = null;
             synth.activeSourceGain = null;
@@ -3458,10 +3459,10 @@ const initAudioEngine = async (explicitTracks = null) => {
                     try {
                         if (synth.activeSourceGain) {
                             synth.activeSourceGain.gain.cancelScheduledValues(now);
-                            // Extremely fast fade to absolutely eliminate comb-filtering/phasing from overlap
-                            synth.activeSourceGain.gain.setTargetAtTime(0, now, 0.001);
+                            synth.activeSourceGain.gain.value = 0; // Instant cut to prevent phase overlap
                         }
-                        synth.activeSource.stop(now + 0.005);
+                        synth.activeSource.stop(now);
+                        synth.activeSource.disconnect();
                     } catch(e) {}
                 }
 
@@ -3484,9 +3485,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                     const clipTime = newTime - activeClip.start;
                     const targetVol = getFadeVolume(clipTime, activeClip.duration, activeClip.fadeIn || 0, activeClip.fadeOut || 0, activeClip.fadeInCurve || 0, activeClip.fadeOutCurve || 0);
                     
-                    // Anti-click micro-fade (10ms) to smoothly ramp volume up from 0 instead of popping
-                    clipGain.gain.setValueAtTime(0, now);
-                    clipGain.gain.linearRampToValueAtTime(targetVol, now + 0.01);
+                    clipGain.gain.setValueAtTime(targetVol, now); // Instant volume assignment
 
                     source.playbackRate.value = activeClip.playbackRate || 1.0;
                     source.start(now, Math.max(0, secOffset), Math.max(0, secDurationBuffer));
@@ -3506,9 +3505,10 @@ const initAudioEngine = async (explicitTracks = null) => {
                 try { 
                     if (synth.activeSourceGain) {
                         synth.activeSourceGain.gain.cancelScheduledValues(now);
-                        synth.activeSourceGain.gain.setTargetAtTime(0, now, 0.001);
+                        synth.activeSourceGain.gain.value = 0;
                     }
-                    synth.activeSource.stop(now + 0.005); 
+                    synth.activeSource.stop(now); 
+                    synth.activeSource.disconnect();
                 } catch(e){}
                 synth.activeSource = null;
                 synth.activeSourceGain = null;
