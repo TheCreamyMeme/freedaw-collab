@@ -1170,10 +1170,22 @@ const EQNode = React.memo(({ id, freq = 1000, gain = 0, color, onParamChange }) 
 const createFXNode = async (ctx, fx) => {
     const nodeObj = await _createFXNode(ctx, fx);
     if (nodeObj && nodeObj.output) {
-        const levelAnalyser = ctx.createAnalyser();
-        levelAnalyser.fftSize = 256;
-        nodeObj.output.connect(levelAnalyser);
-        nodeObj.levelAnalyser = levelAnalyser;
+        // Force Web Audio to upmix any mono signal to stereo before splitting
+        nodeObj.output.channelCount = 2;
+        nodeObj.output.channelCountMode = 'explicit';
+        nodeObj.output.channelInterpretation = 'speakers';
+
+        const splitter = ctx.createChannelSplitter(2);
+        const analyserL = ctx.createAnalyser();
+        const analyserR = ctx.createAnalyser();
+        analyserL.fftSize = 256;
+        analyserR.fftSize = 256;
+        
+        nodeObj.output.connect(splitter);
+        splitter.connect(analyserL, 0);
+        splitter.connect(analyserR, 1);
+        
+        nodeObj.analyser = { L: analyserL, R: analyserR, splitter };
     }
     return nodeObj;
 };
@@ -1371,7 +1383,7 @@ const ParametricEqVisualizer = React.memo(({ trackId, fxId, params, onParamChang
             const maxFreq = audioCtxRef.current ? audioCtxRef.current.sampleRate / 2 : 22050;
 
             if (fxNode && fxNode.analyser) {
-                const analyser = fxNode.analyser;
+                const analyser = fxNode.analyser.L || fxNode.analyser;
                 const bufferLength = analyser.frequencyBinCount;
                 const dataArray = new Uint8Array(bufferLength);
                 analyser.getByteFrequencyData(dataArray);
@@ -1671,9 +1683,8 @@ const initTrackRouting = async (track, ctx, masterSummingBus) => {
   return { inputBus, faderGain, panner, fxNodes, activeNoteIds: new Set(), activeSource: null, analyser: { L: analyserL, R: analyserR, splitter }, pitchBendNode, lastTargetVolume: -1 };
 };
 
-
 // --- VU Meter Component ---
-const VuMeter = ({ trackId, synthsRef, isMaster, masterAnalyserRef, isVertical = true, explicitAnalyser }) => {
+const VuMeter = ({ trackId, fxId, synthsRef, masterFxNodesRef, isMaster, masterAnalyserRef, isVertical = true, explicitAnalyser }) => {
     const curtainLRef = useRef(null);
     const curtainRRef = useRef(null);
     const clipLRef = useRef(null);
@@ -1687,9 +1698,12 @@ const VuMeter = ({ trackId, synthsRef, isMaster, masterAnalyserRef, isVertical =
     useEffect(() => {
         let reqId;
         const update = () => {
+            // Polling the refs dynamically ensures we connect immediately even if the audio engine builds asynchronously
             let analyserObj = explicitAnalyser;
             if (!analyserObj) {
-                if (isMaster) analyserObj = masterAnalyserRef?.current;
+                if (isMaster && fxId) analyserObj = masterFxNodesRef?.current[fxId]?.analyser;
+                else if (isMaster) analyserObj = masterAnalyserRef?.current;
+                else if (fxId) analyserObj = synthsRef?.current[trackId]?.fxNodes[fxId]?.analyser;
                 else analyserObj = synthsRef?.current[trackId]?.analyser;
             }
 
@@ -1770,7 +1784,7 @@ const VuMeter = ({ trackId, synthsRef, isMaster, masterAnalyserRef, isVertical =
             clearTimeout(clipTimeoutsRef.current.L); 
             clearTimeout(clipTimeoutsRef.current.R); 
         };
-    }, [trackId, synthsRef, isMaster, masterAnalyserRef, isVertical, explicitAnalyser]);
+    }, [trackId, fxId, synthsRef, masterFxNodesRef, isMaster, masterAnalyserRef, isVertical, explicitAnalyser]);
 
     const MeterBar = ({ curtainRef, clipRef, dotRef, isVertical }) => (
         <div className={`flex ${isVertical ? 'flex-col h-full flex-1' : 'flex-row w-full flex-1'} items-center gap-[1px]`}>
@@ -1784,7 +1798,7 @@ const VuMeter = ({ trackId, synthsRef, isMaster, masterAnalyserRef, isVertical =
     );
 
     return (
-        <div className={`flex ${isVertical ? 'flex-row w-3' : 'flex-col h-3'} gap-[1px] h-full w-full justify-between shrink-0`}>
+        <div className={`flex ${isVertical ? 'flex-row w-full' : 'flex-col h-full'} gap-[1px] h-full w-full justify-between shrink-0`}>
             <MeterBar curtainRef={curtainLRef} clipRef={clipLRef} dotRef={dotLRef} isVertical={isVertical} />
             <MeterBar curtainRef={curtainRRef} clipRef={clipRRef} dotRef={dotRRef} isVertical={isVertical} />
         </div>
@@ -6991,7 +7005,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                                                   setDraggingClip({ trackId: t.id, initialTrackId: t.id, clipId: c.id, startX: e.clientX, initialStart: c.start }); 
                                               } 
                                           }}
-                                          onDoubleClick={(e) => { e.stopPropagation(); setBottomDock({ type: t.type === 'audio' ? 'devices' : 'piano-roll', trackId: t.id, clipId: c.id }); }}
+                                          onDoubleClick={(e) => { e.stopPropagation(); setBottomDock({ type: t.type === 'audio' ? 'audio-editor' : 'piano-roll', trackId: t.id, clipId: c.id }); }}
                                           onContextMenu={(e) => {
                                               const rect = timelineRef.current.getBoundingClientRect();
                                               const x = e.clientX - rect.left + timelineRef.current.scrollLeft;
@@ -7376,6 +7390,78 @@ const initAudioEngine = async (explicitTracks = null) => {
                 );
             })()}
             
+            {/* Audio Clip Editor Dock */}
+            {bottomDock?.type === 'audio-editor' && (() => {
+                const activeTrack = tracks.find(t => t.id === bottomDock.trackId);
+                const activeClip = activeTrack?.clips.find(c => c.id === bottomDock.clipId);
+
+                if (!activeClip) return null;
+
+                const bufferData = activeClip.sampleId ? globalAudioBufferCache.get(activeClip.sampleId) : null;
+
+                return (
+                <div style={{ height: dockHeight }} className="bg-[#1a1a1a] border-t border-[#111111] flex flex-col shrink-0 z-30 relative select-none min-h-[260px]">
+                    <div className="absolute top-0 left-0 right-0 h-1.5 -translate-y-1/2 cursor-ns-resize hover:bg-cyan-500 z-50 transition-colors" onMouseDown={() => setDraggingDockHeight(true)} />
+                    <div className="h-6 bg-[#2d2d2d] flex justify-between items-center px-4 border-b border-[#111] shrink-0">
+                        <div className="flex items-center gap-2">
+                            <FileAudio size={14} className="text-emerald-400" />
+                            <span className="text-[10px] font-bold text-neutral-300 uppercase tracking-wider">Audio Clip Editor</span>
+                        </div>
+                        <button onClick={() => setBottomDock(null)} className="text-[#888] hover:text-white transition-colors"><X size={12}/></button>
+                    </div>
+                    <div className="flex-1 flex overflow-hidden">
+                        <div className="w-64 bg-[#2a2b2b] border-r border-[#111] p-4 flex flex-col gap-4 overflow-y-auto custom-scrollbar shrink-0">
+                             <div className="flex flex-col gap-1.5">
+                                 <label className="text-[9px] font-bold text-[#888] uppercase tracking-wider">Sample Offset (Beats)</label>
+                                 <input type="number" step="0.25" value={activeClip.sampleOffset || 0} onChange={e => dispatchDawAction({ type: 'UPDATE_CLIP_BOUNDS', payload: { trackId: activeTrack.id, clipId: activeClip.id, sampleOffset: Number(e.target.value) }})} className="w-full bg-[#111] border border-[#222] rounded p-1.5 text-xs text-white outline-none focus:border-emerald-500" />
+                             </div>
+                             <div className="flex flex-col gap-1.5">
+                                 <label className="text-[9px] font-bold text-[#888] uppercase tracking-wider">Playback Rate (Pitch/Speed)</label>
+                                 <input type="number" step="0.01" min="0.1" max="4.0" value={activeClip.playbackRate || 1.0} onChange={e => dispatchDawAction({ type: 'UPDATE_CLIP_BOUNDS', payload: { trackId: activeTrack.id, clipId: activeClip.id, playbackRate: Number(e.target.value) }})} className="w-full bg-[#111] border border-[#222] rounded p-1.5 text-xs text-white outline-none focus:border-emerald-500" />
+                             </div>
+                             <div className="flex gap-2">
+                                 <div className="flex flex-col gap-1.5 flex-1">
+                                     <label className="text-[9px] font-bold text-[#888] uppercase tracking-wider">Fade In (Beats)</label>
+                                     <input type="number" step="0.1" min="0" value={activeClip.fadeIn || 0} onChange={e => dispatchDawAction({ type: 'UPDATE_CLIP_BOUNDS', payload: { trackId: activeTrack.id, clipId: activeClip.id, fadeIn: Number(e.target.value) }})} className="w-full bg-[#111] border border-[#222] rounded p-1.5 text-xs text-white outline-none focus:border-emerald-500" />
+                                 </div>
+                                 <div className="flex flex-col gap-1.5 flex-1">
+                                     <label className="text-[9px] font-bold text-[#888] uppercase tracking-wider">Fade Out (Beats)</label>
+                                     <input type="number" step="0.1" min="0" value={activeClip.fadeOut || 0} onChange={e => dispatchDawAction({ type: 'UPDATE_CLIP_BOUNDS', payload: { trackId: activeTrack.id, clipId: activeClip.id, fadeOut: Number(e.target.value) }})} className="w-full bg-[#111] border border-[#222] rounded p-1.5 text-xs text-white outline-none focus:border-emerald-500" />
+                                 </div>
+                             </div>
+                        </div>
+                        <div className="flex-1 bg-[#222] relative overflow-hidden flex flex-col p-6 justify-center">
+                            {!bufferData ? (
+                                <div className="w-full h-full flex items-center justify-center text-[#888] text-xs font-bold uppercase tracking-wider">No Audio Data Available</div>
+                            ) : (
+                                <div className="relative w-full h-48 bg-[#111] border border-[#333] rounded-lg overflow-hidden shadow-inner">
+                                    <SampleEditorWaveform buffer={bufferData.buffer} />
+                                    {(() => {
+                                         const totalSecs = bufferData.duration;
+                                         const startSecs = (activeClip.sampleOffset || 0) * (60 / bpm) * (activeClip.playbackRate || 1.0);
+                                         const durSecs = activeClip.duration * (60 / bpm) * (activeClip.playbackRate || 1.0);
+
+                                         const startPercent = startSecs / totalSecs;
+                                         const widthPercent = durSecs / totalSecs;
+
+                                         return (
+                                             <>
+                                                <div className="absolute top-0 bottom-0 left-0 bg-black/70 border-r border-emerald-500/50 pointer-events-none" style={{ width: `${Math.max(0, startPercent * 100)}%` }} />
+                                                <div className="absolute top-0 bottom-0 border-x border-emerald-500 bg-emerald-500/10 pointer-events-none flex flex-col justify-end" style={{ left: `${startPercent * 100}%`, width: `${widthPercent * 100}%` }}>
+                                                    <div className="bg-emerald-500/20 w-full h-1" />
+                                                </div>
+                                                <div className="absolute top-0 bottom-0 right-0 bg-black/70 border-l border-emerald-500/50 pointer-events-none" style={{ left: `${(startPercent + widthPercent) * 100}%`, right: 0 }} />
+                                             </>
+                                         );
+                                     })()}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+                );
+            })()}
+
             {/* Device Rack (Effects Dock) */}
             {bottomDock?.type === 'devices' && (() => {
                 let track, trackName, trackType, effects;
@@ -7392,8 +7478,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                 }
 
                 return (
-                <div style={{ height: dockHeight }} className="bg-[#1a1a1a] border-t border-[#111111] flex flex-col shrink-0 z-30 relative select-none">
-                    <div className="absolute top-0 left-0 right-0 h-1.5 -translate-y-1/2 cursor-ns-resize hover:bg-cyan-500 z-50 transition-colors" onMouseDown={() => setDraggingDockHeight(true)} />
+                <div className="bg-[#1a1a1a] border-t border-[#111111] flex flex-col shrink-0 z-30 relative select-none min-h-[260px]">
                     <div className="h-6 bg-[#2d2d2d] flex justify-between items-center px-4 border-b border-[#111] shrink-0">
                         <div className="flex items-center gap-2">
                            <span className={`text-[10px] font-bold uppercase tracking-wider ${trackType === 'master' ? 'text-[#ff5a5a]' : 'text-[#b3b3b3]'}`}>{trackName}</span>
@@ -7602,40 +7687,50 @@ const initAudioEngine = async (explicitTracks = null) => {
                                    <button onClick={() => deleteEffect(bottomDock.trackId, fx.id)} className="text-[#888] hover:text-[#f87171] opacity-0 group-hover:opacity-100 transition-opacity ml-4"><X size={12}/></button>
                                 </div>
                                 <div className="flex-1 flex px-3 py-2 gap-4">
-                                    <div className="flex-1 flex flex-col overflow-y-auto custom-scrollbar">
+                                    <div className="flex-1 flex flex-col">
                                         {fx.type === 'parametric-eq' && <ParametricEqVisualizer trackId={bottomDock.trackId} fxId={fx.id} params={fx.params} onParamChange={(p, v) => handleEffectParamChange(bottomDock.trackId, fx.id, p, v)} synthsRef={synthsRef} audioCtxRef={audioCtxRef} masterFxNodesRef={masterFxNodesRef} />}
-                                        <div className="flex-1 flex flex-wrap gap-x-6 gap-y-4 content-start">
-                                           {Object.keys(fx.params || {}).map(param => {
-                                             const constraints = getParamConstraints(param);
-                                             const mappedRange = getMappedRangeForKnob(bottomDock.trackId, fx.id, param);
-                                             const lfoMappedRange = getLfoMappedRangeForKnob(bottomDock.trackId, fx.id, param);
-                                             return (
-                                                <Knob 
-                                                    key={param}
-                                                    id={`fx-${bottomDock.trackId}-${fx.id}-${param}`}
-                                                    param={param} 
-                                                    value={fx.params[param]} 
-                                                    min={constraints.min} 
-                                                    max={constraints.max} 
-                                                    step={constraints.step} 
-                                                    isLog={constraints.isLog}
-                                                    onChange={(p, v) => handleEffectParamChange(bottomDock.trackId, fx.id, p, v)} 
-                                                    onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'fx_param', trackId: bottomDock.trackId, fxId: fx.id, param: param })}
-                                                    mappedRange={mappedRange}
-                                                    onRangeAdjust={(p, min, max) => handleKnobRangeAdjust(bottomDock.trackId, fx.id, p, min, max)}
-                                                    lfoMappedRange={lfoMappedRange}
-                                                    onLfoRangeAdjust={(p, min, max) => handleLfoKnobRangeAdjust(bottomDock.trackId, fx.id, p, min, max)}
-                                                />
-                                             );
-                                           })}
-                                        </div>
-                                    </div>
-                                    <div className="w-2 h-full py-1 shrink-0 flex flex-col justify-end border-l border-[#222] pl-2 ml-2">
-                                        <MiniVuMeter analyser={analyser} />
+                                    <div className="flex-1 flex flex-wrap gap-x-6 gap-y-4 content-start">
+                                       {Object.keys(fx.params || {}).map(param => {
+                                         const constraints = getParamConstraints(param);
+                                         const mappedRange = getMappedRangeForKnob(bottomDock.trackId, fx.id, param);
+                                         const lfoMappedRange = getLfoMappedRangeForKnob(bottomDock.trackId, fx.id, param);
+                                         return (
+                                            <Knob 
+                                                key={param}
+                                                id={`fx-${bottomDock.trackId}-${fx.id}-${param}`}
+                                                param={param} 
+                                                value={fx.params[param]} 
+                                                min={constraints.min} 
+                                                max={constraints.max} 
+                                                step={constraints.step} 
+                                                isLog={constraints.isLog}
+                                                onChange={(p, v) => handleEffectParamChange(bottomDock.trackId, fx.id, p, v)} 
+                                                onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'fx_param', trackId: bottomDock.trackId, fxId: fx.id, param: param })}
+                                                mappedRange={mappedRange}
+                                                onRangeAdjust={(p, min, max) => handleKnobRangeAdjust(bottomDock.trackId, fx.id, p, min, max)}
+                                                lfoMappedRange={lfoMappedRange}
+                                                onLfoRangeAdjust={(p, min, max) => handleLfoKnobRangeAdjust(bottomDock.trackId, fx.id, p, min, max)}
+                                            />
+                                         );
+                                       })}
                                     </div>
                                 </div>
+                                <div className="w-4 h-full py-1 shrink-0 flex flex-col justify-end border-l border-[#222] pl-2 ml-2">
+                                    <VuMeter 
+                                        trackId={bottomDock.trackId}
+                                        fxId={fx.id}
+                                        synthsRef={synthsRef}
+                                        masterFxNodesRef={masterFxNodesRef}
+                                        isMaster={bottomDock.trackId === 'master'}
+                                        isVertical={true} 
+                                    />
+                                </div>
                             </div>
-                        )})}
+
+
+                        </div>
+                    )})}
+
                         
                         {/* Empty "Drop Audio Effects Here" block */}
                         <div className="flex-1 min-w-[200px] h-full bg-[#2a2b2b] rounded-md flex items-center justify-center relative group transition-colors border border-transparent hover:border-[#444] border-dashed overflow-hidden">
