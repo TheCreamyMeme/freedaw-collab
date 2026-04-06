@@ -6829,13 +6829,40 @@ const initAudioEngine = async (explicitTracks = null) => {
                           
                           {/* Export Region Marker */}
                           <div
-                             className="absolute top-0 h-1.5 z-10 transition-colors bg-neutral-400/40 border-b border-neutral-500 pointer-events-auto cursor-grab hover:bg-neutral-400/60"
+                             className="absolute top-0 bottom-0 z-10 pointer-events-none group/export"
                              style={{ left: `${exportRegion.start * BEAT_WIDTH}px`, width: `${(exportRegion.end - exportRegion.start) * BEAT_WIDTH}px` }}
-                             onMouseDown={(e) => { e.stopPropagation(); setDraggingExport({ edge: 'body', startX: e.clientX, initialStart: exportRegion.start, initialEnd: exportRegion.end }); }}
-                             title="Mixdown / Export Bounds"
                           >
-                             <div className="absolute left-0 top-0 bottom-0 w-2 cursor-ew-resize -ml-1 flex items-center justify-center" onMouseDown={(e) => { e.stopPropagation(); setDraggingExport({ edge: 'start', startX: e.clientX, initialStart: exportRegion.start, initialEnd: exportRegion.end }); }}><div className="w-[3px] h-full bg-neutral-300 rounded-sm" /></div>
-                             <div className="absolute right-0 top-0 bottom-0 w-2 cursor-ew-resize -mr-1 flex items-center justify-center" onMouseDown={(e) => { e.stopPropagation(); setDraggingExport({ edge: 'end', startX: e.clientX, initialStart: exportRegion.start, initialEnd: exportRegion.end }); }}><div className="w-[3px] h-full bg-neutral-300 rounded-sm" /></div>
+                             {/* Subtle background highlight for the mixdown region */}
+                             <div className="absolute inset-0 bg-neutral-400/10 border-x border-neutral-400/30 transition-colors group-hover/export:bg-neutral-400/20" />
+                             
+                             {/* Draggable Top Bar */}
+                             <div 
+                               className="absolute top-0 left-0 right-0 h-[3px] bg-neutral-400 cursor-grab active:cursor-grabbing pointer-events-auto shadow-sm"
+                               onMouseDown={(e) => { e.stopPropagation(); setDraggingExport({ edge: 'body', startX: e.clientX, initialStart: exportRegion.start, initialEnd: exportRegion.end }); }}
+                               title="Mixdown Bounds (Drag to move)"
+                             />
+                             
+                             {/* Left Right-Triangle Handle */}
+                             <div 
+                               className="absolute left-0 top-0 w-4 h-4 cursor-ew-resize pointer-events-auto" 
+                               onMouseDown={(e) => { e.stopPropagation(); setDraggingExport({ edge: 'start', startX: e.clientX, initialStart: exportRegion.start, initialEnd: exportRegion.end }); }}
+                               title="Mixdown Start"
+                             >
+                               <svg width="12" height="12" viewBox="0 0 12 12" className="text-neutral-300 drop-shadow-md hover:text-white transition-colors">
+                                   <path d="M0,0 L12,0 L0,12 Z" fill="currentColor"/>
+                               </svg>
+                             </div>
+                             
+                             {/* Right Right-Triangle Handle */}
+                             <div 
+                               className="absolute right-0 top-0 w-4 h-4 cursor-ew-resize flex justify-end pointer-events-auto" 
+                               onMouseDown={(e) => { e.stopPropagation(); setDraggingExport({ edge: 'end', startX: e.clientX, initialStart: exportRegion.start, initialEnd: exportRegion.end }); }}
+                               title="Mixdown End"
+                             >
+                               <svg width="12" height="12" viewBox="0 0 12 12" className="text-neutral-300 drop-shadow-md hover:text-white transition-colors">
+                                   <path d="M0,0 L12,0 L12,12 Z" fill="currentColor"/>
+                               </svg>
+                             </div>
                           </div>
 
                           {/* Loop Region Brace */}
