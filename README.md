@@ -2,8 +2,8 @@
 
 FreeDaw-Collab is a secure, collaborative, and offline-first web-based Digital Audio Workstation (DAW). It features a comprehensive Web Audio DSP engine, real-time collaboration, and project management capabilities, all split between a React frontend and a Node.js backend.
 
-![An animated preview of Freedaw Collab](readme_media\freedaw-collab-demo.gif)
-![An animated preview of Freedaw Collab drag and drop samples from the file browser](readme_media\freedaw-collab-drag-n-drop-samples.gif)
+![An animated preview of Freedaw Collab](readme_media/freedaw-collab-demo.gif)
+![An animated preview of Freedaw Collab drag and drop samples from the file browser](readme_media/freedaw-collab-drag-n-drop-samples.gif)
 
 ---
 
@@ -26,7 +26,7 @@ FreeDaw-Collab is a secure, collaborative, and offline-first web-based Digital A
 ### Robust Deployment
 * **Aggressive Cache Busting:** The frontend uses a multi-stage Docker build with dynamic Node-based HTML injection and strict `serve.json` configurations to defeat aggressive browser caching, guaranteeing users always load the latest UI.
 
-![Preview of freedaw audio editor](readme_media\audio-editor.png)
+![Preview of freedaw audio editor](readme_media/audio-editor.png)
 
 ---
 
