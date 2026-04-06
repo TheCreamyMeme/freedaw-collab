@@ -1673,40 +1673,7 @@ const initTrackRouting = async (track, ctx, masterSummingBus) => {
 
 
 // --- VU Meter Component ---
-const MiniVuMeter = ({ analyser }) => {
-    const fillRef = useRef(null);
-    useEffect(() => {
-        if (!analyser) return;
-        let reqId;
-        const dataArray = new Float32Array(analyser.fftSize);
-        let peakHold = 0;
-        const update = () => {
-            analyser.getFloatTimeDomainData(dataArray);
-            let peak = 0;
-            for (let i = 0; i < dataArray.length; i++) {
-                const abs = Math.abs(dataArray[i]);
-                if (abs > peak) peak = abs;
-            }
-            if (peak > peakHold) peakHold = peak;
-            else peakHold *= 0.92;
-            
-            const percent = Math.min(100, peakHold * 140);
-            if (fillRef.current) fillRef.current.style.height = `${percent}%`;
-            reqId = requestAnimationFrame(update);
-        };
-        reqId = requestAnimationFrame(update);
-        return () => cancelAnimationFrame(reqId);
-    }, [analyser]);
-
-    return (
-        <div className="w-1.5 h-full bg-[#111] rounded-[1px] overflow-hidden flex flex-col justify-end shadow-inner relative">
-            <div ref={fillRef} className="w-full bg-gradient-to-t from-green-500 via-yellow-400 to-red-500 transition-all duration-75 origin-bottom" style={{ height: '0%' }} />
-            <div className="absolute inset-0 bg-[linear-gradient(to_bottom,transparent_1px,rgba(0,0,0,0.6)_1px)] bg-[length:100%_3px] pointer-events-none" />
-        </div>
-    );
-};
-
-const VuMeter = ({ trackId, synthsRef, isMaster, masterAnalyserRef, isVertical = true }) => {
+const VuMeter = ({ trackId, synthsRef, isMaster, masterAnalyserRef, isVertical = true, explicitAnalyser }) => {
     const curtainLRef = useRef(null);
     const curtainRRef = useRef(null);
     const clipLRef = useRef(null);
@@ -1720,9 +1687,11 @@ const VuMeter = ({ trackId, synthsRef, isMaster, masterAnalyserRef, isVertical =
     useEffect(() => {
         let reqId;
         const update = () => {
-            let analyserObj = null;
-            if (isMaster) analyserObj = masterAnalyserRef?.current;
-            else analyserObj = synthsRef?.current[trackId]?.analyser;
+            let analyserObj = explicitAnalyser;
+            if (!analyserObj) {
+                if (isMaster) analyserObj = masterAnalyserRef?.current;
+                else analyserObj = synthsRef?.current[trackId]?.analyser;
+            }
 
             let analyserL = null;
             let analyserR = null;
@@ -1801,7 +1770,7 @@ const VuMeter = ({ trackId, synthsRef, isMaster, masterAnalyserRef, isVertical =
             clearTimeout(clipTimeoutsRef.current.L); 
             clearTimeout(clipTimeoutsRef.current.R); 
         };
-    }, [trackId, synthsRef, isMaster, masterAnalyserRef, isVertical]);
+    }, [trackId, synthsRef, isMaster, masterAnalyserRef, isVertical, explicitAnalyser]);
 
     const MeterBar = ({ curtainRef, clipRef, dotRef, isVertical }) => (
         <div className={`flex ${isVertical ? 'flex-col h-full flex-1' : 'flex-row w-full flex-1'} items-center gap-[1px]`}>
@@ -7584,9 +7553,9 @@ const initAudioEngine = async (explicitTracks = null) => {
                         )}
 
                         {effects.map((fx, index) => {
-                            const analyser = bottomDock.trackId === 'master' 
-                                ? masterFxNodesRef.current[fx.id]?.levelAnalyser 
-                                : synthsRef.current[bottomDock.trackId]?.fxNodes[fx.id]?.levelAnalyser;
+                            const analyserObj = bottomDock.trackId === 'master' 
+                                ? masterFxNodesRef.current[fx.id]?.analyser 
+                                : synthsRef.current[bottomDock.trackId]?.fxNodes[fx.id]?.analyser;
 
                             return (
                             <div 
@@ -7669,20 +7638,15 @@ const initAudioEngine = async (explicitTracks = null) => {
                         )})}
                         
                         {/* Empty "Drop Audio Effects Here" block */}
-                        <div className="flex-1 min-w-[200px] h-full bg-[#2a2b2b] rounded-md flex items-center justify-center relative group transition-colors border border-transparent hover:border-[#444] border-dashed">
-                            <span className="text-[10px] text-[#666] font-bold uppercase tracking-widest text-center">Drop Audio Effects Here</span>
+                        <div className="flex-1 min-w-[200px] h-full bg-[#2a2b2b] rounded-md flex items-center justify-center relative group transition-colors border border-transparent hover:border-[#444] border-dashed overflow-hidden">
+                            <span className="text-[10px] text-[#666] font-bold uppercase tracking-widest text-center pointer-events-none">Drop Audio Effects Here</span>
                             
-                            <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 bg-[#2a2b2b]/90 backdrop-blur-sm transition-opacity">
-                                <div className="relative">
-                                    <button className="bg-[#444] hover:bg-cyan-500 hover:text-black text-[#ccc] border border-[#222] px-4 py-2 rounded-sm text-[10px] font-bold uppercase tracking-wider cursor-pointer transition-colors shadow-sm">
-                                        + Add Effect
-                                    </button>
-                                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-48 bg-[#333] border border-[#111] shadow-2xl rounded-sm opacity-0 group-hover:opacity-100 transition-opacity flex flex-col gap-1.5 pointer-events-none group-hover:pointer-events-auto p-2 overflow-y-auto custom-scrollbar z-50 max-h-48">
-                                       <div className="text-[9px] font-bold text-neutral-500 mb-1 uppercase tracking-wider px-1 mt-1 shrink-0">Engines</div>
-                                       {[...INTERNAL_PLUGINS, ...customPlugins].filter(p => p.category === 'effect').map(p => (
-                                            <button key={p.id} onClick={() => addEffect(bottomDock.trackId, p)} className="w-full text-[10px] font-bold text-neutral-300 hover:text-white bg-neutral-950 border border-neutral-800 hover:border-blue-500 hover:bg-blue-600/20 px-3 py-2 rounded-lg transition-colors text-left truncate shrink-0">{p.name}</button>
-                                       ))}
-                                    </div>
+                            <div className="absolute inset-0 flex flex-col items-center justify-start opacity-0 group-hover:opacity-100 bg-[#2a2b2b]/95 backdrop-blur-md transition-opacity p-2 z-10 pointer-events-none group-hover:pointer-events-auto">
+                                <div className="w-full max-w-[200px] h-full flex flex-col gap-1.5 overflow-y-auto custom-scrollbar pr-1">
+                                   <div className="text-[9px] font-bold text-neutral-500 mb-1 uppercase tracking-wider px-1 mt-1 shrink-0 sticky top-0 bg-[#2a2b2b]/95 backdrop-blur-md py-1 z-10">Add Device</div>
+                                   {[...INTERNAL_PLUGINS, ...customPlugins].filter(p => p.category === 'effect').map(p => (
+                                        <button key={p.id} onClick={() => addEffect(bottomDock.trackId, p)} className="w-full text-[10px] font-bold text-neutral-300 hover:text-white bg-neutral-950 border border-neutral-800 hover:border-blue-500 hover:bg-blue-600/20 px-3 py-2 rounded-lg transition-colors text-left truncate shrink-0">{p.name}</button>
+                                   ))}
                                 </div>
                             </div>
                         </div>
