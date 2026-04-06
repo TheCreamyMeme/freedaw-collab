@@ -2896,7 +2896,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                   const endSample = Math.floor(exportEndSec * sampleRate);
                   const slicedLength = Math.max(1, endSample - startSample);
                   
-                  const slicedBuffer = audioCtxRef.current.createBuffer(renderedBuffer.numberOfChannels, slicedLength, renderedBuffer.sampleRate);
+                  const slicedBuffer = offlineCtx.createBuffer(renderedBuffer.numberOfChannels, slicedLength, renderedBuffer.sampleRate);
                   for (let channel = 0; channel < renderedBuffer.numberOfChannels; channel++) {
                       slicedBuffer.getChannelData(channel).set(renderedBuffer.getChannelData(channel).subarray(startSample, endSample));
                   }
@@ -3121,7 +3121,7 @@ const initAudioEngine = async (explicitTracks = null) => {
           const endSample = Math.floor(exportEndSec * sampleRate);
           const slicedLength = Math.max(1, endSample - startSample);
           
-          const slicedBuffer = audioCtxRef.current.createBuffer(renderedBuffer.numberOfChannels, slicedLength, renderedBuffer.sampleRate);
+          const slicedBuffer = offlineCtx.createBuffer(renderedBuffer.numberOfChannels, slicedLength, renderedBuffer.sampleRate);
           
           for (let channel = 0; channel < renderedBuffer.numberOfChannels; channel++) {
               slicedBuffer.getChannelData(channel).set(renderedBuffer.getChannelData(channel).subarray(startSample, endSample));
