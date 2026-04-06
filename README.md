@@ -26,6 +26,8 @@ FreeDaw-Collab is a secure, collaborative, and offline-first web-based Digital A
 ### Robust Deployment
 * **Aggressive Cache Busting:** The frontend uses a multi-stage Docker build with dynamic Node-based HTML injection and strict `serve.json` configurations to defeat aggressive browser caching, guaranteeing users always load the latest UI.
 
+![Preview of freedaw audio editor](readme_media\audio-editor.png)
+
 ---
 
 ## #️⃣ Hotkeys
