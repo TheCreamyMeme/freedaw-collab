@@ -2993,7 +2993,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                           type: 'midi',
                           instrument: 'inst-subtractive',
                           instrumentParams: {cutoff:2000, res:1},
-                          color: 'bg-pink-500',
+                          color: USER_COLORS[Math.floor(Math.random() * USER_COLORS.length)],
                           volume: 80, pan: 0, muted: false, solo: false, armed: false, effects: [],
                           clips: [{ id: Date.now() + Math.random(), start: 0, duration: Math.max(4, maxBeat), notes }]
                       });
@@ -3021,7 +3021,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                       name: nameWithoutExt.substring(0, 16),
                       type: 'audio',
                       audioInputId: '',
-                      color: 'bg-emerald-500',
+                      color: USER_COLORS[Math.floor(Math.random() * USER_COLORS.length)],
                       volume: 80, pan: 0, muted: false, solo: false, armed: false, effects: [],
                       clips: [{ id: Date.now() + Math.random(), start: 0, duration: Math.max(1, durBeats), sampleId, sampleOffset: 0 }]
                   });
@@ -6105,7 +6105,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                   id: finalTrackId,
                   name: (internalSampleName || 'Audio').substring(0, 16),
                   type: 'audio',
-                  color: 'bg-emerald-500',
+                  color: USER_COLORS[Math.floor(Math.random() * USER_COLORS.length)],
                   volume: 80, pan: 0, muted: false, solo: false, armed: false, clips: [], effects: [], audioInputId: ''
               };
               dispatchDawAction({ type: 'ADD_TRACK', payload: newTrack });
@@ -6141,7 +6141,7 @@ const initAudioEngine = async (explicitTracks = null) => {
               id: finalTrackId,
               name: file.name.split('.')[0].substring(0, 16),
               type: fileType,
-              color: fileType === 'midi' ? 'bg-pink-500' : 'bg-emerald-500',
+              color: USER_COLORS[Math.floor(Math.random() * USER_COLORS.length)],
               volume: 80, pan: 0, muted: false, solo: false, armed: false, clips: [], effects: [],
               ...(fileType === 'midi' ? { instrument: 'inst-subtractive', instrumentParams: {cutoff:2000, res:1} } : { audioInputId: '' })
           };
@@ -6756,8 +6756,8 @@ const initAudioEngine = async (explicitTracks = null) => {
                         <div className="flex gap-1 overflow-hidden flex-nowrap">
                             {/* Auto Tracks Toggle Button */}
                             <button onClick={() => setIsAutomationMode(!isAutomationMode)} className={`text-[9px] uppercase font-bold flex items-center gap-1 px-1.5 py-0.5 rounded-sm transition-colors ${isAutomationMode ? 'bg-cyan-500 text-black' : 'bg-[#444] text-neutral-400 hover:text-white hover:bg-[#555]'}`} title="Toggle Automation Lanes (Ctrl+Shift+A)"><Activity size={10} className="shrink-0"/> <span className="hidden min-[180px]:inline">Auto</span></button>
-                            <button onClick={() => dispatchDawAction({ type: 'ADD_TRACK', payload: { id: Date.now(), name: 'New MIDI', type: 'midi', instrument: 'inst-subtractive', instrumentParams: {cutoff:2000, res:1}, color: 'bg-pink-500', volume: 80, pan: 0, automation: {}, activeAutomationParam: 'volume', clips: [], effects: [] }})} className="text-[9px] uppercase text-neutral-400 hover:text-white font-bold flex items-center gap-1 bg-[#444] hover:bg-[#555] px-1.5 py-0.5 rounded-sm transition-colors"><Plus size={10} className="shrink-0"/> <span className="hidden min-[210px]:inline">MIDI</span></button>
-                            <button onClick={() => dispatchDawAction({ type: 'ADD_TRACK', payload: { id: Date.now(), name: 'New Audio', type: 'audio', color: 'bg-emerald-500', volume: 80, pan: 0, automation: {}, activeAutomationParam: 'volume', clips: [], effects: [] }})} className="text-[9px] uppercase text-neutral-400 hover:text-white font-bold flex items-center gap-1 bg-[#444] hover:bg-[#555] px-1.5 py-0.5 rounded-sm transition-colors"><Plus size={10} className="shrink-0"/> <span className="hidden min-[240px]:inline">Audio</span></button>
+                            <button onClick={() => dispatchDawAction({ type: 'ADD_TRACK', payload: { id: Date.now(), name: 'New MIDI', type: 'midi', instrument: 'inst-subtractive', instrumentParams: {cutoff:2000, res:1}, color: USER_COLORS[Math.floor(Math.random() * USER_COLORS.length)], volume: 80, pan: 0, automation: {}, activeAutomationParam: 'volume', clips: [], effects: [] }})} className="text-[9px] uppercase text-neutral-400 hover:text-white font-bold flex items-center gap-1 bg-[#444] hover:bg-[#555] px-1.5 py-0.5 rounded-sm transition-colors"><Plus size={10} className="shrink-0"/> <span className="hidden min-[210px]:inline">MIDI</span></button>
+                            <button onClick={() => dispatchDawAction({ type: 'ADD_TRACK', payload: { id: Date.now(), name: 'New Audio', type: 'audio', color: USER_COLORS[Math.floor(Math.random() * USER_COLORS.length)], volume: 80, pan: 0, automation: {}, activeAutomationParam: 'volume', clips: [], effects: [] }})} className="text-[9px] uppercase text-neutral-400 hover:text-white font-bold flex items-center gap-1 bg-[#444] hover:bg-[#555] px-1.5 py-0.5 rounded-sm transition-colors"><Plus size={10} className="shrink-0"/> <span className="hidden min-[240px]:inline">Audio</span></button>
                         </div>
                     </div>
                     <div className="flex-1 overflow-y-auto overflow-x-hidden custom-scrollbar pr-1">
