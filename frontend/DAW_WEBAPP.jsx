@@ -5922,7 +5922,7 @@ const initAudioEngine = async (explicitTracks = null) => {
       } else if (draggingTrackHeader) {
           setTrackHeaderWidth(Math.max(160, Math.min(800, e.clientX - 56)));
       }
-  }, [draggingClip, draggingEdge, draggingNote, draggingNoteEdge, draggingLoop, draggingPlayhead, draggingDockHeight, draggingSidePanel, draggingTrackHeader, draggingAutoPoint, draggingAutoCurve, draggingFade, draggingStretch, BEAT_WIDTH]);  
+  }, [draggingClip, draggingEdge, draggingNote, draggingNoteEdge, draggingLoop, draggingExport, draggingPlayhead, draggingDockHeight, draggingSidePanel, draggingTrackHeader, draggingAutoPoint, draggingAutoCurve, draggingFade, draggingStretch, BEAT_WIDTH]);  
   const handleMouseUp = useCallback(() => {
       if (draggingClip) {
           const finalStart = dragValuesRef.current.start ?? draggingClip.initialStart;
@@ -5997,7 +5997,7 @@ const initAudioEngine = async (explicitTracks = null) => {
   }, [handleMouseMove, handleMouseUp]);
 
   const handleTimelineMouseDown = (e) => {
-      if (e.target.closest('.clip-element') || draggingClip || draggingNote || draggingNoteEdge || draggingLoop) return;
+      if (e.target.closest('.clip-element') || draggingClip || draggingNote || draggingNoteEdge || draggingLoop || draggingExport) return;
       setSelectedClipIds([]); // Deselect all clips when clicking empty space
       setDraggingPlayhead(true);
       const rect = e.currentTarget.getBoundingClientRect();
@@ -6844,22 +6844,22 @@ const initAudioEngine = async (explicitTracks = null) => {
                              
                              {/* Left Right-Triangle Handle */}
                              <div 
-                               className="absolute left-0 top-0 w-4 h-4 cursor-ew-resize pointer-events-auto" 
+                               className="absolute left-0 top-0 bottom-0 w-6 -ml-3 cursor-ew-resize pointer-events-auto flex justify-end" 
                                onMouseDown={(e) => { e.stopPropagation(); setDraggingExport({ edge: 'start', startX: e.clientX, initialStart: exportRegion.start, initialEnd: exportRegion.end }); }}
                                title="Mixdown Start"
                              >
-                               <svg width="12" height="12" viewBox="0 0 12 12" className="text-neutral-300 drop-shadow-md hover:text-white transition-colors">
+                               <svg width="12" height="12" viewBox="0 0 12 12" className="text-neutral-300 drop-shadow-md hover:text-white transition-colors pointer-events-none">
                                    <path d="M0,0 L12,0 L0,12 Z" fill="currentColor"/>
                                </svg>
                              </div>
                              
                              {/* Right Right-Triangle Handle */}
                              <div 
-                               className="absolute right-0 top-0 w-4 h-4 cursor-ew-resize flex justify-end pointer-events-auto" 
+                               className="absolute right-0 top-0 bottom-0 w-6 -mr-3 cursor-ew-resize flex justify-start pointer-events-auto" 
                                onMouseDown={(e) => { e.stopPropagation(); setDraggingExport({ edge: 'end', startX: e.clientX, initialStart: exportRegion.start, initialEnd: exportRegion.end }); }}
                                title="Mixdown End"
                              >
-                               <svg width="12" height="12" viewBox="0 0 12 12" className="text-neutral-300 drop-shadow-md hover:text-white transition-colors">
+                               <svg width="12" height="12" viewBox="0 0 12 12" className="text-neutral-300 drop-shadow-md hover:text-white transition-colors pointer-events-none">
                                    <path d="M0,0 L12,0 L12,12 Z" fill="currentColor"/>
                                </svg>
                              </div>
