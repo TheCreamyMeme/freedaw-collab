@@ -1168,6 +1168,17 @@ const EQNode = React.memo(({ id, freq = 1000, gain = 0, color, onParamChange }) 
 }, (prev, next) => prev.freq === next.freq && prev.gain === next.gain);
 
 const createFXNode = async (ctx, fx) => {
+    const nodeObj = await _createFXNode(ctx, fx);
+    if (nodeObj && nodeObj.output) {
+        const levelAnalyser = ctx.createAnalyser();
+        levelAnalyser.fftSize = 256;
+        nodeObj.output.connect(levelAnalyser);
+        nodeObj.levelAnalyser = levelAnalyser;
+    }
+    return nodeObj;
+};
+
+const _createFXNode = async (ctx, fx) => {
   const input = ctx.createGain(), output = ctx.createGain(), wet = ctx.createGain(), dry = ctx.createGain();
   input.connect(dry); dry.connect(output);
   wet.gain.value = fx.params?.mix ?? 0.5; dry.gain.value = 1 - wet.gain.value;
@@ -1662,6 +1673,39 @@ const initTrackRouting = async (track, ctx, masterSummingBus) => {
 
 
 // --- VU Meter Component ---
+const MiniVuMeter = ({ analyser }) => {
+    const fillRef = useRef(null);
+    useEffect(() => {
+        if (!analyser) return;
+        let reqId;
+        const dataArray = new Float32Array(analyser.fftSize);
+        let peakHold = 0;
+        const update = () => {
+            analyser.getFloatTimeDomainData(dataArray);
+            let peak = 0;
+            for (let i = 0; i < dataArray.length; i++) {
+                const abs = Math.abs(dataArray[i]);
+                if (abs > peak) peak = abs;
+            }
+            if (peak > peakHold) peakHold = peak;
+            else peakHold *= 0.92;
+            
+            const percent = Math.min(100, peakHold * 140);
+            if (fillRef.current) fillRef.current.style.height = `${percent}%`;
+            reqId = requestAnimationFrame(update);
+        };
+        reqId = requestAnimationFrame(update);
+        return () => cancelAnimationFrame(reqId);
+    }, [analyser]);
+
+    return (
+        <div className="w-1.5 h-full bg-[#111] rounded-[1px] overflow-hidden flex flex-col justify-end shadow-inner relative">
+            <div ref={fillRef} className="w-full bg-gradient-to-t from-green-500 via-yellow-400 to-red-500 transition-all duration-75 origin-bottom" style={{ height: '0%' }} />
+            <div className="absolute inset-0 bg-[linear-gradient(to_bottom,transparent_1px,rgba(0,0,0,0.6)_1px)] bg-[length:100%_3px] pointer-events-none" />
+        </div>
+    );
+};
+
 const VuMeter = ({ trackId, synthsRef, isMaster, masterAnalyserRef, isVertical = true }) => {
     const curtainLRef = useRef(null);
     const curtainRRef = useRef(null);
@@ -3538,14 +3582,34 @@ const initAudioEngine = async (explicitTracks = null) => {
                                     synth[cacheKey] = val;
                                     
                                     const constraints = getParamConstraints(pName);
-                                    const knobLive = document.getElementById(`knob-live-fx-${track.id}-${fxId}-${pName}`);
+                                    const knobRot = document.getElementById(`knob-rot-fx-${track.id}-${fxId}-${pName}`);
                                     const knobVal = document.getElementById(`knob-val-fx-${track.id}-${fxId}-${pName}`);
-                                    if (knobLive && knobVal) {
+                                    if (knobRot && knobVal) {
                                         const percent = constraints.isLog 
                                             ? (Math.log(Math.max(0.001, val)) - Math.log(Math.max(0.001, constraints.min))) / (Math.log(constraints.max) - Math.log(Math.max(0.001, constraints.min)))
                                             : (val - constraints.min) / (constraints.max - constraints.min);
-                                        const angle = -135 + (percent || 0) * 270;
-                                        knobLive.style.transform = `rotate(${angle}deg)`;
+                                        const clampedPercent = Math.max(0, Math.min(1, percent));
+                                        const angle = -135 + clampedPercent * 270;
+                                        knobRot.style.transform = `rotate(${angle}deg)`;
+                                        knobVal.innerText = val >= 1000 ? (val / 1000).toFixed(1) + 'k' : val.toFixed(constraints.step < 1 ? 2 : 0);
+                                    }
+                                }
+                            } else if (paramKey.startsWith('inst_param_')) {
+                                const pName = paramKey.split('_').slice(2).join('_');
+                                const cacheKey = `lastAuto_inst_${pName}`;
+                                if (synth[cacheKey] !== val) {
+                                    synth[cacheKey] = val;
+                                    
+                                    const constraints = getParamConstraints(pName);
+                                    const knobRot = document.getElementById(`knob-rot-inst-${track.id}-${pName}`);
+                                    const knobVal = document.getElementById(`knob-val-inst-${track.id}-${pName}`);
+                                    if (knobRot && knobVal) {
+                                        const percent = constraints.isLog 
+                                            ? (Math.log(Math.max(0.001, val)) - Math.log(Math.max(0.001, constraints.min))) / (Math.log(constraints.max) - Math.log(Math.max(0.001, constraints.min)))
+                                            : (val - constraints.min) / (constraints.max - constraints.min);
+                                        const clampedPercent = Math.max(0, Math.min(1, percent));
+                                        const angle = -135 + clampedPercent * 270;
+                                        knobRot.style.transform = `rotate(${angle}deg)`;
                                         knobVal.innerText = val >= 1000 ? (val / 1000).toFixed(1) + 'k' : val.toFixed(constraints.step < 1 ? 2 : 0);
                                     }
                                 }
@@ -7359,23 +7423,24 @@ const initAudioEngine = async (explicitTracks = null) => {
                 }
 
                 return (
-                <div style={{ height: dockHeight }} className="bg-[#333333] border-t border-[#111111] flex flex-col shrink-0 z-30 relative">
+                <div style={{ height: dockHeight }} className="bg-[#1a1a1a] border-t border-[#111111] flex flex-col shrink-0 z-30 relative select-none">
                     <div className="absolute top-0 left-0 right-0 h-1.5 -translate-y-1/2 cursor-ns-resize hover:bg-cyan-500 z-50 transition-colors" onMouseDown={() => setDraggingDockHeight(true)} />
-                    <div className="h-6 bg-[#444444] flex justify-between items-center px-4 border-b border-[#222222] shrink-0">
+                    <div className="h-6 bg-[#2d2d2d] flex justify-between items-center px-4 border-b border-[#111] shrink-0">
                         <div className="flex items-center gap-2">
                            <span className={`text-[10px] font-bold uppercase tracking-wider ${trackType === 'master' ? 'text-[#ff5a5a]' : 'text-[#b3b3b3]'}`}>{trackName}</span>
                         </div>
                         <button onClick={() => setBottomDock(null)} className="text-[#888] hover:text-white transition-colors"><X size={12}/></button>
                     </div>
-                    <div className="flex-1 flex overflow-x-auto p-2 gap-2 items-start bg-[#333333] custom-scrollbar pb-6">
+                    
+                    <div className="flex-1 flex overflow-x-auto p-2 gap-[2px] items-stretch bg-[#2a2b2b] custom-scrollbar pb-4 flex-nowrap">
                         
                         {/* Audio Track specific Input block */}
                         {trackType === 'audio' && (
-                            <div className="min-w-[12rem] h-max bg-[#444] border border-[#222] rounded-sm p-3 flex flex-col shrink-0 relative">
-                                <div className="flex items-center gap-2 mb-3 border-b border-[#222] pb-2">
+                            <div className="min-w-[12rem] h-full bg-[#3a3a3a] border border-[#111] rounded-md flex flex-col shrink-0 relative">
+                                <div className="h-6 bg-[#2d2d2d] rounded-t-md flex items-center justify-between px-2 border-b border-[#111] shrink-0">
                                     <span className="text-[10px] font-bold text-[#b3b3b3] uppercase tracking-wider">Audio Input</span>
                                 </div>
-                                <div className="flex flex-col gap-2">
+                                <div className="flex-1 p-3 flex flex-col gap-2">
                                     <select 
                                         value={track.audioInputId || ''} 
                                         onChange={(e) => dispatchDawAction({ type: 'UPDATE_TRACK_INPUT', payload: { trackId: track.id, audioInputId: e.target.value } })}
@@ -7392,11 +7457,11 @@ const initAudioEngine = async (explicitTracks = null) => {
 
                         {/* Instrument Selector & Controls for MIDI Tracks */}
                         {trackType === 'midi' && (
-                            <div className="min-w-[16rem] max-w-md w-max h-max bg-[#444] border border-[#222] rounded-sm p-3 flex flex-col shrink-0 relative">
-                                <div className="flex items-center gap-2 mb-3 border-b border-[#222] pb-2 shrink-0">
+                            <div className="min-w-[16rem] max-w-md w-max h-full bg-[#3a3a3a] border border-[#111] rounded-md flex flex-col shrink-0 relative">
+                                <div className="h-6 bg-[#2d2d2d] rounded-t-md flex items-center justify-between px-2 border-b border-[#111] shrink-0">
                                     <span className="text-[10px] font-bold text-[#b3b3b3] uppercase tracking-wider">Instrument</span>
                                 </div>
-                                <div className="flex flex-col gap-2 shrink-0 mb-4">
+                                <div className="flex-1 flex px-3 py-2 gap-4 flex-col overflow-y-auto custom-scrollbar">
                                     <select 
                                         value={track.instrument || ''} 
                                         onChange={(e) => {
@@ -7416,7 +7481,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                                             
                                             dispatchDawAction({ type: 'CHANGE_INSTRUMENT', payload: { trackId: track.id, instrumentId: newInstId, instrumentParams: newParams } });
                                         }}
-                                        className="w-full bg-neutral-900 border border-neutral-700 rounded-lg p-2 text-xs text-white outline-none focus:border-purple-500 cursor-pointer"
+                                        className="w-full bg-neutral-900 border border-neutral-700 rounded-lg p-2 text-xs text-white outline-none focus:border-purple-500 cursor-pointer shrink-0"
                                     >
                                         <optgroup label="Internal Engines">
                                             {INTERNAL_PLUGINS.filter(p => p.category === 'instrument').map(p => (
@@ -7431,189 +7496,194 @@ const initAudioEngine = async (explicitTracks = null) => {
                                             </optgroup>
                                         )}
                                     </select>
-                                </div>
 
-                                {track.instrumentParams && Object.keys(track.instrumentParams).length > 0 && (
-                                    <div className="flex-1 flex flex-wrap gap-x-6 gap-y-4 overflow-y-auto custom-scrollbar pr-2 content-start border-t border-neutral-800/50 pt-4">
-                                        {track.instrument === 'inst-drum' && (
-                                            <div className="w-full flex flex-col gap-3">
-                                                <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider mb-1">Custom Drum Pads</span>
-                                                <div className="grid grid-cols-4 sm:grid-cols-8 gap-2">
-                                                    {Array.from({length: 16}).map((_, i) => {
-                                                        const note = 36 + i;
-                                                        const sampleId = track.instrumentParams?.samples?.[note];
-                                                        const noteName = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'][note % 12] + (Math.floor(note / 12) - 1);
-                                                        
-                                                        return (
-                                                            <div key={note} className="flex flex-col items-center justify-center bg-neutral-900 border border-neutral-700 rounded-lg p-2 relative group cursor-pointer hover:border-blue-500 transition-colors shadow-inner min-w-[3rem]" onMouseDown={(e) => { e.stopPropagation(); previewNote(track.id, note, 100); }}>
-                                                                <span className="text-[9px] font-mono text-neutral-400 mb-1 pointer-events-none">{noteName}</span>
-                                                                <button 
-                                                                    onMouseDown={(e) => e.stopPropagation()}
-                                                                    onClick={(e) => { e.stopPropagation(); setSamplePickerTarget({ trackId: track.id, note }); }}
-                                                                    className={`w-full aspect-square rounded flex items-center justify-center text-[10px] font-bold shadow-sm cursor-pointer transition-colors ${sampleId ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/50 hover:bg-emerald-500/30' : 'bg-neutral-800 text-neutral-600 hover:text-white hover:bg-neutral-700'}`}
-                                                                    title={`Assign sample to ${noteName}`}
-                                                                >
-                                                                    {sampleId ? 'WAV' : '+'}
-                                                                </button>
-                                                                {sampleId && (
-                                                                    <button
-                                                                        className="absolute -top-1.5 -right-1.5 bg-red-500 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity z-10 shadow-[0_0_8px_rgba(239,68,68,0.8)] hover:scale-110"
-                                                                        onClick={(e) => {
-                                                                            e.preventDefault();
-                                                                            e.stopPropagation();
-                                                                            const newSamples = { ...(track.instrumentParams?.samples || {}) };
-                                                                            delete newSamples[note];
-                                                                            handleInstrumentParamChange(track.id, 'samples', newSamples);
-                                                                        }}
-                                                                        title="Remove custom sample"
+                                    {track.instrumentParams && Object.keys(track.instrumentParams).length > 0 && (
+                                        <div className="flex-1 flex flex-wrap gap-x-6 gap-y-4 content-start border-t border-neutral-800/50 pt-3">
+                                            {track.instrument === 'inst-drum' && (
+                                                <div className="w-full flex flex-col gap-3">
+                                                    <span className="text-[10px] font-bold text-neutral-400 uppercase tracking-wider mb-1">Custom Drum Pads</span>
+                                                    <div className="grid grid-cols-4 sm:grid-cols-8 gap-2">
+                                                        {Array.from({length: 16}).map((_, i) => {
+                                                            const note = 36 + i;
+                                                            const sampleId = track.instrumentParams?.samples?.[note];
+                                                            const noteName = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'][note % 12] + (Math.floor(note / 12) - 1);
+                                                            
+                                                            return (
+                                                                <div key={note} className="flex flex-col items-center justify-center bg-neutral-900 border border-neutral-700 rounded-lg p-2 relative group cursor-pointer hover:border-blue-500 transition-colors shadow-inner min-w-[3rem]" onMouseDown={(e) => { e.stopPropagation(); previewNote(track.id, note, 100); }}>
+                                                                    <span className="text-[9px] font-mono text-neutral-400 mb-1 pointer-events-none">{noteName}</span>
+                                                                    <button 
+                                                                        onMouseDown={(e) => e.stopPropagation()}
+                                                                        onClick={(e) => { e.stopPropagation(); setSamplePickerTarget({ trackId: track.id, note }); }}
+                                                                        className={`w-full aspect-square rounded flex items-center justify-center text-[10px] font-bold shadow-sm cursor-pointer transition-colors ${sampleId ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/50 hover:bg-emerald-500/30' : 'bg-neutral-800 text-neutral-600 hover:text-white hover:bg-neutral-700'}`}
+                                                                        title={`Assign sample to ${noteName}`}
                                                                     >
-                                                                        <X size={10} />
+                                                                        {sampleId ? 'WAV' : '+'}
                                                                     </button>
-                                                                )}
-                                                            </div>
-                                                        );
-                                                    })}
-                                                </div>
-                                            </div>
-                                        )}
-                                        {Object.keys(track.instrumentParams || {}).map(param => {
-                                            if (param === 'samples' || param === 'sampleSettings') return null; // Handled dynamically above
-                                            if (param === 'oscType') {
-                                                return (
-                                                    <div key={param} className="flex flex-col items-center gap-1 w-16 shrink-0 mt-1">
-                                                        <span className="text-[10px] text-neutral-300 font-bold uppercase tracking-wider text-center w-full truncate" title="Oscillator Type">OSC TYPE</span>
-                                                        <select value={track.instrumentParams[param]} onChange={e => handleInstrumentParamChange(track.id, param, e.target.value)} className="w-full bg-neutral-800 border border-neutral-700 text-[10px] font-bold text-blue-400 p-1.5 rounded outline-none cursor-pointer mt-1 text-center appearance-none">
-                                                            <option value="sawtooth">Saw</option>
-                                                            <option value="square">Square</option>
-                                                            <option value="sine">Sine</option>
-                                                            <option value="triangle">Tri</option>
-                                                        </select>
+                                                                    {sampleId && (
+                                                                        <button
+                                                                            className="absolute -top-1.5 -right-1.5 bg-red-500 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity z-10 shadow-[0_0_8px_rgba(239,68,68,0.8)] hover:scale-110"
+                                                                            onClick={(e) => {
+                                                                                e.preventDefault();
+                                                                                e.stopPropagation();
+                                                                                const newSamples = { ...(track.instrumentParams?.samples || {}) };
+                                                                                delete newSamples[note];
+                                                                                handleInstrumentParamChange(track.id, 'samples', newSamples);
+                                                                            }}
+                                                                            title="Remove custom sample"
+                                                                        >
+                                                                            <X size={10} />
+                                                                        </button>
+                                                                    )}
+                                                                </div>
+                                                            );
+                                                        })}
                                                     </div>
+                                                </div>
+                                            )}
+                                            {Object.keys(track.instrumentParams || {}).map(param => {
+                                                if (param === 'samples' || param === 'sampleSettings') return null; 
+                                                if (param === 'oscType') {
+                                                    return (
+                                                        <div key={param} className="flex flex-col items-center gap-1 w-16 shrink-0 mt-1">
+                                                            <span className="text-[10px] text-neutral-300 font-bold uppercase tracking-wider text-center w-full truncate" title="Oscillator Type">OSC TYPE</span>
+                                                            <select value={track.instrumentParams[param]} onChange={e => handleInstrumentParamChange(track.id, param, e.target.value)} className="w-full bg-neutral-800 border border-neutral-700 text-[10px] font-bold text-blue-400 p-1.5 rounded outline-none cursor-pointer mt-1 text-center appearance-none">
+                                                                <option value="sawtooth">Saw</option>
+                                                                <option value="square">Square</option>
+                                                                <option value="sine">Sine</option>
+                                                                <option value="triangle">Tri</option>
+                                                            </select>
+                                                        </div>
+                                                    );
+                                                }
+                                                const constraints = getParamConstraints(param);
+                                                const mappedRange = getMappedRangeForKnob(track.id, null, param);
+                                                const lfoMappedRange = getLfoMappedRangeForKnob(track.id, null, param);
+                                                return (
+                                                    <Knob 
+                                                        key={param}
+                                                        id={`inst-${track.id}-${param}`}
+                                                        param={param} 
+                                                        value={track.instrumentParams[param]} 
+                                                        min={constraints.min} 
+                                                        max={constraints.max} 
+                                                        step={constraints.step} 
+                                                        isLog={constraints.isLog}
+                                                        onChange={(p, v) => handleInstrumentParamChange(track.id, p, v)} 
+                                                        onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'inst_param', trackId: track.id, param: param })}
+                                                        mappedRange={mappedRange}
+                                                        onRangeAdjust={(p, min, max) => handleKnobRangeAdjust(track.id, null, p, min, max)}
+                                                        lfoMappedRange={lfoMappedRange}
+                                                        onLfoRangeAdjust={(p, min, max) => handleLfoKnobRangeAdjust(track.id, null, p, min, max)}
+                                                    />
                                                 );
-                                            }
-                                            const constraints = getParamConstraints(param);
-                                            const mappedRange = getMappedRangeForKnob(track.id, null, param);
-                                            const lfoMappedRange = getLfoMappedRangeForKnob(track.id, null, param);
-                                            return (
-                                                <Knob 
-                                                    key={param}
-                                                    id={`inst-${track.id}-${param}`}
-                                                    param={param} 
-                                                    value={track.instrumentParams[param]} 
-                                                    min={constraints.min} 
-                                                    max={constraints.max} 
-                                                    step={constraints.step} 
-                                                    isLog={constraints.isLog}
-                                                    onChange={(p, v) => handleInstrumentParamChange(track.id, p, v)} 
-                                                    onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'inst_param', trackId: track.id, param: param })}
-                                                    mappedRange={mappedRange}
-                                                    onRangeAdjust={(p, min, max) => handleKnobRangeAdjust(track.id, null, p, min, max)}
-                                                    lfoMappedRange={lfoMappedRange}
-                                                    onLfoRangeAdjust={(p, min, max) => handleLfoKnobRangeAdjust(track.id, null, p, min, max)}
-                                                />
-                                            );
-                                        })}
-                                    </div>
-                                )}
+                                            })}
+                                        </div>
+                                    )}
+                                </div>
                             </div>
                         )}
 
-                        {effects.map((fx, index) => (
+                        {effects.map((fx, index) => {
+                            const analyser = bottomDock.trackId === 'master' 
+                                ? masterFxNodesRef.current[fx.id]?.levelAnalyser 
+                                : synthsRef.current[bottomDock.trackId]?.fxNodes[fx.id]?.levelAnalyser;
+
+                            return (
                             <div 
                                 key={fx.id} 
                                 draggable
                                 onDragStart={(e) => { 
                                     e.dataTransfer.effectAllowed = 'move'; 
                                     e.dataTransfer.setData('text/plain', index.toString());
-                                    // Using the safely initialized dragValuesRef to prevent ReferenceErrors
                                     dragValuesRef.current.draggedFxIndex = index;
                                     setDraggedFxIndex(index); 
                                 }}
                                 onDragEnter={(e) => { e.preventDefault(); setDragOverFxIndex(index); }}
                                 onDragOver={(e) => { 
-                                    e.preventDefault(); 
-                                    e.stopPropagation(); 
-                                    // Continuously assert over-index to defeat dragLeave bubbling issues
+                                    e.preventDefault(); e.stopPropagation(); 
                                     if (dragOverFxIndex !== index) setDragOverFxIndex(index); 
                                 }}
                                 onDragLeave={(e) => { e.preventDefault(); }}
                                 onDrop={(e) => {
-                                    e.preventDefault();
-                                    e.stopPropagation();
-                                    
+                                    e.preventDefault(); e.stopPropagation();
                                     const srcIdx = dragValuesRef.current.draggedFxIndex;
                                     if (srcIdx !== undefined && srcIdx !== null && srcIdx !== index) {
                                         reorderEffects(bottomDock.trackId, srcIdx, index);
                                     }
-                                    
                                     dragValuesRef.current.draggedFxIndex = null;
-                                    setDraggedFxIndex(null);
-                                    setDragOverFxIndex(null);
+                                    setDraggedFxIndex(null); setDragOverFxIndex(null);
                                 }}
                                 onDragEnd={() => { 
                                     dragValuesRef.current.draggedFxIndex = null;
-                                    setDraggedFxIndex(null); 
-                                    setDragOverFxIndex(null); 
+                                    setDraggedFxIndex(null); setDragOverFxIndex(null); 
                                 }}
                                 onContextMenu={(e) => handleContextMenu(e, 'effect', { trackId: bottomDock.trackId, fxId: fx.id })} 
-                                // Added [&_*]:pointer-events-none to prevent child knobs from stealing drag events!
-                                className={`min-w-[12rem] max-w-lg w-max h-max bg-[#444] border rounded-sm p-3 flex flex-col shrink-0 relative group transition-all duration-100 cursor-grab active:cursor-grabbing ${draggedFxIndex === index ? 'opacity-40 border-[#222]' : dragOverFxIndex === index && draggedFxIndex !== null ? 'border-cyan-500 bg-[#555] z-10' : 'border-[#222]'} ${draggedFxIndex !== null ? '[&_*]:pointer-events-none' : ''}`}
+                                className={`w-max min-w-[10rem] max-w-md h-full bg-[#3a3a3a] border rounded-md flex flex-col shrink-0 relative group transition-all duration-100 cursor-grab active:cursor-grabbing ${draggedFxIndex === index ? 'opacity-40 border-[#222]' : dragOverFxIndex === index && draggedFxIndex !== null ? 'border-cyan-500 bg-[#555] z-10' : 'border-[#111]'} ${draggedFxIndex !== null ? '[&_*]:pointer-events-none' : ''}`}
                             >
-                                <div className="flex justify-between items-center mb-3 border-b border-[#222] pb-2 shrink-0">
+                                <div className="h-6 bg-[#2d2d2d] rounded-t-md flex items-center justify-between px-2 border-b border-[#111] shrink-0">
                                    <div className="flex items-center gap-2">
                                       <button 
                                           onClick={() => dispatchDawAction({ type: 'TOGGLE_EFFECT_BYPASS', payload: { trackId: bottomDock.trackId, fxId: fx.id }})}
                                           onMouseEnter={() => setHoverInfo(`Toggle Device On/Off: Bypass ${fx.name}`)}
                                           onMouseLeave={() => setHoverInfo("Welcome to FreeDaw Live.")}
-                                          className={`w-3.5 h-3.5 rounded-sm flex items-center justify-center transition-colors ${fx.bypassed ? 'bg-[#333] text-[#888]' : 'bg-amber-500 text-black shadow-[0_0_8px_rgba(245,158,11,0.5)]'}`}
-                                      >
-                                          <Power size={10} />
-                                      </button>
-                                      <span className={`text-[10px] font-bold whitespace-nowrap uppercase tracking-wider transition-colors ${fx.bypassed ? 'text-[#888]' : 'text-[#e0e0e0]'}`}>{fx.name}</span>
+                                          className={`w-3 h-3 rounded-full border flex items-center justify-center transition-colors ${fx.bypassed ? 'bg-[#222] border-[#111]' : 'bg-[#fbbf24] border-[#fbbf24] shadow-[0_0_5px_rgba(251,191,36,0.5)]'}`}
+                                      />
+                                      <span className={`text-[10px] font-bold whitespace-nowrap uppercase tracking-wider truncate max-w-[120px] transition-colors ${fx.bypassed ? 'text-[#888]' : 'text-[#e0e0e0]'}`}>{fx.name}</span>
                                    </div>
                                    <button onClick={() => deleteEffect(bottomDock.trackId, fx.id)} className="text-[#888] hover:text-[#f87171] opacity-0 group-hover:opacity-100 transition-opacity ml-4"><X size={12}/></button>
                                 </div>
-                                {fx.type === 'parametric-eq' && <ParametricEqVisualizer trackId={bottomDock.trackId} fxId={fx.id} params={fx.params} onParamChange={(p, v) => handleEffectParamChange(bottomDock.trackId, fx.id, p, v)} synthsRef={synthsRef} audioCtxRef={audioCtxRef} masterFxNodesRef={masterFxNodesRef} />}
-                                <div className="flex-1 flex flex-wrap gap-x-6 gap-y-4 overflow-y-auto custom-scrollbar pt-2 pr-2 content-start">
-                                   {Object.keys(fx.params || {}).map(param => {
-                                     const constraints = getParamConstraints(param);
-                                     const mappedRange = getMappedRangeForKnob(bottomDock.trackId, fx.id, param);
-                                     const lfoMappedRange = getLfoMappedRangeForKnob(bottomDock.trackId, fx.id, param);
-                                     return (
-                                        <Knob 
-                                            key={param}
-                                            id={`fx-${bottomDock.trackId}-${fx.id}-${param}`}
-                                            param={param} 
-                                            value={fx.params[param]} 
-                                            min={constraints.min} 
-                                            max={constraints.max} 
-                                            step={constraints.step} 
-                                            isLog={constraints.isLog}
-                                            onChange={(p, v) => handleEffectParamChange(bottomDock.trackId, fx.id, p, v)} 
-                                            onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'fx_param', trackId: bottomDock.trackId, fxId: fx.id, param: param })}
-                                            mappedRange={mappedRange}
-                                            onRangeAdjust={(p, min, max) => handleKnobRangeAdjust(bottomDock.trackId, fx.id, p, min, max)}
-                                            lfoMappedRange={lfoMappedRange}
-                                            onLfoRangeAdjust={(p, min, max) => handleLfoKnobRangeAdjust(bottomDock.trackId, fx.id, p, min, max)}
-                                        />
-                                     );
-                                   })}
+                                <div className="flex-1 flex px-3 py-2 gap-4">
+                                    <div className="flex-1 flex flex-col overflow-y-auto custom-scrollbar">
+                                        {fx.type === 'parametric-eq' && <ParametricEqVisualizer trackId={bottomDock.trackId} fxId={fx.id} params={fx.params} onParamChange={(p, v) => handleEffectParamChange(bottomDock.trackId, fx.id, p, v)} synthsRef={synthsRef} audioCtxRef={audioCtxRef} masterFxNodesRef={masterFxNodesRef} />}
+                                        <div className="flex-1 flex flex-wrap gap-x-6 gap-y-4 content-start">
+                                           {Object.keys(fx.params || {}).map(param => {
+                                             const constraints = getParamConstraints(param);
+                                             const mappedRange = getMappedRangeForKnob(bottomDock.trackId, fx.id, param);
+                                             const lfoMappedRange = getLfoMappedRangeForKnob(bottomDock.trackId, fx.id, param);
+                                             return (
+                                                <Knob 
+                                                    key={param}
+                                                    id={`fx-${bottomDock.trackId}-${fx.id}-${param}`}
+                                                    param={param} 
+                                                    value={fx.params[param]} 
+                                                    min={constraints.min} 
+                                                    max={constraints.max} 
+                                                    step={constraints.step} 
+                                                    isLog={constraints.isLog}
+                                                    onChange={(p, v) => handleEffectParamChange(bottomDock.trackId, fx.id, p, v)} 
+                                                    onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'fx_param', trackId: bottomDock.trackId, fxId: fx.id, param: param })}
+                                                    mappedRange={mappedRange}
+                                                    onRangeAdjust={(p, min, max) => handleKnobRangeAdjust(bottomDock.trackId, fx.id, p, min, max)}
+                                                    lfoMappedRange={lfoMappedRange}
+                                                    onLfoRangeAdjust={(p, min, max) => handleLfoKnobRangeAdjust(bottomDock.trackId, fx.id, p, min, max)}
+                                                />
+                                             );
+                                           })}
+                                        </div>
+                                    </div>
+                                    <div className="w-2 h-full py-1 shrink-0 flex flex-col justify-end border-l border-[#222] pl-2 ml-2">
+                                        <MiniVuMeter analyser={analyser} />
+                                    </div>
                                 </div>
                             </div>
-                        ))}
+                        )})}
                         
-                        {/* Add Effect Button Container */}
-                        <div className="w-24 min-w-[6rem] h-[120px] border border-[#222] hover:border-[#555] bg-[#3a3a3a] rounded-sm flex flex-col items-center justify-center shrink-0 relative group transition-colors cursor-pointer">
-                            <span className="text-[10px] text-[#888] group-hover:text-[#ccc] font-bold tracking-wider text-center">Add Effect</span>
+                        {/* Empty "Drop Audio Effects Here" block */}
+                        <div className="flex-1 min-w-[200px] h-full bg-[#2a2b2b] rounded-md flex items-center justify-center relative group transition-colors border border-transparent hover:border-[#444] border-dashed">
+                            <span className="text-[10px] text-[#666] font-bold uppercase tracking-widest text-center">Drop Audio Effects Here</span>
                             
-                            <div 
-                                className="absolute top-0 left-0 w-48 bg-[#333] border border-[#111] shadow-2xl rounded-sm opacity-0 group-hover:opacity-100 transition-opacity flex flex-col gap-1.5 pointer-events-none group-hover:pointer-events-auto p-2 overflow-y-auto custom-scrollbar z-50"
-                                style={{ maxHeight: `${Math.max(160, dockHeight - 64)}px` }}
-                            >
-                               <div className="text-[9px] font-bold text-neutral-500 mb-1 uppercase tracking-wider px-1 mt-1 shrink-0">Engines</div>
-                               {[...INTERNAL_PLUGINS, ...customPlugins].filter(p => p.category === 'effect').map(p => (
-                                    <button key={p.id} onClick={() => addEffect(bottomDock.trackId, p)} className="w-full text-[10px] font-bold text-neutral-300 hover:text-white bg-neutral-950 border border-neutral-800 hover:border-blue-500 hover:bg-blue-600/20 px-3 py-2 rounded-lg transition-colors text-left truncate shrink-0">{p.name}</button>
-                               ))}
+                            <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 bg-[#2a2b2b]/90 backdrop-blur-sm transition-opacity">
+                                <div className="relative">
+                                    <button className="bg-[#444] hover:bg-cyan-500 hover:text-black text-[#ccc] border border-[#222] px-4 py-2 rounded-sm text-[10px] font-bold uppercase tracking-wider cursor-pointer transition-colors shadow-sm">
+                                        + Add Effect
+                                    </button>
+                                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-48 bg-[#333] border border-[#111] shadow-2xl rounded-sm opacity-0 group-hover:opacity-100 transition-opacity flex flex-col gap-1.5 pointer-events-none group-hover:pointer-events-auto p-2 overflow-y-auto custom-scrollbar z-50 max-h-48">
+                                       <div className="text-[9px] font-bold text-neutral-500 mb-1 uppercase tracking-wider px-1 mt-1 shrink-0">Engines</div>
+                                       {[...INTERNAL_PLUGINS, ...customPlugins].filter(p => p.category === 'effect').map(p => (
+                                            <button key={p.id} onClick={() => addEffect(bottomDock.trackId, p)} className="w-full text-[10px] font-bold text-neutral-300 hover:text-white bg-neutral-950 border border-neutral-800 hover:border-blue-500 hover:bg-blue-600/20 px-3 py-2 rounded-lg transition-colors text-left truncate shrink-0">{p.name}</button>
+                                       ))}
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>
