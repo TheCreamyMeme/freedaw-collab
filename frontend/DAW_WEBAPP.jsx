@@ -2247,6 +2247,7 @@ function DAWStudio() {
   const [midiLearnTarget, setMidiLearnTarget] = useState(null);
   
   const currentProjectIdRef = useRef(projectId);
+  const appViewRef = useRef(appView);
   const authTokenRef = useRef(authToken);
   const stateRefs = useRef({ currentTime: 0, isPlaying: false, isRecording: false, bpm: 120 });
   const isMetronomeEnabledRef = useRef(isMetronomeEnabled);
@@ -2335,6 +2336,15 @@ function DAWStudio() {
   useEffect(() => { projectNameRef.current = projectName; }, [projectName]);
   useEffect(() => { selectedTrackIdRef.current = selectedTrackId; }, [selectedTrackId]);
   useEffect(() => { selectedClipIdsRef.current = selectedClipIds; }, [selectedClipIds]);
+
+  useEffect(() => {
+      if (socketRef.current && currentUser) {
+          socketRef.current.emit('presence-update', { 
+              projectId: appView === 'daw' ? projectId : null,
+              appView
+          });
+      }
+  }, [projectId, appView, currentUser]);
 
   // --- Live Audio Monitoring (Mic Input) for Armed Tracks ---
   const armedAudioTracksMeta = JSON.stringify(
@@ -2489,6 +2499,7 @@ function DAWStudio() {
   }, [tracks, fetchAudioSample]);
 
   useEffect(() => { currentProjectIdRef.current = projectId; }, [projectId]);
+  useEffect(() => { appViewRef.current = appView; }, [appView]);
   useEffect(() => { authTokenRef.current = authToken; }, [authToken]);
   useEffect(() => { loopRegionRef.current = loopRegion; }, [loopRegion]);
   useEffect(() => { exportRegionRef.current = exportRegion; }, [exportRegion]);
@@ -5209,22 +5220,30 @@ const initAudioEngine = async (explicitTracks = null) => {
 
           const joinCurrentRoom = () => {
               const freshUser = JSON.parse(localStorage.getItem('freedaw_user')) || user;
-              socket.emit('join-room', 'global-studio', freshUser);
+              socket.emit('join-room', 'global-studio', {
+                  ...freshUser,
+                  projectId: currentProjectIdRef.current,
+                  appView: appViewRef.current
+              });
           };
           if (socket.connected) joinCurrentRoom();
           socket.on('connect', joinCurrentRoom);
 
           socket.on('user-connected', async (peerId, peerProfile) => {
-              showToast(`${peerProfile.username} joined`, 'info');
-              setPeers(prev => ({ ...prev, [peerId]: { ...peerProfile } }));
+              if (peerProfile?.username) showToast(`${peerProfile.username} joined`, 'info');
+              
+              // Merge in case we already received partial presence (like a cursor move) before the connection handshake
+              setPeers(prev => ({ ...prev, [peerId]: { ...(prev[peerId] || {}), ...peerProfile } }));
               
               // CRITICAL FIX: Broadcast my profile back so the new user knows I'm online!
-              // Fetch fresh user state from localStorage to ensure we broadcast the newly uploaded avatar
+              // Include current project and view state so they know exactly where we are immediately
               const freshUser = JSON.parse(localStorage.getItem('freedaw_user')) || user;
               socket.emit('presence-update', { 
                   username: freshUser.username, avatar: freshUser.avatar, color: freshUser.color, 
                   bio: freshUser.bio, email: freshUser.email, website: freshUser.website, 
-                  instagram: freshUser.instagram, twitter: freshUser.twitter 
+                  instagram: freshUser.instagram, twitter: freshUser.twitter,
+                  projectId: currentProjectIdRef.current,
+                  appView: appViewRef.current
               });
           });
           
@@ -6433,8 +6452,8 @@ const initAudioEngine = async (explicitTracks = null) => {
                       </div>
                   </div>
                   {visible.map((peer, idx) => (
-                      <div key={idx} onClick={() => setViewProfileUser(peer)} style={{ zIndex: 40 - idx }} className={`w-8 h-8 ${peer.avatar ? '' : (peer.color || 'bg-blue-600')} rounded-full border-2 border-neutral-900 overflow-hidden flex items-center justify-center text-xs font-bold text-white relative shadow-sm cursor-pointer hover:ring-2 hover:ring-neutral-700 transition-all`} title={peer.username}>
-                          {peer.avatar ? <img src={peer.avatar} alt={peer.username} className="w-full h-full object-cover" /> : peer.username?.charAt(0).toUpperCase()}
+                      <div key={idx} onClick={() => setViewProfileUser(peer)} style={{ zIndex: 40 - idx }} className={`w-8 h-8 ${peer.avatar ? '' : (peer.color || 'bg-blue-600')} rounded-full border-2 border-neutral-900 overflow-hidden flex items-center justify-center text-xs font-bold text-white relative shadow-sm cursor-pointer hover:ring-2 hover:ring-neutral-700 transition-all`} title={peer.username || 'Peer'}>
+                          {peer.avatar ? <img src={peer.avatar} alt={peer.username} className="w-full h-full object-cover" /> : (peer.username || '?').charAt(0).toUpperCase()}
                       </div>
                   ))}
                   {extra > 0 && (
@@ -6450,7 +6469,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                       {peerList.map((peer, idx) => (
                           <div key={idx} onClick={() => setViewProfileUser(peer)} className="flex items-center gap-3 p-2 hover:bg-neutral-800 rounded-md cursor-pointer transition-colors">
                               <div className={`w-8 h-8 ${peer.avatar ? '' : (peer.color || 'bg-blue-600')} rounded-full overflow-hidden flex items-center justify-center text-xs font-bold text-white shrink-0`}>
-                                  {peer.avatar ? <img src={peer.avatar} alt={peer.username} className="w-full h-full object-cover" /> : peer.username?.charAt(0).toUpperCase()}
+                                  {peer.avatar ? <img src={peer.avatar} alt={peer.username} className="w-full h-full object-cover" /> : (peer.username || '?').charAt(0).toUpperCase()}
                               </div>
                               <div className="flex flex-col truncate">
                                   <span className="text-xs font-bold text-white truncate">{peer.username}</span>
@@ -8279,7 +8298,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                                     {viewProfileUser.avatar ? (
                                         <img src={viewProfileUser.avatar} alt={viewProfileUser.username} className="w-full h-full object-cover" />
                                     ) : (
-                                        viewProfileUser.username?.charAt(0).toUpperCase()
+                                        (viewProfileUser.username || '?').charAt(0).toUpperCase()
                                     )}
                                 </div>
                                 <div>
