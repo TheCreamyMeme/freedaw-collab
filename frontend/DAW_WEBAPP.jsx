@@ -1691,8 +1691,8 @@ const triggerSubtractive = (ctx, bus, pitch, time, vol, dur, p={}, vel=100, pbNo
       try {
           const now = ctx.currentTime;
           env.gain.cancelScheduledValues(now);
-          env.gain.setTargetAtTime(0, now, 0.05);
-          osc.stop(now + 0.1);
+          env.gain.setTargetAtTime(0, now, (p.release || 0.1) / 3);
+          osc.stop(now + (p.release || 0.1) + 0.1);
       } catch(e){}
   };
 };
@@ -1725,8 +1725,8 @@ const triggerSupersaw = (ctx, bus, pitch, time, vol, dur, p={}, vel=100, pbNode)
       try {
           const now = ctx.currentTime;
           env.gain.cancelScheduledValues(now);
-          env.gain.setTargetAtTime(0, now, 0.05);
-          oscs.forEach(o => o.stop(now + 0.1));
+          env.gain.setTargetAtTime(0, now, (p.release || 0.5) / 3);
+          oscs.forEach(o => o.stop(now + (p.release || 0.5) + 0.1));
       } catch(e){}
   };
 };
@@ -1748,9 +1748,9 @@ const triggerFMSynth = (ctx, bus, pitch, time, vol, dur, p={}, vel=100, pbNode) 
       try {
           const now = ctx.currentTime;
           env.gain.cancelScheduledValues(now);
-          env.gain.setTargetAtTime(0, now, 0.05);
-          carrier.stop(now + 0.1);
-          mod.stop(now + 0.1);
+          env.gain.setTargetAtTime(0, now, (p.release || 0.2) / 3);
+          carrier.stop(now + (p.release || 0.2) + 0.1);
+          mod.stop(now + (p.release || 0.2) + 0.1);
       } catch(e){}
   };
 };
@@ -1870,20 +1870,14 @@ const triggerDrum = (ctx, bus, pitch, time, vol, p={}, vel=100) => {
       const startOffset = settings.start * sampleData.duration;
       const playDur = (settings.end - settings.start) * sampleData.duration;
       
-      if (playDur > 0) {
-          source.start(time, startOffset, playDur);
-      }
-      return () => {
-          try {
-              const now = ctx.currentTime;
-              gainNode.gain.cancelScheduledValues(now);
-              gainNode.gain.setTargetAtTime(0, now, 0.05);
-              source.stop(now + 0.1);
-          } catch(e){}
-      };
-  }
+            if (playDur > 0) {
+                source.start(time, startOffset, playDur);
+            }
+            return null; // Fire and forget
+        }
 
-  if (pitch === 36) { // Kick
+        if (pitch === 36) { // Kick
+
     const osc = ctx.createOscillator(), env = ctx.createGain();
     osc.frequency.setValueAtTime(150, time); osc.frequency.exponentialRampToValueAtTime(10, time + 0.5);
     env.gain.setValueAtTime(realVol, time); env.gain.exponentialRampToValueAtTime(0.001, time + 0.5);
@@ -1915,15 +1909,7 @@ const triggerDrum = (ctx, bus, pitch, time, vol, p={}, vel=100) => {
     activeNodes.push({ src: noise, env: nEnv });
   }
   
-  return () => {
-      const now = ctx.currentTime;
-      activeNodes.forEach(node => {
-          try {
-              if (node.env) { node.env.gain.cancelScheduledValues(now); node.env.gain.setTargetAtTime(0, now, 0.05); }
-              if (node.src) node.src.stop(now + 0.1);
-          } catch(e){}
-      });
-  };
+  return null; // Drums are one-shots, do not interrupt decay
 };
 
 // --- Helper to prevent Web Audio Memory Leaks ---
@@ -2392,7 +2378,7 @@ const SampleCropper = React.memo(({ sampleId, settings, onChange }) => {
     );
 });
 
-const GlobalStatusBar = React.memo(({ masterAnalyserRef, latencyMs, theme }) => {
+const GlobalStatusBar = React.memo(({ masterAnalyserRef, latencyMs, theme, snapGrid, setSnapGrid, currentTime, bpm, timeDisplayRef, posDisplayRef, masterVolume, handleMasterVolumeChange, dispatchDawAction }) => {
     const specRef = useRef(null);
     const waveRef = useRef(null);
     const scopeRef = useRef(null);
@@ -2552,40 +2538,71 @@ const GlobalStatusBar = React.memo(({ masterAnalyserRef, latencyMs, theme }) => 
         return () => cancelAnimationFrame(reqId);
     }, [masterAnalyserRef]);
 
-    return (
-        <div className="h-10 bg-[#1a1a1a] border-t border-[#111] shrink-0 flex items-center justify-end px-4 text-[#888] text-[9px] font-bold uppercase tracking-wider z-50 w-full relative gap-6">
-            
-            <div className="flex items-center gap-2 shrink-0 h-full py-1.5" title="CPU Load">
-                <span className="text-[8px] text-neutral-500">CPU</span>
-                <canvas ref={cpuRef} width={80} height={24} className="rounded-[3px] border border-[#333] w-[80px] h-[24px] bg-[#111]" />
-            </div>
-
-            <div className="flex items-center gap-2 shrink-0 h-full py-1.5" title="Round-trip Latency">
-                <span className="text-[8px] text-neutral-500">LAT</span>
-                <div className="rounded-[3px] border border-[#333] w-[40px] h-[24px] bg-[#111] flex items-center justify-center text-cyan-500 font-mono text-[9px]">
-                    {latencyMs ? Math.round(latencyMs) : '0'}ms
+        return (
+            <div className="h-10 bg-[#1a1a1a] border-t border-[#111] shrink-0 flex items-center justify-between px-4 text-[#888] text-[9px] font-bold uppercase tracking-wider z-50 w-full relative gap-4 overflow-x-auto overflow-y-hidden custom-scrollbar">
+                
+                <div className="flex items-center gap-4 bg-neutral-900/80 px-4 py-1 rounded-lg border border-neutral-800 font-mono text-[10px] shadow-inner shrink-0 h-7 my-1.5">
+                   <div className="flex items-center gap-1 text-neutral-400">
+                        <span className="uppercase text-[8px] font-bold text-neutral-600">GRID</span>
+                        <select value={snapGrid} onChange={e => setSnapGrid(Number(e.target.value))} className="bg-transparent w-12 text-blue-400 font-bold focus:outline-none text-[9px] cursor-pointer">
+                            <option value={4} className="bg-neutral-900 text-neutral-300">1 Bar</option>
+                            <option value={1} className="bg-neutral-900 text-neutral-300">1/4</option>
+                            <option value={0.5} className="bg-neutral-900 text-neutral-300">1/8</option>
+                            <option value={0.25} className="bg-neutral-900 text-neutral-300">1/16</option>
+                            <option value={0.125} className="bg-neutral-900 text-neutral-300">1/32</option>
+                            <option value={0} className="bg-neutral-900 text-neutral-300">Off</option>
+                        </select>
+                   </div>
+                   <div className="flex items-center gap-1.5 text-neutral-400 border-l border-neutral-700 pl-3"><span className="uppercase text-[8px] font-bold text-neutral-600">Time</span> <span ref={timeDisplayRef} className="text-white w-12">{formatTime(currentTime, bpm)}</span></div>
+                   <div className="flex items-center gap-1.5 text-neutral-400"><span className="uppercase text-[8px] font-bold text-neutral-600">Pos</span> <span ref={posDisplayRef} className="text-white w-10">{Math.floor(currentTime / 4) + 1}.{Math.floor(currentTime % 4) + 1}.1</span></div>
+                   <div className="flex items-center gap-1 text-neutral-400"><span className="uppercase text-[8px] font-bold text-neutral-600">BPM</span> <input id="bpm-input" name="bpm" autoComplete="off" type="number" value={bpm} onChange={(e) => dispatchDawAction({ type: 'UPDATE_BPM', payload: { bpm: Number(e.target.value) } })} className="bg-transparent w-8 text-white focus:outline-none" min="40" max="300" /></div>
+                   
+                   {/* Global Master Volume & VU Meter */}
+                   <div className="flex items-center gap-2 border-l border-neutral-700 pl-3 ml-1 h-full">
+                       <Volume2 size={10} className="text-neutral-500" />
+                       <div className="flex flex-col justify-center gap-1 w-16 h-full">
+                           <input type="range" min="0" max="100" value={masterVolume} onChange={(e) => handleMasterVolumeChange(e.target.value)} onWheel={(e) => { e.stopPropagation(); handleMasterVolumeChange(Math.min(100, Math.max(0, masterVolume + (e.deltaY < 0 ? 5 : -5)))); }} className="w-full h-[2px] bg-black rounded-full appearance-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-1.5 [&::-webkit-slider-thumb]:h-1.5 [&::-webkit-slider-thumb]:bg-white cursor-pointer" />
+                           <div className="h-1.5 w-full">
+                               <VuMeter isMaster={true} masterAnalyserRef={masterAnalyserRef} isVertical={false} />
+                           </div>
+                       </div>
+                   </div>
                 </div>
-            </div>
 
-            <div className="w-px h-5 bg-[#333] mx-1" />
+                <div className="flex items-center gap-4 shrink-0 h-full">
+                    <div className="flex items-center gap-2 shrink-0 h-full py-1.5" title="CPU Load">
+                        <span className="text-[8px] text-neutral-500">CPU</span>
+                        <canvas ref={cpuRef} width={80} height={24} className="rounded-[3px] border border-[#333] w-[80px] h-[24px] bg-[#111]" />
+                    </div>
 
-            <div className="flex items-center gap-2 shrink-0 h-full py-1.5" title="Master Spectrum">
-                <span className="text-[8px] text-neutral-500">FREQ</span>
-                <canvas ref={specRef} width={100} height={24} className="rounded-[3px] border border-[#333] w-[100px] h-[24px] bg-[#111]" />
-            </div>
+                    <div className="flex items-center gap-2 shrink-0 h-full py-1.5" title="Round-trip Latency">
+                        <span className="text-[8px] text-neutral-500">LAT</span>
+                        <div className="rounded-[3px] border border-[#333] w-[40px] h-[24px] bg-[#111] flex items-center justify-center text-cyan-500 font-mono text-[9px]">
+                            {latencyMs ? Math.round(latencyMs) : '0'}ms
+                        </div>
+                    </div>
 
-            <div className="flex items-center gap-2 shrink-0 h-full py-1.5" title="Master Waveform">
-                <span className="text-[8px] text-neutral-500">WAVE</span>
-                <canvas ref={waveRef} width={100} height={24} className="rounded-[3px] border border-[#333] w-[100px] h-[24px] bg-[#111]" />
-            </div>
+                    <div className="w-px h-5 bg-[#333] mx-1" />
 
-            <div className="flex items-center gap-2 shrink-0 h-full py-1.5" title="Stereo Imager">
-                <span className="text-[8px] text-neutral-500">STEREO</span>
-                <canvas ref={scopeRef} width={24} height={24} className="rounded-[3px] border border-[#333] w-[24px] h-[24px] bg-[#111]" />
+                    <div className="flex items-center gap-2 shrink-0 h-full py-1.5" title="Master Spectrum">
+                        <span className="text-[8px] text-neutral-500">FREQ</span>
+                        <canvas ref={specRef} width={100} height={24} className="rounded-[3px] border border-[#333] w-[100px] h-[24px] bg-[#111]" />
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0 h-full py-1.5" title="Master Waveform">
+                        <span className="text-[8px] text-neutral-500">WAVE</span>
+                        <canvas ref={waveRef} width={100} height={24} className="rounded-[3px] border border-[#333] w-[100px] h-[24px] bg-[#111]" />
+                    </div>
+
+                    <div className="flex items-center gap-2 shrink-0 h-full py-1.5" title="Stereo Imager">
+                        <span className="text-[8px] text-neutral-500">STEREO</span>
+                        <canvas ref={scopeRef} width={24} height={24} className="rounded-[3px] border border-[#333] w-[24px] h-[24px] bg-[#111]" />
+                    </div>
+                </div>
+                
             </div>
-            
-        </div>
-    );
+        );
+
 });
 
 export default class App extends Component {
@@ -5367,16 +5384,38 @@ const initAudioEngine = async (explicitTracks = null) => {
                       }
                   } else {
                       const pbNode = synth.pitchBendNode;
-                      if (isDrum) triggerDrum(audioCtxRef.current, synth.inputBus, noteOrCC, now, 1, armedTrack.instrumentParams, velocityOrVal);
-                      else if (armedTrack.instrument === 'inst-fm') triggerFMSynth(audioCtxRef.current, synth.inputBus, noteOrCC, now, 1, 0.25, armedTrack.instrumentParams, velocityOrVal, pbNode);
-                      else if (armedTrack.instrument === 'inst-supersaw') triggerSupersaw(audioCtxRef.current, synth.inputBus, noteOrCC, now, 1, 0.25, armedTrack.instrumentParams, velocityOrVal, pbNode);
-                      else if (armedTrack.instrument === 'inst-pluck') triggerPluck(audioCtxRef.current, synth.inputBus, noteOrCC, now, 1, 0.25, armedTrack.instrumentParams, velocityOrVal, pbNode);
-                      else if (armedTrack.instrument === 'inst-acid') triggerAcid(audioCtxRef.current, synth.inputBus, noteOrCC, now, 1, 0.25, armedTrack.instrumentParams, velocityOrVal, pbNode);
-                      else if (armedTrack.instrument === 'inst-organ') triggerOrgan(audioCtxRef.current, synth.inputBus, noteOrCC, now, 1, 0.25, armedTrack.instrumentParams, velocityOrVal, pbNode);
-                      else triggerSubtractive(audioCtxRef.current, synth.inputBus, noteOrCC, now, 1, 0.25, armedTrack.instrumentParams, velocityOrVal, pbNode);
+                      let stopFn = null;
+                      const customInst = window.FreeDawPlugins?.find(p => p.id === armedTrack.instrument);
+                      
+                      if (customInst && typeof customInst.triggerNote === 'function') {
+                          try { stopFn = customInst.triggerNote(audioCtxRef.current, synth.inputBus, noteOrCC, now, 1, 999, armedTrack.instrumentParams, velocityOrVal, pbNode); } catch(e){}
+                      } else if (isDrum) {
+                          triggerDrum(audioCtxRef.current, synth.inputBus, noteOrCC, now, 1, armedTrack.instrumentParams, velocityOrVal);
+                      } else if (armedTrack.instrument === 'inst-fm') {
+                          stopFn = triggerFMSynth(audioCtxRef.current, synth.inputBus, noteOrCC, now, 1, 999, armedTrack.instrumentParams, velocityOrVal, pbNode);
+                      } else if (armedTrack.instrument === 'inst-supersaw') {
+                          stopFn = triggerSupersaw(audioCtxRef.current, synth.inputBus, noteOrCC, now, 1, 999, armedTrack.instrumentParams, velocityOrVal, pbNode);
+                      } else if (armedTrack.instrument === 'inst-pluck') {
+                          stopFn = triggerPluck(audioCtxRef.current, synth.inputBus, noteOrCC, now, 1, 999, armedTrack.instrumentParams, velocityOrVal, pbNode);
+                      } else if (armedTrack.instrument === 'inst-acid') {
+                          stopFn = triggerAcid(audioCtxRef.current, synth.inputBus, noteOrCC, now, 1, 999, armedTrack.instrumentParams, velocityOrVal, pbNode);
+                      } else if (armedTrack.instrument === 'inst-organ') {
+                          stopFn = triggerOrgan(audioCtxRef.current, synth.inputBus, noteOrCC, now, 1, 999, armedTrack.instrumentParams, velocityOrVal, pbNode);
+                      } else {
+                          stopFn = triggerSubtractive(audioCtxRef.current, synth.inputBus, noteOrCC, now, 1, 999, armedTrack.instrumentParams, velocityOrVal, pbNode);
+                      }
+                      
+                      if (stopFn) {
+                          if (!synth.activeMidiSources) synth.activeMidiSources = new Map();
+                          synth.activeMidiSources.set(`live_${noteOrCC}`, stopFn);
+                      }
                   }
               } else if (isNoteOff) {
                   if (activeLiveMidiNotesRef.current[noteOrCC]) {
+                      if (!armedTrack.arpEnabled && synth.activeMidiSources && synth.activeMidiSources.has(`live_${noteOrCC}`)) {
+                          synth.activeMidiSources.get(`live_${noteOrCC}`)();
+                          synth.activeMidiSources.delete(`live_${noteOrCC}`);
+                      }
                       if (state.isRecording && state.isPlaying) {
                           const startBeat = activeLiveMidiNotesRef.current[noteOrCC].start;
                           const recordedVelocity = activeLiveMidiNotesRef.current[noteOrCC].velocity;
@@ -6357,6 +6396,7 @@ const initAudioEngine = async (explicitTracks = null) => {
               disconnectTrackRouting(synthsRef.current[action.payload.id]);
               delete synthsRef.current[action.payload.id];
               break;
+          case 'UPDATE_BPM': setBpm(action.payload.bpm); break;
           case 'RENAME_TRACK': setTracks(prev => prev.map(t => t.id === action.payload.id ? { ...t, name: action.payload.name } : t)); break;
           case 'UPDATE_TRACK_COLOR': setTracks(prev => prev.map(t => t.id === action.payload.trackId ? { ...t, color: action.payload.color } : t)); break;
           case 'UPDATE_TRACK_VOL': 
@@ -7695,34 +7735,6 @@ const initAudioEngine = async (explicitTracks = null) => {
 
 
         <div className="flex items-center justify-end gap-2 lg:gap-3 flex-1 min-w-0">
-            <div className="hidden xl:flex items-center gap-4 bg-neutral-900/80 px-4 py-1.5 rounded-xl border border-neutral-800 font-mono text-[11px] shadow-inner mr-2 shrink-0">
-               <div className="flex items-center gap-1 text-neutral-400">
-                    <span className="uppercase text-[9px] font-bold text-neutral-600">GRID</span>
-                    <select value={snapGrid} onChange={e => setSnapGrid(Number(e.target.value))} className="bg-transparent w-12 text-blue-400 font-bold focus:outline-none text-[10px] cursor-pointer">
-                        <option value={4} className="bg-neutral-900 text-neutral-300">1 Bar</option>
-                        <option value={1} className="bg-neutral-900 text-neutral-300">1/4</option>
-                        <option value={0.5} className="bg-neutral-900 text-neutral-300">1/8</option>
-                        <option value={0.25} className="bg-neutral-900 text-neutral-300">1/16</option>
-                        <option value={0.125} className="bg-neutral-900 text-neutral-300">1/32</option>
-                        <option value={0} className="bg-neutral-900 text-neutral-300">Off</option>
-                    </select>
-               </div>
-               <div className="flex items-center gap-1.5 text-neutral-400 border-l border-neutral-700 pl-4"><span className="uppercase text-[9px] font-bold text-neutral-600">Time</span> <span ref={timeDisplayRef} className="text-white w-14">{formatTime(currentTime, bpm)}</span></div>
-               <div className="flex items-center gap-1.5 text-neutral-400"><span className="uppercase text-[9px] font-bold text-neutral-600">Pos</span> <span ref={posDisplayRef} className="text-white">{Math.floor(currentTime / 4) + 1}.{Math.floor(currentTime % 4) + 1}.1</span></div>
-               <div className="flex items-center gap-1 text-neutral-400"><span className="uppercase text-[9px] font-bold text-neutral-600">BPM</span> <input id="bpm-input" name="bpm" autoComplete="off" type="number" value={bpm} onChange={(e) => dispatchDawAction({ type: 'SYNC_STATE', payload: { tracks, bpm: Number(e.target.value) } })} className="bg-transparent w-8 text-white focus:outline-none" min="40" max="300" /></div>
-               
-               {/* Global Master Volume & VU Meter in the Header */}
-               <div className="flex items-center gap-2 border-l border-neutral-700 pl-4 ml-1">
-                   <Volume2 size={12} className="text-neutral-500" />
-                   <div className="flex flex-col gap-1 w-20">
-                       <input type="range" min="0" max="100" value={masterVolume} onChange={(e) => handleMasterVolumeChange(e.target.value)} onWheel={(e) => { e.stopPropagation(); handleMasterVolumeChange(Math.min(100, Math.max(0, masterVolume + (e.deltaY < 0 ? 5 : -5)))); }} className="w-full h-1 bg-black rounded-full appearance-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-2 [&::-webkit-slider-thumb]:h-2 [&::-webkit-slider-thumb]:bg-white cursor-pointer" />
-                       <div className="h-3 w-full">
-                           <VuMeter isMaster={true} masterAnalyserRef={masterAnalyserRef} isVertical={false} />
-                       </div>
-                   </div>
-               </div>
-            </div>
-
             <div className="flex items-center gap-3 mr-2">
                 {renderCurrentUserAvatar()}
                 {renderPeerAvatars(projectPeersList)}
@@ -9874,7 +9886,20 @@ const initAudioEngine = async (explicitTracks = null) => {
       </div>
 
       {/* Global Status Bar */}
-      <GlobalStatusBar masterAnalyserRef={masterAnalyserRef} latencyMs={latencyCompensationMs} theme={theme} />
+      <GlobalStatusBar 
+          masterAnalyserRef={masterAnalyserRef} 
+          latencyMs={latencyCompensationMs} 
+          theme={theme} 
+          snapGrid={snapGrid}
+          setSnapGrid={setSnapGrid}
+          currentTime={currentTime}
+          bpm={bpm}
+          timeDisplayRef={timeDisplayRef}
+          posDisplayRef={posDisplayRef}
+          masterVolume={masterVolume}
+          handleMasterVolumeChange={handleMasterVolumeChange}
+          dispatchDawAction={dispatchDawAction}
+      />
       
     </div>
   );
