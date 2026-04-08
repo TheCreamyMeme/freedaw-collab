@@ -3877,7 +3877,8 @@ const initAudioEngine = async (explicitTracks = null) => {
                   const timeBase = stateRefs.current.isPlaying ? newTime : (now * (stateRefs.current.bpm / 60));
                   const currentArpStep = Math.floor(timeBase / arpRate);
 
-                  if (currentArpStep > (synth.lastArpStep || -1)) {
+                  // FIX: Ensure 0 doesn't evaluate to falsy, preventing a massive note burst on step 0
+                  if (currentArpStep > (synth.lastArpStep !== undefined ? synth.lastArpStep : -1)) {
                       synth.lastArpStep = currentArpStep;
 
                       let sortedPitches = [...new Set(activeChord.map(n => n.pitch))].sort((a,b) => a - b);
@@ -7299,7 +7300,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                         <div className={`flex gap-1 overflow-hidden flex-nowrap ${trackHeaderWidth < 260 ? 'w-full justify-center' : ''}`}>
                             {/* Auto Tracks Toggle Button */}
                             <button onClick={() => setIsAutomationMode(!isAutomationMode)} className={`text-[9px] uppercase font-bold flex items-center justify-center gap-1 px-1.5 py-0.5 rounded-sm transition-colors flex-1 ${isAutomationMode ? 'bg-cyan-500 text-black' : 'bg-[#444] text-neutral-400 hover:text-white hover:bg-[#555]'}`} title="Toggle Automation Lanes (Ctrl+Shift+A)"><Activity size={10} className="shrink-0"/> <span>Auto</span></button>
-                            <button onClick={() => dispatchDawAction({ type: 'ADD_TRACK', payload: { id: Date.now(), name: 'New MIDI', type: 'midi', instrument: 'inst-subtractive', instrumentParams: {cutoff:2000, res:1}, color: USER_COLORS[Math.floor(Math.random() * USER_COLORS.length)], volume: 80, pan: 0, automation: {}, activeAutomationParam: 'volume', clips: [], effects: [] }})} className="text-[9px] uppercase text-neutral-400 hover:text-white font-bold flex items-center justify-center gap-1 bg-[#444] hover:bg-[#555] px-1.5 py-0.5 rounded-sm transition-colors flex-1"><Plus size={10} className="shrink-0"/> <span>MIDI</span></button>
+                            <button onClick={() => dispatchDawAction({ type: 'ADD_TRACK', payload: { id: Date.now(), name: 'New MIDI', type: 'midi', instrument: 'inst-subtractive', instrumentParams: {cutoff:2000, res:1}, color: USER_COLORS[Math.floor(Math.random() * USER_COLORS.length)], volume: 80, pan: 0, arpEnabled: false, arpRate: 0.25, arpPattern: 'up', automation: {}, activeAutomationParam: 'volume', clips: [], effects: [] }})} className="text-[9px] uppercase text-neutral-400 hover:text-white font-bold flex items-center justify-center gap-1 bg-[#444] hover:bg-[#555] px-1.5 py-0.5 rounded-sm transition-colors flex-1"><Plus size={10} className="shrink-0"/> <span>MIDI</span></button>
                             <button onClick={() => dispatchDawAction({ type: 'ADD_TRACK', payload: { id: Date.now(), name: 'New Audio', type: 'audio', color: USER_COLORS[Math.floor(Math.random() * USER_COLORS.length)], volume: 80, pan: 0, automation: {}, activeAutomationParam: 'volume', clips: [], effects: [] }})} className="text-[9px] uppercase text-neutral-400 hover:text-white font-bold flex items-center justify-center gap-1 bg-[#444] hover:bg-[#555] px-1.5 py-0.5 rounded-sm transition-colors flex-1"><Plus size={10} className="shrink-0"/> <span>Audio</span></button>
                         </div>
                     </div>
@@ -7355,14 +7356,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                                     </div>
                                     <div className="flex items-center gap-0.5 shrink-0">
                                         {t.type === 'midi' && (
-                                            <button 
-                                                onClick={(e) => { e.stopPropagation(); dispatchDawAction({ type: 'TOGGLE_ARP', payload: { trackId: t.id } }); }} 
-                                                onContextMenu={(e) => handleContextMenu(e, 'arp-controls', { trackId: t.id })}
-                                                className={`w-6 h-5 rounded-sm text-[8px] font-bold transition-colors ${t.arpEnabled ? 'bg-purple-500 text-black' : 'text-[#888] bg-[#222] hover:bg-[#555]'}`} 
-                                                title="Arpeggiator (Right-Click for Settings)"
-                                            >
-                                                ARP
-                                            </button>
+                                            <button onClick={(e) => { e.stopPropagation(); dispatchDawAction({ type: 'TOGGLE_ARP', payload: { trackId: t.id } }); }} className={`w-6 h-5 rounded-sm text-[8px] font-bold transition-colors ${t.arpEnabled ? 'bg-purple-500 text-black' : 'text-[#888] bg-[#222] hover:bg-[#555]'}`} title="Arpeggiator">ARP</button>
                                         )}
                                         <button onClick={(e) => { e.stopPropagation(); dispatchDawAction({ type: 'TOGGLE_ARM', payload: { trackId: t.id } }); }} className={`w-5 h-5 rounded-sm flex items-center justify-center transition-colors ${t.armed ? 'text-black bg-[#ff5a5a]' : 'text-[#888] bg-[#222] hover:bg-[#555]'}`}><Circle size={8} fill={t.armed ? "currentColor" : "none"}/></button>
                                         <button onClick={(e) => { e.stopPropagation(); dispatchDawAction({ type: 'TOGGLE_MUTE', payload: { trackId: t.id } }); }} className={`w-5 h-5 rounded-sm text-[9px] font-bold transition-colors ${t.muted ? 'bg-[#ffae00] text-black' : 'text-[#888] bg-[#222] hover:bg-[#555]'}`}>M</button>
