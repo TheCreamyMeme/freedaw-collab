@@ -1370,7 +1370,7 @@ const createFXNode = async (ctx, fx) => {
 const _createFXNode = async (ctx, fx) => {
   const input = ctx.createGain(), output = ctx.createGain(), wet = ctx.createGain(), dry = ctx.createGain();
   input.connect(dry); dry.connect(output);
-  wet.gain.value = fx.params?.mix ?? 0.5; dry.gain.value = 1 - wet.gain.value;
+  wet.gain.value = fx.params?.mix ?? 1.0; dry.gain.value = 1 - wet.gain.value;
 
   if (fx.type === 'delay') {
     const delay = ctx.createDelay(5.0); delay.delayTime.value = fx.params?.time || 0.3;
@@ -6559,7 +6559,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                           const nextBypass = !fx.bypassed;
                           const nodeObj = masterFxNodesRef.current[action.payload.fxId];
                           if (nodeObj && nodeObj.wet && nodeObj.dry) {
-                              const mixVal = nextBypass ? 0 : (fx.params?.mix ?? 0.5);
+                              const mixVal = nextBypass ? 0 : (fx.params?.mix ?? 1.0);
                               const now = audioCtxRef.current?.currentTime || 0;
                               nodeObj.wet.gain.setTargetAtTime(mixVal, now, 0.05);
                               nodeObj.dry.gain.setTargetAtTime(1 - mixVal, now, 0.05);
@@ -6577,7 +6577,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                               if (synth && synth.fxNodes[action.payload.fxId]) {
                                   const nodeObj = synth.fxNodes[action.payload.fxId];
                                   if (nodeObj.wet && nodeObj.dry) {
-                                      const mixVal = nextBypass ? 0 : (fx.params?.mix ?? 0.5);
+                                      const mixVal = nextBypass ? 0 : (fx.params?.mix ?? 1.0);
                                       const now = audioCtxRef.current?.currentTime || 0;
                                       nodeObj.wet.gain.setTargetAtTime(mixVal, now, 0.05);
                                       nodeObj.dry.gain.setTargetAtTime(1 - mixVal, now, 0.05);
