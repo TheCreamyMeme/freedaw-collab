@@ -1686,6 +1686,15 @@ const triggerSubtractive = (ctx, bus, pitch, time, vol, dur, p={}, vel=100, pbNo
   env.gain.linearRampToValueAtTime(0, time + dur + (p.release||0.1) + 0.01);
   osc.connect(filter); filter.connect(env); env.connect(bus);
   osc.start(time); osc.stop(time + dur + (p.release||0.1) + 0.02);
+  
+  return () => {
+      try {
+          const now = ctx.currentTime;
+          env.gain.cancelScheduledValues(now);
+          env.gain.setTargetAtTime(0, now, 0.05);
+          osc.stop(now + 0.1);
+      } catch(e){}
+  };
 };
 
 const triggerSupersaw = (ctx, bus, pitch, time, vol, dur, p={}, vel=100, pbNode) => {
@@ -1694,6 +1703,7 @@ const triggerSupersaw = (ctx, bus, pitch, time, vol, dur, p={}, vel=100, pbNode)
   env.gain.setValueAtTime(safeVol, time + dur); env.gain.exponentialRampToValueAtTime(0.001, time + dur + (p.release||0.5));
   env.gain.linearRampToValueAtTime(0, time + dur + (p.release||0.5) + 0.01);
   const count = 5; const baseFreq = 440 * Math.pow(2, (pitch - 69) / 12);
+  const oscs = [];
   for(let i=0; i<count; i++) {
       const osc = ctx.createOscillator(); osc.type = 'sawtooth';
       osc.frequency.setValueAtTime(baseFreq, time); osc.detune.setValueAtTime((p.detune||25) * ((i/(count-1))*2-1), time);
@@ -1707,8 +1717,18 @@ const triggerSupersaw = (ctx, bus, pitch, time, vol, dur, p={}, vel=100, pbNode)
       
       osc.connect(panner); panner.connect(env);
       osc.start(time); osc.stop(time + dur + (p.release||0.5) + 0.02);
+      oscs.push(osc);
   }
   env.connect(bus);
+  
+  return () => {
+      try {
+          const now = ctx.currentTime;
+          env.gain.cancelScheduledValues(now);
+          env.gain.setTargetAtTime(0, now, 0.05);
+          oscs.forEach(o => o.stop(now + 0.1));
+      } catch(e){}
+  };
 };
 
 const triggerFMSynth = (ctx, bus, pitch, time, vol, dur, p={}, vel=100, pbNode) => {
@@ -1723,6 +1743,16 @@ const triggerFMSynth = (ctx, bus, pitch, time, vol, dur, p={}, vel=100, pbNode) 
   env.gain.linearRampToValueAtTime(0, time + dur + (p.release||0.2) + 0.01);
   mod.connect(modGain); modGain.connect(carrier.frequency); carrier.connect(env); env.connect(bus);
   carrier.start(time); mod.start(time); carrier.stop(time + dur + 0.5); mod.stop(time + dur + 0.5);
+  
+  return () => {
+      try {
+          const now = ctx.currentTime;
+          env.gain.cancelScheduledValues(now);
+          env.gain.setTargetAtTime(0, now, 0.05);
+          carrier.stop(now + 0.1);
+          mod.stop(now + 0.1);
+      } catch(e){}
+  };
 };
 
 const triggerPluck = (ctx, bus, pitch, time, vol, dur, p={}, vel=100, pbNode) => {
@@ -1736,6 +1766,15 @@ const triggerPluck = (ctx, bus, pitch, time, vol, dur, p={}, vel=100, pbNode) =>
   const out = ctx.createGain(); out.gain.setValueAtTime(realVol, time); out.gain.setTargetAtTime(0, time + dur + 1.0, 0.1); 
   noise.connect(filter); filter.connect(delay); filter.connect(out); 
   delay.connect(fb); fb.connect(delay); delay.connect(out); out.connect(bus); noise.start(time);
+  
+  return () => {
+      try {
+          const now = ctx.currentTime;
+          out.gain.cancelScheduledValues(now);
+          out.gain.setTargetAtTime(0, now, 0.05);
+          noise.stop(now + 0.1);
+      } catch(e){}
+  };
 };
 
 const triggerAcid = (ctx, bus, pitch, time, vol, dur, p={}, vel=100, pbNode) => {
@@ -1747,6 +1786,15 @@ const triggerAcid = (ctx, bus, pitch, time, vol, dur, p={}, vel=100, pbNode) => 
   filter.frequency.setValueAtTime(baseCut + envMod, time); filter.frequency.setTargetAtTime(baseCut, time, (p.decay||0.3) / 3); 
   const amp = ctx.createGain(); amp.gain.setValueAtTime(realVol, time); amp.gain.setTargetAtTime(0, time + dur, 0.05);
   osc.connect(filter); filter.connect(amp); amp.connect(bus); osc.start(time); osc.stop(time + dur + 0.5);
+  
+  return () => {
+      try {
+          const now = ctx.currentTime;
+          amp.gain.cancelScheduledValues(now);
+          amp.gain.setTargetAtTime(0, now, 0.05);
+          osc.stop(now + 0.1);
+      } catch(e){}
+  };
 };
 
 const triggerMetronome = (ctx, bus, isDownbeat, time) => {
@@ -1769,13 +1817,24 @@ const triggerOrgan = (ctx, bus, pitch, time, vol, dur, p={}, vel=100, pbNode) =>
   amp.gain.setValueAtTime(0, time); amp.gain.linearRampToValueAtTime(realVol, time + 0.02);
   amp.gain.setValueAtTime(realVol, time + dur); amp.gain.linearRampToValueAtTime(0, time + dur + 0.1);
   const ratios = [0.5, 1, 1.5, 2]; const levels = [p.sub||0.8, p.fund||1.0, p.fifth||0.5, p.oct||0.5];
+  const oscs = [];
   ratios.forEach((ratio, i) => {
       const osc = ctx.createOscillator(); osc.type = 'sine'; osc.frequency.value = freq * ratio;
       if (pbNode) pbNode.connect(osc.detune);
       const g = ctx.createGain(); g.gain.value = levels[i] / ratios.length;
       osc.connect(g); g.connect(amp); osc.start(time); osc.stop(time + dur + 0.2);
+      oscs.push(osc);
   });
   amp.connect(bus);
+  
+  return () => {
+      try {
+          const now = ctx.currentTime;
+          amp.gain.cancelScheduledValues(now);
+          amp.gain.setTargetAtTime(0, now, 0.05);
+          oscs.forEach(o => o.stop(now + 0.1));
+      } catch(e){}
+  };
 };
 
 const noiseBufferCache = {};
@@ -1791,11 +1850,12 @@ const getNoiseBuffer = (ctx, duration) => {
 
 const triggerDrum = (ctx, bus, pitch, time, vol, p={}, vel=100) => {
   const realVol = vol * (vel / 127);
+  const activeNodes = [];
 
   // Check for custom MPC-style sample mapping first
   if (p.samples && p.samples[pitch] && globalAudioBufferCache.has(p.samples[pitch])) {
       const sampleData = globalAudioBufferCache.get(p.samples[pitch]);
-      if (!sampleData || !sampleData.buffer) return;
+      if (!sampleData || !sampleData.buffer) return null;
       const source = ctx.createBufferSource();
       source.buffer = sampleData.buffer;
       
@@ -1813,7 +1873,14 @@ const triggerDrum = (ctx, bus, pitch, time, vol, p={}, vel=100) => {
       if (playDur > 0) {
           source.start(time, startOffset, playDur);
       }
-      return; // Skip default synthesized drum generation if a custom sample overrides it
+      return () => {
+          try {
+              const now = ctx.currentTime;
+              gainNode.gain.cancelScheduledValues(now);
+              gainNode.gain.setTargetAtTime(0, now, 0.05);
+              source.stop(now + 0.1);
+          } catch(e){}
+      };
   }
 
   if (pitch === 36) { // Kick
@@ -1822,12 +1889,14 @@ const triggerDrum = (ctx, bus, pitch, time, vol, p={}, vel=100) => {
     env.gain.setValueAtTime(realVol, time); env.gain.exponentialRampToValueAtTime(0.001, time + 0.5);
     env.gain.linearRampToValueAtTime(0, time + 0.51);
     osc.connect(env); env.connect(bus); osc.start(time); osc.stop(time + 0.6);
+    activeNodes.push({ src: osc, env });
   } else if (pitch === 38 || pitch === 39) { // Snare/Clap
     const osc = ctx.createOscillator(), env = ctx.createGain();
     osc.type = pitch === 39 ? 'square' : 'triangle'; osc.frequency.setValueAtTime(250, time);
     env.gain.setValueAtTime(realVol*0.5, time); env.gain.exponentialRampToValueAtTime(0.001, time + 0.2);
     env.gain.linearRampToValueAtTime(0, time + 0.21);
     osc.connect(env); env.connect(bus); osc.start(time); osc.stop(time + 0.3);
+    activeNodes.push({ src: osc, env });
     
     const buffer = getNoiseBuffer(ctx, 0.2);
     const noise = ctx.createBufferSource(), filter = ctx.createBiquadFilter(), nEnv = ctx.createGain();
@@ -1835,6 +1904,7 @@ const triggerDrum = (ctx, bus, pitch, time, vol, p={}, vel=100) => {
     nEnv.gain.setValueAtTime(realVol*0.8, time); nEnv.gain.exponentialRampToValueAtTime(0.001, time + 0.2);
     nEnv.gain.linearRampToValueAtTime(0, time + 0.21);
     noise.connect(filter); filter.connect(nEnv); nEnv.connect(bus); noise.start(time);
+    activeNodes.push({ src: noise, env: nEnv });
   } else { // Hats/Cymbals
     const buffer = getNoiseBuffer(ctx, 0.1);
     const noise = ctx.createBufferSource(), filter = ctx.createBiquadFilter(), nEnv = ctx.createGain();
@@ -1842,7 +1912,18 @@ const triggerDrum = (ctx, bus, pitch, time, vol, p={}, vel=100) => {
     nEnv.gain.setValueAtTime(realVol*0.5, time); nEnv.gain.exponentialRampToValueAtTime(0.001, time + 0.1);
     nEnv.gain.linearRampToValueAtTime(0, time + 0.11);
     noise.connect(filter); filter.connect(nEnv); nEnv.connect(bus); noise.start(time);
+    activeNodes.push({ src: noise, env: nEnv });
   }
+  
+  return () => {
+      const now = ctx.currentTime;
+      activeNodes.forEach(node => {
+          try {
+              if (node.env) { node.env.gain.cancelScheduledValues(now); node.env.gain.setTargetAtTime(0, now, 0.05); }
+              if (node.src) node.src.stop(now + 0.1);
+          } catch(e){}
+      });
+  };
 };
 
 // --- Helper to prevent Web Audio Memory Leaks ---
@@ -3797,6 +3878,10 @@ const initAudioEngine = async (explicitTracks = null) => {
     const now = audioCtxRef.current?.currentTime || 0;
     Object.values(synthsRef.current).forEach(synth => { 
         if (synth.activeNoteIds) synth.activeNoteIds.clear(); 
+        if (synth.activeMidiSources) {
+            synth.activeMidiSources.forEach(stopFn => { if (typeof stopFn === 'function') stopFn(); });
+            synth.activeMidiSources.clear();
+        }
         if (synth.activeSource) {
             try { 
                 if (synth.activeSourceGain && audioCtxRef.current) {
@@ -4381,27 +4466,51 @@ const initAudioEngine = async (explicitTracks = null) => {
                           }
 
                           const customInst = window.FreeDawPlugins?.find(p => p.id === track.instrument);
+                          let stopFn = null;
                           if (customInst && typeof customInst.triggerNote === 'function') {
-                              try { customInst.triggerNote(audioCtxRef.current, synth.inputBus, pitchToPlay, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode); } catch(e) {}
-                          } else if (track.instrument === 'inst-drum') triggerDrum(audioCtxRef.current, synth.inputBus, pitchToPlay, now, 1, dynamicInstParams, finalVelocity);
-                          else if (track.instrument === 'inst-fm') triggerFMSynth(audioCtxRef.current, synth.inputBus, pitchToPlay, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
-                          else if (track.instrument === 'inst-supersaw') triggerSupersaw(audioCtxRef.current, synth.inputBus, pitchToPlay, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
-                          else if (track.instrument === 'inst-pluck') triggerPluck(audioCtxRef.current, synth.inputBus, pitchToPlay, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
-                          else if (track.instrument === 'inst-acid') triggerAcid(audioCtxRef.current, synth.inputBus, pitchToPlay, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
-                          else if (track.instrument === 'inst-organ') triggerOrgan(audioCtxRef.current, synth.inputBus, pitchToPlay, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
-                          else triggerSubtractive(audioCtxRef.current, synth.inputBus, pitchToPlay, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
+                              try { stopFn = customInst.triggerNote(audioCtxRef.current, synth.inputBus, pitchToPlay, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode); } catch(e) {}
+                          } else if (track.instrument === 'inst-drum') stopFn = triggerDrum(audioCtxRef.current, synth.inputBus, pitchToPlay, now, 1, dynamicInstParams, finalVelocity);
+                          else if (track.instrument === 'inst-fm') stopFn = triggerFMSynth(audioCtxRef.current, synth.inputBus, pitchToPlay, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
+                          else if (track.instrument === 'inst-supersaw') stopFn = triggerSupersaw(audioCtxRef.current, synth.inputBus, pitchToPlay, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
+                          else if (track.instrument === 'inst-pluck') stopFn = triggerPluck(audioCtxRef.current, synth.inputBus, pitchToPlay, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
+                          else if (track.instrument === 'inst-acid') stopFn = triggerAcid(audioCtxRef.current, synth.inputBus, pitchToPlay, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
+                          else if (track.instrument === 'inst-organ') stopFn = triggerOrgan(audioCtxRef.current, synth.inputBus, pitchToPlay, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
+                          else stopFn = triggerSubtractive(audioCtxRef.current, synth.inputBus, pitchToPlay, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
+                          
+                          if (stopFn && typeof stopFn === 'function') {
+                              if (!synth.activeMidiSources) synth.activeMidiSources = new Map();
+                              const arpId = `arp_${pitchToPlay}_${currentArpStep}`;
+                              synth.activeMidiSources.set(arpId, stopFn);
+                              // Clean up old arp stopFns to prevent memory leak
+                              for (const key of synth.activeMidiSources.keys()) {
+                                  if (key.startsWith('arp_') && key !== arpId) {
+                                      synth.activeMidiSources.get(key)();
+                                      synth.activeMidiSources.delete(key);
+                                  }
+                              }
+                          }
                       }
                   }
                   
                   let currentActiveIds = new Set(activeChord.map(n => n.id).filter(Boolean));
                   for (const id of synth.activeNoteIds) { 
-                      if (!currentActiveIds.has(id)) synth.activeNoteIds.delete(id); 
+                      if (!currentActiveIds.has(id)) {
+                          synth.activeNoteIds.delete(id);
+                          if (synth.activeMidiSources && synth.activeMidiSources.has(id)) {
+                              synth.activeMidiSources.get(id)();
+                              synth.activeMidiSources.delete(id);
+                          }
+                      }
                   }
                   activeChord.forEach(n => { if (n.id) synth.activeNoteIds.add(n.id); });
 
               } else {
                   synth.lastArpStep = -1;
                   synth.activeNoteIds.clear();
+                  if (synth.activeMidiSources) {
+                      synth.activeMidiSources.forEach(stopFn => stopFn && stopFn());
+                      synth.activeMidiSources.clear();
+                  }
               }
           } else {
               synth.lastArpStep = -1;
@@ -4428,32 +4537,50 @@ const initAudioEngine = async (explicitTracks = null) => {
                           const finalVelocity = Math.max(1, Math.round((note.velocity || 100) * volMult));
 
                           const customInst = window.FreeDawPlugins?.find(p => p.id === track.instrument);
+                          let stopFn = null;
                           if (customInst && typeof customInst.triggerNote === 'function') {
                               try {
-                                  customInst.triggerNote(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
+                                  stopFn = customInst.triggerNote(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
                               } catch(e) { console.error("Custom Instrument crashed", e); }
-                          } else if (track.instrument === 'inst-drum') triggerDrum(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, dynamicInstParams, finalVelocity);
-                          else if (track.instrument === 'inst-fm') triggerFMSynth(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
-                          else if (track.instrument === 'inst-supersaw') triggerSupersaw(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
-                          else if (track.instrument === 'inst-pluck') triggerPluck(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
-                          else if (track.instrument === 'inst-acid') triggerAcid(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
-                          else if (track.instrument === 'inst-organ') triggerOrgan(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
-                          else triggerSubtractive(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
+                          } else if (track.instrument === 'inst-drum') stopFn = triggerDrum(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, dynamicInstParams, finalVelocity);
+                          else if (track.instrument === 'inst-fm') stopFn = triggerFMSynth(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
+                          else if (track.instrument === 'inst-supersaw') stopFn = triggerSupersaw(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
+                          else if (track.instrument === 'inst-pluck') stopFn = triggerPluck(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
+                          else if (track.instrument === 'inst-acid') stopFn = triggerAcid(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
+                          else if (track.instrument === 'inst-organ') stopFn = triggerOrgan(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
+                          else stopFn = triggerSubtractive(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
+                          
+                          if (stopFn && typeof stopFn === 'function') {
+                              if (!synth.activeMidiSources) synth.activeMidiSources = new Map();
+                              synth.activeMidiSources.set(note.id, stopFn);
+                          }
                       }
                   }
               }
 
               if (currentActiveIds) {
                   for (const id of synth.activeNoteIds) { 
-                      if (!currentActiveIds.has(id) && !String(id).startsWith('live_')) synth.activeNoteIds.delete(id); 
+                      if (!currentActiveIds.has(id) && !String(id).startsWith('live_')) {
+                          synth.activeNoteIds.delete(id);
+                          if (synth.activeMidiSources && synth.activeMidiSources.has(id)) {
+                              synth.activeMidiSources.get(id)();
+                              synth.activeMidiSources.delete(id);
+                          }
+                      }
                   }
               } else {
                   for (const id of synth.activeNoteIds) { 
-                      if (!String(id).startsWith('live_')) synth.activeNoteIds.delete(id); 
+                      if (!String(id).startsWith('live_')) {
+                          synth.activeNoteIds.delete(id);
+                          if (synth.activeMidiSources && synth.activeMidiSources.has(id)) {
+                              synth.activeMidiSources.get(id)();
+                              synth.activeMidiSources.delete(id);
+                          }
+                      }
                   }
               }
           }
-        } else if (track.type === 'audio' && isTrackEnabled && activeClip) {
+        } else if (track.type === 'audio' && isTrackEnabled && activeClip && isPlayingState) {
             if (!synth.activeNoteIds.has(activeClip.id)) {
                 synth.activeNoteIds.add(activeClip.id);
                 
@@ -4502,9 +4629,14 @@ const initAudioEngine = async (explicitTracks = null) => {
                 const vol = getFadeVolume(clipTime, activeClip.duration, activeClip.fadeIn || 0, activeClip.fadeOut || 0, activeClip.fadeInCurve || 0, activeClip.fadeOutCurve || 0);
                 synth.activeSourceGain.gain.setTargetAtTime(vol, now, 0.02);
             }
-        } else { 
-            synth.activeNoteIds.clear(); 
-            if (track.type === 'audio' && synth.activeSource) {
+            } else { 
+                synth.activeNoteIds.clear(); 
+                if (synth.activeMidiSources) {
+                    synth.activeMidiSources.forEach(stopFn => stopFn && stopFn());
+                    synth.activeMidiSources.clear();
+                }
+                if (track.type === 'audio' && synth.activeSource) {
+
                 try { 
                     if (synth.activeSourceGain) {
                         synth.activeSourceGain.gain.cancelScheduledValues(now);
