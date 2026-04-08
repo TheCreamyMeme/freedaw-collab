@@ -6432,7 +6432,7 @@ const initAudioEngine = async (explicitTracks = null) => {
   const projectPeersList = allPeersList.filter(p => p.projectId === projectId);
 
   const renderPeerAvatars = (peerList) => {
-      const maxVisible = 3;
+      const maxVisible = 5;
       const visible = peerList.slice(0, maxVisible);
       const extra = peerList.length - maxVisible;
 
@@ -6462,24 +6462,35 @@ const initAudioEngine = async (explicitTracks = null) => {
                   )}
               </div>
               
-              {peerList.length > 0 && (
-                  <div className="absolute top-full right-0 mt-2 w-56 bg-neutral-900 border border-neutral-700 shadow-2xl rounded-lg opacity-0 group-hover/peer-list:opacity-100 pointer-events-none group-hover/peer-list:pointer-events-auto transition-opacity z-[100] flex flex-col max-h-64 overflow-y-auto custom-scrollbar p-2 gap-1 translate-y-1 group-hover/peer-list:translate-y-0">
-                      <div className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider px-2 py-1 border-b border-neutral-800 mb-1">Active Peers ({peerList.length})</div>
-                      {peerList.map((peer, idx) => (
-                          <div key={idx} onClick={() => setViewProfileUser(peer)} className="flex items-center gap-3 p-2 hover:bg-neutral-800 rounded-md cursor-pointer transition-colors">
-                              <div className={`w-8 h-8 ${peer.avatar ? '' : (peer.color || 'bg-blue-600')} rounded-full overflow-hidden flex items-center justify-center text-xs font-bold text-white shrink-0`}>
-                                  {peer.avatar ? <img src={peer.avatar} alt={peer.username} className="w-full h-full object-cover" /> : (peer.username || '?').charAt(0).toUpperCase()}
-                              </div>
-                              <div className="flex flex-col truncate">
-                                  <span className="text-xs font-bold text-white truncate">{peer.username}</span>
-                                  {peer.appView === 'daw' && peer.projectId !== projectId && <span className="text-[9px] text-neutral-400 truncate">In another project</span>}
-                                  {peer.appView === 'daw' && peer.projectId === projectId && <span className="text-[9px] text-green-400 truncate">In this project</span>}
-                                  {peer.appView === 'home' && <span className="text-[9px] text-neutral-400 truncate">In Library</span>}
-                              </div>
-                          </div>
-                      ))}
+              <div className="absolute top-full right-0 mt-2 w-64 bg-neutral-900 border border-neutral-700 shadow-2xl rounded-lg opacity-0 group-hover/peer-list:opacity-100 pointer-events-none group-hover/peer-list:pointer-events-auto transition-opacity z-[100] flex flex-col max-h-64 overflow-y-auto custom-scrollbar p-2 gap-1 translate-y-1 group-hover/peer-list:translate-y-0">
+                  <div className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider px-2 py-1 border-b border-neutral-800 mb-1">Active Users ({peerList.length + 1})</div>
+                  
+                  {/* Current User */}
+                  <div onClick={() => setShowProfileMenu(true)} className="flex items-center gap-3 p-2 hover:bg-neutral-800 rounded-md cursor-pointer transition-colors">
+                      <div className={`w-8 h-8 ${currentUser?.avatar ? '' : (currentUser?.color || 'bg-emerald-500')} rounded-full overflow-hidden flex items-center justify-center text-xs font-bold text-white shrink-0`}>
+                          {currentUser?.avatar ? <img src={currentUser.avatar} alt="Me" className="w-full h-full object-cover" /> : (currentUser?.username || '?').charAt(0).toUpperCase()}
+                      </div>
+                      <div className="flex flex-col truncate">
+                          <span className="text-xs font-bold text-white truncate">{currentUser?.username} <span className="text-[10px] text-neutral-500 font-normal">(You)</span></span>
+                          <span className="text-[9px] text-green-400 truncate">Online</span>
+                      </div>
                   </div>
-              )}
+
+                  {/* Peer Users */}
+                  {peerList.map((peer, idx) => (
+                      <div key={idx} onClick={() => setViewProfileUser(peer)} className="flex items-center gap-3 p-2 hover:bg-neutral-800 rounded-md cursor-pointer transition-colors">
+                          <div className={`w-8 h-8 ${peer.avatar ? '' : (peer.color || 'bg-blue-600')} rounded-full overflow-hidden flex items-center justify-center text-xs font-bold text-white shrink-0`}>
+                              {peer.avatar ? <img src={peer.avatar} alt={peer.username} className="w-full h-full object-cover" /> : (peer.username || '?').charAt(0).toUpperCase()}
+                          </div>
+                          <div className="flex flex-col truncate">
+                              <span className="text-xs font-bold text-white truncate">{peer.username}</span>
+                              {peer.appView === 'daw' && peer.projectId !== projectId && <span className="text-[9px] text-neutral-400 truncate">In another project</span>}
+                              {peer.appView === 'daw' && peer.projectId === projectId && <span className="text-[9px] text-green-400 truncate">In this project</span>}
+                              {peer.appView === 'home' && <span className="text-[9px] text-neutral-400 truncate">In Library</span>}
+                          </div>
+                      </div>
+                  ))}
+              </div>
           </div>
       );
   };
