@@ -406,7 +406,17 @@ const getGridStyle = (snap, beatWidth, isPianoRoll = false) => {
 const getInterpolatedValue = (points, time) => {
     if (!points || points.length === 0) return null;
     if (points.length === 1) return points[0].value;
-    const sorted = [...points].sort((a,b) => a.time - b.time);
+    
+    // PERFORMANCE FIX: Avoid cloning and sorting the array 60 times a second if it's already sorted!
+    let isSorted = true;
+    for (let i = 0; i < points.length - 1; i++) {
+        if (points[i].time > points[i+1].time) {
+            isSorted = false;
+            break;
+        }
+    }
+    const sorted = isSorted ? points : [...points].sort((a,b) => a.time - b.time);
+
     if (time <= sorted[0].time) return sorted[0].value;
     if (time >= sorted[sorted.length - 1].time) return sorted[sorted.length - 1].value;
     for (let i = 0; i < sorted.length - 1; i++) {
@@ -2364,8 +2374,9 @@ function DAWStudio() {
       Object.keys(activeLiveAudioInputsRef.current).forEach(trackIdStr => {
           const trackId = Number(trackIdStr);
           if (!currentArmedIds.has(trackId)) {
-              const { stream, source } = activeLiveAudioInputsRef.current[trackId];
+              const { stream, source, monoFixer } = activeLiveAudioInputsRef.current[trackId];
               try { source.disconnect(); } catch(e){}
+              try { if (monoFixer) monoFixer.disconnect(); } catch(e){}
               stream.getTracks().forEach(t => t.stop());
               delete activeLiveAudioInputsRef.current[trackId];
           }
@@ -2385,15 +2396,18 @@ function DAWStudio() {
               if (existing && existing.inputId === track.audioInputId) {
                   // Already monitoring, but track routing might have been rebuilt (fx changed)
                   if (synth && synth.inputBus && existing.connectedTo !== synth.inputBus) {
-                      try { existing.source.disconnect(); } catch(e){}
-                      existing.source.connect(synth.inputBus);
-                      existing.connectedTo = synth.inputBus;
+                      try { if (existing.monoFixer) existing.monoFixer.disconnect(); } catch(e){}
+                      if (existing.monoFixer) {
+                          existing.monoFixer.connect(synth.inputBus);
+                          existing.connectedTo = synth.inputBus;
+                      }
                   }
                   return;
               }
 
               if (existing) {
                   try { existing.source.disconnect(); } catch(e){}
+                  try { if (existing.monoFixer) existing.monoFixer.disconnect(); } catch(e){}
                   existing.stream.getTracks().forEach(t => t.stop());
               }
 
@@ -2404,9 +2418,14 @@ function DAWStudio() {
                           echoCancellation: false,
                           noiseSuppression: false,
                           autoGainControl: false,
-                          latency: 0
+                          googEchoCancellation: false,
+                          googAutoGainControl: false,
+                          googNoiseSuppression: false,
+                          googHighpassFilter: false,
+                          googTypingNoiseDetection: false
                       }
                   };
+
                   const stream = await navigator.mediaDevices.getUserMedia(constraints);
                   
                   const isStillArmed = tracksRef.current.find(t => t.id === track.id)?.armed;
@@ -2419,17 +2438,33 @@ function DAWStudio() {
                   
                   const currentSynth = synthsRef.current[track.id];
                   if (currentSynth && currentSynth.inputBus) {
-                      const source = audioCtxRef.current.createMediaStreamSource(stream);
-                      source.connect(currentSynth.inputBus);
+                      // CRITICAL: createMediaStreamTrackSource bypasses the browser's WebRTC mixer entirely
+                      const audioTrack = stream.getAudioTracks()[0];
+                      const source = audioCtxRef.current.createMediaStreamTrackSource 
+                          ? audioCtxRef.current.createMediaStreamTrackSource(audioTrack)
+                          : audioCtxRef.current.createMediaStreamSource(stream);
+                          
+                      // Force Mono: Extract Input 1 (Left) so stereo interfaces don't hard-pan the microphone
+                      const splitter = audioCtxRef.current.createChannelSplitter(2);
+                      const monoFixer = audioCtxRef.current.createGain();
+                      monoFixer.channelCount = 1;
+                      monoFixer.channelCountMode = 'explicit';
+                      
+                      source.connect(splitter);
+                      splitter.connect(monoFixer, 0); // Connect only Left channel
+                      monoFixer.connect(currentSynth.inputBus);
+
                       activeLiveAudioInputsRef.current[track.id] = { 
                           stream, 
                           source, 
+                          monoFixer,
                           inputId: track.audioInputId,
                           connectedTo: currentSynth.inputBus
                       };
                   } else {
                       stream.getTracks().forEach(t => t.stop());
                   }
+
               } catch (err) {
                   console.error("Failed to start live monitoring for track", track.id, err);
               }
@@ -2842,7 +2877,8 @@ function DAWStudio() {
 
 const initAudioEngine = async (explicitTracks = null) => {
   if (!audioCtxRef.current) {
-    audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 'interactive' });
+    // Explicitly request 0 seconds (absolute minimum hardware buffer) instead of the generic 'interactive' preset
+    audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 0 });
     
     // Initialize Advanced WebAssembly / AudioWorklet Engine
     try {
@@ -2886,26 +2922,63 @@ const initAudioEngine = async (explicitTracks = null) => {
   const startAudioRecording = async (track) => {
       if (track.type !== 'audio') return;
       try {
-          const constraints = {
-              audio: {
-                  ...(track.audioInputId ? { deviceId: { exact: track.audioInputId } } : {}),
-                  echoCancellation: false,
-                  noiseSuppression: false,
-                  autoGainControl: false,
-                  latency: 0
-              }
-          };
-          const stream = await navigator.mediaDevices.getUserMedia(constraints);
-          const mr = new MediaRecorder(stream);
+          let streamToRecord;
+          let fallbackStreamToCleanup = null;
+          
+          const existingMonitor = activeLiveAudioInputsRef.current[track.id];
+
+          if (existingMonitor && existingMonitor.source) {
+              // CRITICAL LATENCY FIX: Do NOT call getUserMedia a second time!
+              // Opening the same mic twice forces Windows/macOS to route it through a shared software 
+              // mixer thread, which instantly adds ~50-80ms of latency to BOTH the monitor and the recording.
+              // Instead, we tap a clean signal from the already running zero-latency monitor source!
+              const dest = audioCtxRef.current.createMediaStreamDestination();
+              dest.channelCount = 1;
+              const splitter = audioCtxRef.current.createChannelSplitter(2);
+              existingMonitor.source.connect(splitter);
+              splitter.connect(dest, 0);
+              streamToRecord = dest.stream;
+          } else {
+              const constraints = {
+                  audio: {
+                      ...(track.audioInputId ? { deviceId: { exact: track.audioInputId } } : {}),
+                      echoCancellation: false,
+                      noiseSuppression: false,
+                      autoGainControl: false,
+                      googEchoCancellation: false,
+                      googAutoGainControl: false,
+                      googNoiseSuppression: false,
+                      googHighpassFilter: false,
+                      googTypingNoiseDetection: false
+                  }
+              };
+              const stream = await navigator.mediaDevices.getUserMedia(constraints);
+              fallbackStreamToCleanup = stream;
+              
+              const dest = audioCtxRef.current.createMediaStreamDestination();
+              dest.channelCount = 1;
+              
+              const audioTrack = stream.getAudioTracks()[0];
+              const source = audioCtxRef.current.createMediaStreamTrackSource 
+                  ? audioCtxRef.current.createMediaStreamTrackSource(audioTrack)
+                  : audioCtxRef.current.createMediaStreamSource(stream);
+                  
+              const splitter = audioCtxRef.current.createChannelSplitter(2);
+              source.connect(splitter);
+              splitter.connect(dest, 0);
+              streamToRecord = dest.stream;
+          }
+
+          const mr = new MediaRecorder(streamToRecord);
           mediaRecorderRef.current = mr;
           recordedChunksRef.current = [];
           
           mr.ondataavailable = (e) => {
               if (e.data.size > 0) recordedChunksRef.current.push(e.data);
           };
-          
+
           mr.onstop = async () => {
-              stream.getTracks().forEach(t => t.stop());
+              if (fallbackStreamToCleanup) fallbackStreamToCleanup.getTracks().forEach(t => t.stop());
               const blob = new Blob(recordedChunksRef.current, { type: 'audio/wav' });
               const sampleId = `rec_${Date.now()}`;
               
@@ -3492,10 +3565,23 @@ const initAudioEngine = async (explicitTracks = null) => {
                   lfoDot.style.top = `${(1 - out) * 100}%`;
               }
 
-              (lfo.mappings || []).forEach(mapping => {
-                  const track = tracksRef.current.find(t => t.id === mapping.trackId);
-                  const synth = synthsRef.current[mapping.trackId];
-                  if (!track || !synth) return;
+              const mappings = lfo.mappings;
+              if (mappings && mappings.length > 0) {
+                  for (let mIdx = 0; mIdx < mappings.length; mIdx++) {
+                      const mapping = mappings[mIdx];
+                      const synth = synthsRef.current[mapping.trackId];
+                      if (!synth) continue;
+
+                      // Fast lookup without iterating the whole array with .find() every frame
+                      let track = null;
+                      const currentTracks = tracksRef.current;
+                      for (let tIdx = 0; tIdx < currentTracks.length; tIdx++) {
+                          if (currentTracks[tIdx].id === mapping.trackId) {
+                              track = currentTracks[tIdx];
+                              break;
+                          }
+                      }
+                      if (!track) continue;
 
                   if (mapping.type === 'fx_param') {
                       const fx = track.effects?.find(f => f.id === mapping.fxId);
@@ -3626,7 +3712,8 @@ const initAudioEngine = async (explicitTracks = null) => {
                           if (panInput) panInput.value = mappedPan * 50;
                       }
                   }
-              });
+                }
+              }
           });
       }
 
@@ -3638,8 +3725,9 @@ const initAudioEngine = async (explicitTracks = null) => {
             if (!synth) return;
 
             if (track.automation) {
-                Object.entries(track.automation).forEach(([paramKey, points]) => {
-                    if (points.length > 0) {
+                for (const paramKey in track.automation) {
+                    const points = track.automation[paramKey];
+                    if (points && points.length > 0) {
                         const val = getInterpolatedValue(points, newTime);
                         if (val !== null) {
                             // PERFORMANCE FIX: Cache automation targets to absolutely prevent 60fps event spam
@@ -3713,7 +3801,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                             }
                         }
                     }
-                });
+                }
             }
 
         const activeClip = track.clips.find(c => newTime >= c.start && newTime < c.start + c.duration);
@@ -3727,63 +3815,84 @@ const initAudioEngine = async (explicitTracks = null) => {
 
         if (track.type === 'midi' && shouldPlayTrack) {
           const clipTime = newTime - activeClip.start;
-          const activeNotes = activeClip.notes?.filter(n => clipTime >= n.start && clipTime < n.start + n.duration) || [];
-          
           // Merge Base Params with Live LFO and Automation values
           const dynamicInstParams = { ...track.instrumentParams };
           
-          lfosRef.current?.forEach(lfo => {
-              (lfo.mappings || []).forEach(m => {
-                  if (m.type === 'inst_param' && m.trackId === track.id) {
-                      const lfoVal = synth[`lastLfo_inst_${m.param}`];
-                      if (lfoVal !== undefined) dynamicInstParams[m.param] = lfoVal;
-                  }
-              });
-          });
-
-          if (track.automation) {
-              Object.entries(track.automation).forEach(([paramKey, points]) => {
-                  if (paramKey.startsWith('inst_param_') && points.length > 0) {
-                      const val = getInterpolatedValue(points, newTime);
-                      if (val !== null) {
-                          const pName = paramKey.split('_').slice(2).join('_');
-                          dynamicInstParams[pName] = val;
+          const currentLfos = lfosRef.current;
+          if (currentLfos && currentLfos.length > 0) {
+              for (let i = 0; i < currentLfos.length; i++) {
+                  const mappings = currentLfos[i].mappings;
+                  if (!mappings) continue;
+                  for (let j = 0; j < mappings.length; j++) {
+                      const m = mappings[j];
+                      if (m.type === 'inst_param' && m.trackId === track.id) {
+                          const lfoVal = synth[`lastLfo_inst_${m.param}`];
+                          if (lfoVal !== undefined) dynamicInstParams[m.param] = lfoVal;
                       }
                   }
-              });
+              }
           }
 
-              activeNotes.forEach(note => {
-                if (!synth.activeNoteIds.has(note.id)) {
-                  synth.activeNoteIds.add(note.id);
-                  const durSeconds = note.duration * (60/bpm);
-                  const pbNode = synth.pitchBendNode;
-                  
-                  let volMult = 1;
-                  if ((activeClip.fadeIn || 0) > 0 && note.start < activeClip.fadeIn) {
-                      volMult = applyFadeCurve(note.start / activeClip.fadeIn, activeClip.fadeInCurve || 0);
-                  } else if ((activeClip.fadeOut || 0) > 0 && note.start > activeClip.duration - activeClip.fadeOut) {
-                      volMult = 1 - applyFadeCurve((note.start - (activeClip.duration - activeClip.fadeOut)) / activeClip.fadeOut, activeClip.fadeOutCurve || 0);
+          if (track.automation) {
+              for (const paramKey in track.automation) {
+                  if (paramKey.startsWith('inst_param_')) {
+                      const points = track.automation[paramKey];
+                      if (points && points.length > 0) {
+                          const val = getInterpolatedValue(points, newTime);
+                          if (val !== null) {
+                              const pName = paramKey.substring(11); // fast substring of 'inst_param_'
+                              dynamicInstParams[pName] = val;
+                          }
+                      }
                   }
-                  const finalVelocity = Math.max(1, Math.round((note.velocity || 100) * volMult));
+              }
+          }
 
-                  const customInst = window.FreeDawPlugins?.find(p => p.id === track.instrument);
-                  if (customInst && typeof customInst.triggerNote === 'function') {
-                      try {
-                          customInst.triggerNote(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
-                      } catch(e) { console.error("Custom Instrument crashed", e); }
-                  } else if (track.instrument === 'inst-drum') triggerDrum(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, dynamicInstParams, finalVelocity);
-                  else if (track.instrument === 'inst-fm') triggerFMSynth(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
-                  else if (track.instrument === 'inst-supersaw') triggerSupersaw(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
-                  else if (track.instrument === 'inst-pluck') triggerPluck(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
-                  else if (track.instrument === 'inst-acid') triggerAcid(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
-                  else if (track.instrument === 'inst-organ') triggerOrgan(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
-                  else triggerSubtractive(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
-                }
-              });
+          const notes = activeClip.notes || [];
+          let currentActiveIds = null;
+          
+          for (let i = 0; i < notes.length; i++) {
+              const note = notes[i];
+              if (clipTime >= note.start && clipTime < note.start + note.duration) {
+                  if (!currentActiveIds) currentActiveIds = new Set();
+                  currentActiveIds.add(note.id);
+                  
+                  if (!synth.activeNoteIds.has(note.id)) {
+                      synth.activeNoteIds.add(note.id);
+                      const durSeconds = note.duration * (60/bpm);
+                      const pbNode = synth.pitchBendNode;
+                      
+                      let volMult = 1;
+                      if ((activeClip.fadeIn || 0) > 0 && note.start < activeClip.fadeIn) {
+                          volMult = applyFadeCurve(note.start / activeClip.fadeIn, activeClip.fadeInCurve || 0);
+                      } else if ((activeClip.fadeOut || 0) > 0 && note.start > activeClip.duration - activeClip.fadeOut) {
+                          volMult = 1 - applyFadeCurve((note.start - (activeClip.duration - activeClip.fadeOut)) / activeClip.fadeOut, activeClip.fadeOutCurve || 0);
+                      }
+                      const finalVelocity = Math.max(1, Math.round((note.velocity || 100) * volMult));
 
-          const activeIds = activeNotes.map(n => n.id);
-          for (const id of synth.activeNoteIds) { if (!activeIds.includes(id)) synth.activeNoteIds.delete(id); }
+                      const customInst = window.FreeDawPlugins?.find(p => p.id === track.instrument);
+                      if (customInst && typeof customInst.triggerNote === 'function') {
+                          try {
+                              customInst.triggerNote(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
+                          } catch(e) { console.error("Custom Instrument crashed", e); }
+                      } else if (track.instrument === 'inst-drum') triggerDrum(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, dynamicInstParams, finalVelocity);
+                      else if (track.instrument === 'inst-fm') triggerFMSynth(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
+                      else if (track.instrument === 'inst-supersaw') triggerSupersaw(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
+                      else if (track.instrument === 'inst-pluck') triggerPluck(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
+                      else if (track.instrument === 'inst-acid') triggerAcid(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
+                      else if (track.instrument === 'inst-organ') triggerOrgan(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
+                      else triggerSubtractive(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
+                  }
+              }
+          }
+
+          if (currentActiveIds) {
+              for (const id of synth.activeNoteIds) { 
+                  if (!currentActiveIds.has(id)) synth.activeNoteIds.delete(id); 
+              }
+          } else {
+              synth.activeNoteIds.clear();
+          }
         } else if (track.type === 'audio' && shouldPlayTrack) {
             if (!synth.activeNoteIds.has(activeClip.id)) {
                 synth.activeNoteIds.add(activeClip.id);
