@@ -2642,6 +2642,10 @@ function DAWStudio() {
   const [draggingDockHeight, setDraggingDockHeight] = useState(false);
   const [sidePanelWidth, setSidePanelWidth] = useState(500);
   const [draggingSidePanel, setDraggingSidePanel] = useState(false);
+  const [browserTreeWidth, setBrowserTreeWidth] = useState(288);
+  const [draggingBrowserTree, setDraggingBrowserTree] = useState(false);
+  const [codeViewerWidth, setCodeViewerWidth] = useState(400);
+  const [draggingCodeViewer, setDraggingCodeViewer] = useState(false);
   const [trackHeaderWidth, setTrackHeaderWidth] = useState(256);
   const [draggingTrackHeader, setDraggingTrackHeader] = useState(false);
   const [draggedFxIndex, setDraggedFxIndex] = useState(null);
@@ -6905,11 +6909,18 @@ const initAudioEngine = async (explicitTracks = null) => {
           setDockHeight(Math.max(260, Math.min(800, window.innerHeight - e.clientY)));
       } else if (draggingSidePanel) {
           setSidePanelWidth(Math.max(300, Math.min(1200, e.clientX - 56)));
+      } else if (draggingBrowserTree) {
+          setBrowserTreeWidth(Math.max(200, Math.min(800, e.clientX - 56)));
+      } else if (draggingCodeViewer) {
+          const offset = 56 + browserTreeWidth;
+          setCodeViewerWidth(Math.max(200, Math.min(1000, e.clientX - offset)));
       } else if (draggingTrackHeader) {
-          const offset = 56 + (activeView !== 'arrangement' ? sidePanelWidth : 0);
+          let offset = 56;
+          if (activeView === 'mixer' || activeView === 'lfos') offset += sidePanelWidth;
+          else if (activeView === 'browser') offset += browserTreeWidth + (selectedBrowserPlugin ? codeViewerWidth : 0);
           setTrackHeaderWidth(Math.max(200, Math.min(800, e.clientX - offset)));
       }
-  }, [draggingClip, draggingEdge, draggingNote, draggingNoteEdge, draggingLoop, draggingExport, draggingPlayhead, draggingDockHeight, draggingSidePanel, draggingTrackHeader, draggingAutoPoint, draggingAutoCurve, draggingFade, draggingStretch, BEAT_WIDTH, activeView, sidePanelWidth]);  
+  }, [draggingClip, draggingEdge, draggingNote, draggingNoteEdge, draggingLoop, draggingExport, draggingPlayhead, draggingDockHeight, draggingSidePanel, draggingBrowserTree, draggingCodeViewer, draggingTrackHeader, draggingAutoPoint, draggingAutoCurve, draggingFade, draggingStretch, BEAT_WIDTH, activeView, sidePanelWidth, browserTreeWidth, codeViewerWidth, selectedBrowserPlugin]);  
   const handleMouseUp = useCallback(() => {
       if (draggingClip) {
           const finalStart = dragValuesRef.current.start ?? draggingClip.initialStart;
@@ -6971,8 +6982,10 @@ const initAudioEngine = async (explicitTracks = null) => {
       }
       if (draggingDockHeight) setDraggingDockHeight(false);
       if (draggingSidePanel) setDraggingSidePanel(false);
+      if (draggingBrowserTree) setDraggingBrowserTree(false);
+      if (draggingCodeViewer) setDraggingCodeViewer(false);
       if (draggingTrackHeader) setDraggingTrackHeader(false);
-  }, [draggingClip, draggingEdge, draggingNote, draggingNoteEdge, draggingLoop, draggingExport, draggingPlayhead, draggingDockHeight, draggingSidePanel, draggingTrackHeader, draggingAutoPoint, draggingAutoCurve, draggingFade, draggingStretch]);
+  }, [draggingClip, draggingEdge, draggingNote, draggingNoteEdge, draggingLoop, draggingExport, draggingPlayhead, draggingDockHeight, draggingSidePanel, draggingBrowserTree, draggingCodeViewer, draggingTrackHeader, draggingAutoPoint, draggingAutoCurve, draggingFade, draggingStretch]);
 
   useEffect(() => {
       window.addEventListener('mousemove', handleMouseMove);
@@ -7632,10 +7645,10 @@ const initAudioEngine = async (explicitTracks = null) => {
 
         {/* Pop-out Panels */}
         {activeView === 'browser' && (
-          <div className="shrink-0 border-r border-[#111111] flex overflow-hidden bg-[#333333] z-10 shadow-[4px_0_24px_rgba(0,0,0,0.5)] relative" style={{ width: `${sidePanelWidth}px` }}>
-            <div className="absolute top-0 right-0 bottom-0 w-1.5 cursor-ew-resize hover:bg-cyan-500 z-50 transition-colors" onMouseDown={() => setDraggingSidePanel(true)} />
+          <div className="shrink-0 flex overflow-hidden z-10 shadow-[4px_0_24px_rgba(0,0,0,0.5)] relative">
             <div 
-                className="w-72 bg-[#3a3a3a] border-r border-[#111] flex flex-col shrink-0 relative"
+                className="bg-[#3a3a3a] border-r border-[#111] flex flex-col shrink-0 relative"
+                style={{ width: `${browserTreeWidth}px` }}
                 onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setIsBrowserDragOver(true); }}
                 onDragLeave={(e) => { e.preventDefault(); e.stopPropagation(); setIsBrowserDragOver(false); }}
                 onDrop={(e) => {
@@ -7648,6 +7661,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                     if (audioFiles.length) handleBulkSampleUpload({ target: { files: audioFiles } });
                 }}
             >
+              <div className="absolute top-0 right-0 bottom-0 w-1.5 cursor-ew-resize hover:bg-cyan-500 z-50 transition-colors translate-x-1/2" onMouseDown={(e) => { e.stopPropagation(); setDraggingBrowserTree(true); }} />
               {isBrowserDragOver && (
                   <div className="absolute inset-0 z-50 bg-cyan-500/10 border-2 border-cyan-500 border-dashed m-2 rounded-sm flex items-center justify-center pointer-events-none backdrop-blur-sm">
                       <div className="bg-[#222] px-4 py-2 rounded-sm font-bold text-cyan-500 shadow-xl flex items-center gap-2 uppercase tracking-wider text-xs"><Upload size={16}/> Drop Plugins or Audio</div>
@@ -7778,22 +7792,19 @@ const initAudioEngine = async (explicitTracks = null) => {
               </div>
             </div>
             
-            {selectedBrowserPlugin ? (
-                <div className="flex-1 flex flex-col overflow-hidden bg-[#242424] shadow-[inset_4px_0_12px_rgba(0,0,0,0.2)]">
-                    <div className="h-8 bg-[#2d2d2d] border-b border-[#111] flex items-center px-4 shrink-0">
+            {selectedBrowserPlugin && (
+                <div className="flex flex-col overflow-hidden bg-[#242424] border-r border-[#111] shadow-[inset_4px_0_12px_rgba(0,0,0,0.2)] relative shrink-0" style={{ width: `${codeViewerWidth}px` }}>
+                    <div className="absolute top-0 right-0 bottom-0 w-1.5 cursor-ew-resize hover:bg-cyan-500 z-50 transition-colors translate-x-1/2" onMouseDown={(e) => { e.stopPropagation(); setDraggingCodeViewer(true); }} />
+                    <div className="h-8 bg-[#2d2d2d] border-b border-[#111] flex items-center justify-between px-4 shrink-0">
                         <span className="text-[10px] font-bold text-[#e0e0e0] uppercase tracking-wider flex items-center gap-2">
                             <FileCode size={12} className="text-cyan-500" /> 
                             {selectedBrowserPlugin.name} Source
                         </span>
+                        <button onClick={() => setSelectedBrowserPlugin(null)} className="text-[#888] hover:text-white transition-colors" title="Close Viewer"><X size={14}/></button>
                     </div>
                     <div className="flex-1 overflow-auto p-4 custom-scrollbar select-text cursor-text">
                         <pre className="text-[10px] leading-[1.6] font-mono text-[#9cdcfe]"><code>{browserPluginCode}</code></pre>
                     </div>
-                </div>
-            ) : (
-                <div className="flex-1 flex flex-col items-center justify-center text-[#555] shadow-[inset_4px_0_12px_rgba(0,0,0,0.2)]">
-                    <Plug size={48} className="mb-4 opacity-50" />
-                    <p className="max-w-xs text-center text-[10px] uppercase tracking-wider font-bold opacity-80">Select a plugin from the list to preview its architecture or upload a .js file to mount a custom DSP node.</p>
                 </div>
             )}
           </div>
