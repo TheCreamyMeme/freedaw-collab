@@ -2267,6 +2267,7 @@ function DAWStudio() {
   const lfosRef = useRef(lfos);
   const masterEffectsRef = useRef(masterEffects);
   const lastAutoUiUpdateRef = useRef(0);
+  const activeLiveAudioInputsRef = useRef({});
   
   // NEW REFS FOR PERFORMANCE FIX
   const playheadRef = useRef(null);
@@ -2333,6 +2334,90 @@ function DAWStudio() {
   useEffect(() => { projectNameRef.current = projectName; }, [projectName]);
   useEffect(() => { selectedTrackIdRef.current = selectedTrackId; }, [selectedTrackId]);
   useEffect(() => { selectedClipIdsRef.current = selectedClipIds; }, [selectedClipIds]);
+
+  // --- Live Audio Monitoring (Mic Input) for Armed Tracks ---
+  const armedAudioTracksMeta = JSON.stringify(
+      tracks.filter(t => t.type === 'audio' && t.armed).map(t => ({ 
+          id: t.id, 
+          input: t.audioInputId,
+          fxHash: t.effects ? t.effects.map(f => f.id).join(',') : ''
+      }))
+  );
+
+  useEffect(() => {
+      const currentArmedAudioTracks = tracks.filter(t => t.type === 'audio' && t.armed);
+      const currentArmedIds = new Set(currentArmedAudioTracks.map(t => t.id));
+
+      // Cleanup unarmed tracks
+      Object.keys(activeLiveAudioInputsRef.current).forEach(trackIdStr => {
+          const trackId = Number(trackIdStr);
+          if (!currentArmedIds.has(trackId)) {
+              const { stream, source } = activeLiveAudioInputsRef.current[trackId];
+              try { source.disconnect(); } catch(e){}
+              stream.getTracks().forEach(t => t.stop());
+              delete activeLiveAudioInputsRef.current[trackId];
+          }
+      });
+
+      if (currentArmedAudioTracks.length === 0) return;
+
+      const setupMonitoring = async () => {
+          if (!audioCtxRef.current) {
+              await initAudioEngine();
+          }
+
+          currentArmedAudioTracks.forEach(async (track) => {
+              const existing = activeLiveAudioInputsRef.current[track.id];
+              const synth = synthsRef.current[track.id];
+
+              if (existing && existing.inputId === track.audioInputId) {
+                  // Already monitoring, but track routing might have been rebuilt (fx changed)
+                  if (synth && synth.inputBus && existing.connectedTo !== synth.inputBus) {
+                      try { existing.source.disconnect(); } catch(e){}
+                      existing.source.connect(synth.inputBus);
+                      existing.connectedTo = synth.inputBus;
+                  }
+                  return;
+              }
+
+              if (existing) {
+                  try { existing.source.disconnect(); } catch(e){}
+                  existing.stream.getTracks().forEach(t => t.stop());
+              }
+
+              try {
+                  const constraints = track.audioInputId ? { deviceId: { exact: track.audioInputId } } : true;
+                  const stream = await navigator.mediaDevices.getUserMedia({ audio: constraints });
+                  
+                  const isStillArmed = tracksRef.current.find(t => t.id === track.id)?.armed;
+                  if (!isStillArmed) {
+                      stream.getTracks().forEach(t => t.stop());
+                      return;
+                  }
+
+                  if (audioCtxRef.current.state === 'suspended') await audioCtxRef.current.resume();
+                  
+                  const currentSynth = synthsRef.current[track.id];
+                  if (currentSynth && currentSynth.inputBus) {
+                      const source = audioCtxRef.current.createMediaStreamSource(stream);
+                      source.connect(currentSynth.inputBus);
+                      activeLiveAudioInputsRef.current[track.id] = { 
+                          stream, 
+                          source, 
+                          inputId: track.audioInputId,
+                          connectedTo: currentSynth.inputBus
+                      };
+                  } else {
+                      stream.getTracks().forEach(t => t.stop());
+                  }
+              } catch (err) {
+                  console.error("Failed to start live monitoring for track", track.id, err);
+              }
+          });
+      };
+
+      setupMonitoring();
+  }, [armedAudioTracksMeta]);
 
   // Global Undo/Redo History Tracker
   useEffect(() => {
