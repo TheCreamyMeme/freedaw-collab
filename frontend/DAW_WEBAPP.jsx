@@ -6391,6 +6391,39 @@ const initAudioEngine = async (explicitTracks = null) => {
                   return { ...l, automation: { ...auto, [action.payload.paramKey]: pts } };
               }));
               break;
+          case 'DUPLICATE_TRACK': {
+              const trackToDuplicate = tracksRef.current.find(t => t.id === action.payload.trackId);
+              if (!trackToDuplicate) break;
+              const newTrackId = Date.now() + Math.floor(Math.random() * 1000);
+              const duplicatedTrack = JSON.parse(JSON.stringify(trackToDuplicate));
+              duplicatedTrack.id = newTrackId;
+              duplicatedTrack.name = `${duplicatedTrack.name} (Copy)`;
+              duplicatedTrack.clips = (duplicatedTrack.clips || []).map(c => ({
+                  ...c,
+                  id: Date.now() + Math.random(),
+                  notes: c.notes ? c.notes.map(n => ({ ...n, id: `n_${Date.now()}_${Math.random()}` })) : undefined
+              }));
+              duplicatedTrack.effects = (duplicatedTrack.effects || []).map(fx => ({
+                  ...fx,
+                  id: `fx-${Date.now()}-${Math.random()}`
+              }));
+              
+              const trackIndex = tracksRef.current.findIndex(t => t.id === action.payload.trackId);
+              setTracks(prev => {
+                  const next = [...prev];
+                  next.splice(trackIndex + 1, 0, duplicatedTrack);
+                  return next;
+              });
+
+              if (audioCtxRef.current) {
+                  setIsProcessingAudio(true);
+                  setTimeout(async () => {
+                      synthsRef.current[newTrackId] = await initTrackRouting(duplicatedTrack, audioCtxRef.current, masterSummingBusRef.current);
+                      setIsProcessingAudio(false);
+                  }, 50);
+              }
+              break;
+          }
           case 'DELETE_TRACK': 
               setTracks(prev => prev.filter(t => t.id !== action.payload.id)); 
               disconnectTrackRouting(synthsRef.current[action.payload.id]);
@@ -9205,6 +9238,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                 {contextMenu.type === 'track' && (
                   <>
                     {contextMenu.payload.trackId !== 'master' && <button onClick={() => { setEditingTrackId(contextMenu.payload.trackId); setContextMenu(null); }} className="w-full text-left px-4 py-2 text-sm text-neutral-300 hover:bg-neutral-800 hover:text-white flex items-center gap-2"><Pencil size={14}/> Rename Track</button>}
+                    {contextMenu.payload.trackId !== 'master' && <button onClick={() => { dispatchDawAction({ type: 'DUPLICATE_TRACK', payload: { trackId: contextMenu.payload.trackId } }); setContextMenu(null); }} className="w-full text-left px-4 py-2 text-sm text-neutral-300 hover:bg-neutral-800 hover:text-white flex items-center gap-2"><Copy size={14}/> Duplicate Track</button>}
                     <button onClick={() => { setBottomDock({ type: 'devices', trackId: contextMenu.payload.trackId }); setContextMenu(null); }} className="w-full text-left px-4 py-2 text-sm text-neutral-300 hover:bg-neutral-800 hover:text-white flex items-center gap-2"><Plug size={14}/> Device Rack</button>
                     {contextMenu.payload.trackId !== 'master' && (
                         <>
