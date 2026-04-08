@@ -2194,6 +2194,7 @@ function DAWStudio() {
   const sampleTree = React.useMemo(() => buildSampleTree(userSamples), [userSamples]);
 
   const [contextMenu, setContextMenu] = useState(null);
+  const [showPeerList, setShowPeerList] = useState(false);
   const [editingTrackId, setEditingTrackId] = useState(null);
   const [draggingClip, setDraggingClip] = useState(null);
   const [dragHover, setDragHover] = useState(null); // Real-time file drag states
@@ -6346,10 +6347,10 @@ const initAudioEngine = async (explicitTracks = null) => {
       const extra = peerList.length - maxVisible;
 
       return (
-          <div className="relative flex items-center group/peer-list h-full py-1">
+          <div className="relative flex items-center h-full py-1 cursor-pointer" onClick={(e) => { e.stopPropagation(); setShowPeerList(p => !p); }}>
               <div className="flex -space-x-2">
                   <div className="relative z-50">
-                      <div onClick={() => setShowProfileMenu(true)} className="w-8 h-8 bg-neutral-800 rounded-full border-2 border-neutral-900 overflow-hidden relative cursor-pointer shadow-sm hover:ring-2 hover:ring-neutral-700 transition-all">
+                      <div className="w-8 h-8 bg-neutral-800 rounded-full border-2 border-neutral-900 overflow-hidden relative shadow-sm hover:ring-2 hover:ring-neutral-700 transition-all" title={`You\nOnline`}>
                           {currentUser?.avatar ? (
                               <img src={currentUser.avatar} alt="Me" className="w-full h-full object-cover" />
                           ) : (
@@ -6359,23 +6360,30 @@ const initAudioEngine = async (explicitTracks = null) => {
                           )}
                       </div>
                   </div>
-                  {visible.map((peer, idx) => (
-                      <div key={idx} onClick={() => setViewProfileUser(peer)} style={{ zIndex: 40 - idx }} className={`w-8 h-8 ${peer.avatar ? '' : (peer.color || 'bg-blue-600')} rounded-full border-2 border-neutral-900 overflow-hidden flex items-center justify-center text-xs font-bold text-white relative shadow-sm cursor-pointer hover:ring-2 hover:ring-neutral-700 transition-all`} title={peer.username || 'Peer'}>
-                          {peer.avatar ? <img src={peer.avatar} alt={peer.username} className="w-full h-full object-cover" /> : (peer.username || '?').charAt(0).toUpperCase()}
-                      </div>
-                  ))}
+                  {visible.map((peer, idx) => {
+                      let status = 'In Library';
+                      if (peer.appView === 'daw') {
+                          status = peer.projectId === projectId ? 'In this project' : 'In another project';
+                      }
+                      return (
+                          <div key={idx} style={{ zIndex: 40 - idx }} className={`w-8 h-8 ${peer.avatar ? '' : (peer.color || 'bg-blue-600')} rounded-full border-2 border-neutral-900 overflow-hidden flex items-center justify-center text-xs font-bold text-white relative shadow-sm hover:ring-2 hover:ring-neutral-700 transition-all`} title={`${peer.username || 'Peer'}\n${status}`}>
+                              {peer.avatar ? <img src={peer.avatar} alt={peer.username} className="w-full h-full object-cover" /> : (peer.username || '?').charAt(0).toUpperCase()}
+                          </div>
+                      );
+                  })}
                   {extra > 0 && (
-                      <div className="w-8 h-8 bg-neutral-800 rounded-full border-2 border-neutral-900 flex items-center justify-center text-[10px] font-bold text-white relative shadow-sm z-10">
+                      <div className="w-8 h-8 bg-neutral-800 rounded-full border-2 border-neutral-900 flex items-center justify-center text-[10px] font-bold text-white relative shadow-sm z-10" title={`+${extra} more users`}>
                           +{extra}
                       </div>
                   )}
               </div>
               
-              <div className="absolute top-full right-0 mt-2 w-64 bg-neutral-900 border border-neutral-700 shadow-2xl rounded-lg opacity-0 group-hover/peer-list:opacity-100 pointer-events-none group-hover/peer-list:pointer-events-auto transition-opacity z-[100] flex flex-col max-h-64 overflow-y-auto custom-scrollbar p-2 gap-1 translate-y-1 group-hover/peer-list:translate-y-0">
+              {showPeerList && (
+              <div className="absolute top-full right-0 mt-2 w-64 bg-neutral-900 border border-neutral-700 shadow-2xl rounded-lg z-[100] flex flex-col max-h-64 overflow-y-auto custom-scrollbar p-2 gap-1 cursor-default" onClick={e => e.stopPropagation()}>
                   <div className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider px-2 py-1 border-b border-neutral-800 mb-1">Active Users ({peerList.length + 1})</div>
                   
                   {/* Current User */}
-                  <div onClick={() => setShowProfileMenu(true)} className="flex items-center gap-3 p-2 hover:bg-neutral-800 rounded-md cursor-pointer transition-colors">
+                  <div onClick={() => { setShowProfileMenu(true); setShowPeerList(false); }} className="flex items-center gap-3 p-2 hover:bg-neutral-800 rounded-md cursor-pointer transition-colors">
                       <div className={`w-8 h-8 ${currentUser?.avatar ? '' : (currentUser?.color || 'bg-emerald-500')} rounded-full overflow-hidden flex items-center justify-center text-xs font-bold text-white shrink-0`}>
                           {currentUser?.avatar ? <img src={currentUser.avatar} alt="Me" className="w-full h-full object-cover" /> : (currentUser?.username || '?').charAt(0).toUpperCase()}
                       </div>
@@ -6387,7 +6395,7 @@ const initAudioEngine = async (explicitTracks = null) => {
 
                   {/* Peer Users */}
                   {peerList.map((peer, idx) => (
-                      <div key={idx} onClick={() => setViewProfileUser(peer)} className="flex items-center gap-3 p-2 hover:bg-neutral-800 rounded-md cursor-pointer transition-colors">
+                      <div key={idx} onClick={() => { setViewProfileUser(peer); setShowPeerList(false); }} className="flex items-center gap-3 p-2 hover:bg-neutral-800 rounded-md cursor-pointer transition-colors">
                           <div className={`w-8 h-8 ${peer.avatar ? '' : (peer.color || 'bg-blue-600')} rounded-full overflow-hidden flex items-center justify-center text-xs font-bold text-white shrink-0`}>
                               {peer.avatar ? <img src={peer.avatar} alt={peer.username} className="w-full h-full object-cover" /> : (peer.username || '?').charAt(0).toUpperCase()}
                           </div>
@@ -6400,6 +6408,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                       </div>
                   ))}
               </div>
+              )}
           </div>
       );
   };
