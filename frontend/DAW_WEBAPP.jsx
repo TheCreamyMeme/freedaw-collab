@@ -8083,7 +8083,8 @@ const initAudioEngine = async (explicitTracks = null) => {
                 }
 
                 return (
-                <div className="bg-[#1a1a1a] border-t border-[#111111] flex flex-col shrink-0 z-30 relative select-none min-h-[260px]">
+                <div style={{ height: dockHeight }} className="bg-[#1a1a1a] border-t border-[#111111] flex flex-col shrink-0 z-30 relative select-none min-h-[260px]">
+                    <div className="absolute top-0 left-0 right-0 h-1.5 -translate-y-1/2 cursor-ns-resize hover:bg-cyan-500 z-50 transition-colors" onMouseDown={() => setDraggingDockHeight(true)} />
                     <div className="h-6 bg-[#2d2d2d] flex justify-between items-center px-4 border-b border-[#111] shrink-0">
                         <div className="flex items-center gap-2">
                            <span className={`text-[10px] font-bold uppercase tracking-wider ${trackType === 'master' ? 'text-[#ff5a5a]' : 'text-[#b3b3b3]'}`}>{trackName}</span>
