@@ -685,13 +685,13 @@ const INTERNAL_PLUGINS = [
 ];
 
 const INITIAL_TRACKS = [
-  { id: 1, name: 'Drum Kit', type: 'midi', instrument: 'inst-drum', instrumentParams: { samples: {} }, color: 'bg-orange-500', volume: 90, pan: 0, muted: false, solo: false, armed: false, automation: {}, activeAutomationParam: 'volume', effects: [], clips: [
+  { id: 1, name: 'Drum Kit', type: 'midi', instrument: 'inst-drum', instrumentParams: { samples: {} }, color: 'bg-orange-500', volume: 90, pan: 0, muted: false, solo: false, armed: false, arpEnabled: false, arpRate: 0.25, arpPattern: 'up', automation: {}, activeAutomationParam: 'volume', effects: [], clips: [
     { id: 101, start: 0, duration: 4, notes: [
       { id: 'n1', pitch: 36, start: 0, duration: 0.25, velocity: 120 }, { id: 'n2', pitch: 42, start: 0.5, duration: 0.25, velocity: 80 },
       { id: 'n3', pitch: 38, start: 1, duration: 0.25, velocity: 110 }, { id: 'n4', pitch: 42, start: 1.5, duration: 0.25, velocity: 80 }
     ]}
   ]},
-  { id: 2, name: 'Lead Synth', type: 'midi', instrument: 'inst-subtractive', instrumentParams: { cutoff: 800, res: 2, attack: 0.05, release: 0.2 }, color: 'bg-purple-500', volume: 75, pan: 0, muted: false, solo: false, armed: false, automation: {}, activeAutomationParam: 'volume', effects: [{ id: 'fx-dist-1', type: 'distortion', name: 'Tube Distortion', params: { amount: 40, mix: 0.6 } }], clips: [
+  { id: 2, name: 'Lead Synth', type: 'midi', instrument: 'inst-subtractive', instrumentParams: { cutoff: 800, res: 2, attack: 0.05, release: 0.2 }, color: 'bg-purple-500', volume: 75, pan: 0, muted: false, solo: false, armed: false, arpEnabled: false, arpRate: 0.25, arpPattern: 'up', automation: {}, activeAutomationParam: 'volume', effects: [{ id: 'fx-dist-1', type: 'distortion', name: 'Tube Distortion', params: { amount: 40, mix: 0.6 } }], clips: [
     { id: 201, start: 0, duration: 4, notes: [
       { id: 'n5', pitch: 36, start: 0, duration: 0.5, velocity: 100 }, { id: 'n6', pitch: 36, start: 0.75, duration: 0.25, velocity: 90 },
       { id: 'n7', pitch: 48, start: 1.5, duration: 0.5, velocity: 110 }
@@ -3181,7 +3181,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                           instrument: 'inst-subtractive',
                           instrumentParams: {cutoff:2000, res:1},
                           color: USER_COLORS[Math.floor(Math.random() * USER_COLORS.length)],
-                          volume: 80, pan: 0, muted: false, solo: false, armed: false, effects: [],
+                          volume: 80, pan: 0, muted: false, solo: false, armed: false, arpEnabled: false, arpRate: 0.25, arpPattern: 'up', effects: [],
                           clips: [{ id: Date.now() + Math.random(), start: 0, duration: Math.max(4, maxBeat), notes }]
                       });
                   }
@@ -3465,7 +3465,10 @@ const initAudioEngine = async (explicitTracks = null) => {
       }
 
       if (wrapped) {
-          Object.values(synthsRef.current).forEach(synth => { if (synth.activeNoteIds) synth.activeNoteIds.clear(); });
+          Object.values(synthsRef.current).forEach(synth => { 
+              if (synth.activeNoteIds) synth.activeNoteIds.clear(); 
+              synth.lastArpStep = -1;
+          });
           lastMetronomeBeatRef.current = Math.floor(newTime) - 1;
       }
 
@@ -3805,16 +3808,16 @@ const initAudioEngine = async (explicitTracks = null) => {
             }
 
         const activeClip = track.clips.find(c => newTime >= c.start && newTime < c.start + c.duration);
-        const shouldPlayTrack = activeClip && !track.muted && (!anySolo || track.solo);
+        const isTrackEnabled = !track.muted && (!anySolo || track.solo);
 
-        const targetVolume = (!track.muted && (!anySolo || track.solo)) ? track.volume / 100 : 0;
+        const targetVolume = isTrackEnabled ? track.volume / 100 : 0;
         if (synth.lastTargetVolume !== targetVolume) {
           synth.faderGain.gain.setTargetAtTime(targetVolume, now, 0.05);
           synth.lastTargetVolume = targetVolume;
         }
 
-        if (track.type === 'midi' && shouldPlayTrack) {
-          const clipTime = newTime - activeClip.start;
+        if (track.type === 'midi' && isTrackEnabled) {
+          const clipTime = activeClip ? newTime - activeClip.start : 0;
           // Merge Base Params with Live LFO and Automation values
           const dynamicInstParams = { ...track.instrumentParams };
           
@@ -3848,52 +3851,139 @@ const initAudioEngine = async (explicitTracks = null) => {
               }
           }
 
-          const notes = activeClip.notes || [];
-          let currentActiveIds = null;
+          // 1. Collect all active notes
+          const activeChord = [];
           
-          for (let i = 0; i < notes.length; i++) {
-              const note = notes[i];
-              if (clipTime >= note.start && clipTime < note.start + note.duration) {
-                  if (!currentActiveIds) currentActiveIds = new Set();
-                  currentActiveIds.add(note.id);
-                  
-                  if (!synth.activeNoteIds.has(note.id)) {
-                      synth.activeNoteIds.add(note.id);
-                      const durSeconds = note.duration * (60/bpm);
-                      const pbNode = synth.pitchBendNode;
-                      
-                      let volMult = 1;
-                      if ((activeClip.fadeIn || 0) > 0 && note.start < activeClip.fadeIn) {
-                          volMult = applyFadeCurve(note.start / activeClip.fadeIn, activeClip.fadeInCurve || 0);
-                      } else if ((activeClip.fadeOut || 0) > 0 && note.start > activeClip.duration - activeClip.fadeOut) {
-                          volMult = 1 - applyFadeCurve((note.start - (activeClip.duration - activeClip.fadeOut)) / activeClip.fadeOut, activeClip.fadeOutCurve || 0);
-                      }
-                      const finalVelocity = Math.max(1, Math.round((note.velocity || 100) * volMult));
-
-                      const customInst = window.FreeDawPlugins?.find(p => p.id === track.instrument);
-                      if (customInst && typeof customInst.triggerNote === 'function') {
-                          try {
-                              customInst.triggerNote(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
-                          } catch(e) { console.error("Custom Instrument crashed", e); }
-                      } else if (track.instrument === 'inst-drum') triggerDrum(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, dynamicInstParams, finalVelocity);
-                      else if (track.instrument === 'inst-fm') triggerFMSynth(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
-                      else if (track.instrument === 'inst-supersaw') triggerSupersaw(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
-                      else if (track.instrument === 'inst-pluck') triggerPluck(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
-                      else if (track.instrument === 'inst-acid') triggerAcid(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
-                      else if (track.instrument === 'inst-organ') triggerOrgan(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
-                      else triggerSubtractive(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
+          if (activeClip) {
+              const notes = activeClip.notes || [];
+              for (let i = 0; i < notes.length; i++) {
+                  const note = notes[i];
+                  if (clipTime >= note.start && clipTime < note.start + note.duration) {
+                      activeChord.push({ ...note, source: 'clip', _clipRef: activeClip });
                   }
               }
           }
+          
+          if (track.armed) {
+              for (const pitchStr in activeLiveMidiNotesRef.current) {
+                  const data = activeLiveMidiNotesRef.current[pitchStr];
+                  activeChord.push({ id: `live_${pitchStr}`, pitch: Number(pitchStr), velocity: data.velocity, source: 'live' });
+              }
+          }
 
-          if (currentActiveIds) {
-              for (const id of synth.activeNoteIds) { 
-                  if (!currentActiveIds.has(id)) synth.activeNoteIds.delete(id); 
+          if (track.arpEnabled) {
+              if (activeChord.length > 0) {
+                  const arpRate = track.arpRate || 0.25;
+                  const timeBase = stateRefs.current.isPlaying ? newTime : (now * (stateRefs.current.bpm / 60));
+                  const currentArpStep = Math.floor(timeBase / arpRate);
+
+                  if (currentArpStep > (synth.lastArpStep || -1)) {
+                      synth.lastArpStep = currentArpStep;
+
+                      let sortedPitches = [...new Set(activeChord.map(n => n.pitch))].sort((a,b) => a - b);
+                      
+                      if (track.arpPattern === 'down') sortedPitches.reverse();
+                      else if (track.arpPattern === 'up-down' && sortedPitches.length > 1) {
+                          const down = [...sortedPitches].reverse().slice(1, -1);
+                          sortedPitches = sortedPitches.concat(down);
+                      }
+
+                      if (sortedPitches.length > 0) {
+                          let pitchIdx = currentArpStep % sortedPitches.length;
+                          if (track.arpPattern === 'random') pitchIdx = Math.floor(Math.random() * sortedPitches.length);
+                          
+                          const pitchToPlay = sortedPitches[pitchIdx];
+                          const baseNote = activeChord.find(n => n.pitch === pitchToPlay) || activeChord[0];
+
+                          const durSeconds = (arpRate * 0.8) * (60/stateRefs.current.bpm);
+                          const pbNode = synth.pitchBendNode;
+                          
+                          let finalVelocity = baseNote.velocity || 100;
+                          if (baseNote.source === 'clip') {
+                              const c = baseNote._clipRef;
+                              let volMult = 1;
+                              if ((c.fadeIn || 0) > 0 && baseNote.start < c.fadeIn) {
+                                  volMult = applyFadeCurve(baseNote.start / c.fadeIn, c.fadeInCurve || 0);
+                              } else if ((c.fadeOut || 0) > 0 && baseNote.start > c.duration - c.fadeOut) {
+                                  volMult = 1 - applyFadeCurve((baseNote.start - (c.duration - c.fadeOut)) / c.fadeOut, c.fadeOutCurve || 0);
+                              }
+                              finalVelocity = Math.max(1, Math.round(finalVelocity * volMult));
+                          }
+
+                          const customInst = window.FreeDawPlugins?.find(p => p.id === track.instrument);
+                          if (customInst && typeof customInst.triggerNote === 'function') {
+                              try { customInst.triggerNote(audioCtxRef.current, synth.inputBus, pitchToPlay, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode); } catch(e) {}
+                          } else if (track.instrument === 'inst-drum') triggerDrum(audioCtxRef.current, synth.inputBus, pitchToPlay, now, 1, dynamicInstParams, finalVelocity);
+                          else if (track.instrument === 'inst-fm') triggerFMSynth(audioCtxRef.current, synth.inputBus, pitchToPlay, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
+                          else if (track.instrument === 'inst-supersaw') triggerSupersaw(audioCtxRef.current, synth.inputBus, pitchToPlay, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
+                          else if (track.instrument === 'inst-pluck') triggerPluck(audioCtxRef.current, synth.inputBus, pitchToPlay, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
+                          else if (track.instrument === 'inst-acid') triggerAcid(audioCtxRef.current, synth.inputBus, pitchToPlay, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
+                          else if (track.instrument === 'inst-organ') triggerOrgan(audioCtxRef.current, synth.inputBus, pitchToPlay, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
+                          else triggerSubtractive(audioCtxRef.current, synth.inputBus, pitchToPlay, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
+                      }
+                  }
+                  
+                  let currentActiveIds = new Set(activeChord.map(n => n.id).filter(Boolean));
+                  for (const id of synth.activeNoteIds) { 
+                      if (!currentActiveIds.has(id)) synth.activeNoteIds.delete(id); 
+                  }
+                  activeChord.forEach(n => { if (n.id) synth.activeNoteIds.add(n.id); });
+
+              } else {
+                  synth.lastArpStep = -1;
+                  synth.activeNoteIds.clear();
               }
           } else {
-              synth.activeNoteIds.clear();
+              synth.lastArpStep = -1;
+              let currentActiveIds = null;
+              
+              const notes = activeClip ? (activeClip.notes || []) : [];
+              for (let i = 0; i < notes.length; i++) {
+                  const note = notes[i];
+                  if (clipTime >= note.start && clipTime < note.start + note.duration) {
+                      if (!currentActiveIds) currentActiveIds = new Set();
+                      currentActiveIds.add(note.id);
+                      
+                      if (!synth.activeNoteIds.has(note.id)) {
+                          synth.activeNoteIds.add(note.id);
+                          const durSeconds = note.duration * (60/stateRefs.current.bpm);
+                          const pbNode = synth.pitchBendNode;
+                          
+                          let volMult = 1;
+                          if ((activeClip.fadeIn || 0) > 0 && note.start < activeClip.fadeIn) {
+                              volMult = applyFadeCurve(note.start / activeClip.fadeIn, activeClip.fadeInCurve || 0);
+                          } else if ((activeClip.fadeOut || 0) > 0 && note.start > activeClip.duration - activeClip.fadeOut) {
+                              volMult = 1 - applyFadeCurve((note.start - (activeClip.duration - activeClip.fadeOut)) / activeClip.fadeOut, activeClip.fadeOutCurve || 0);
+                          }
+                          const finalVelocity = Math.max(1, Math.round((note.velocity || 100) * volMult));
+
+                          const customInst = window.FreeDawPlugins?.find(p => p.id === track.instrument);
+                          if (customInst && typeof customInst.triggerNote === 'function') {
+                              try {
+                                  customInst.triggerNote(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
+                              } catch(e) { console.error("Custom Instrument crashed", e); }
+                          } else if (track.instrument === 'inst-drum') triggerDrum(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, dynamicInstParams, finalVelocity);
+                          else if (track.instrument === 'inst-fm') triggerFMSynth(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
+                          else if (track.instrument === 'inst-supersaw') triggerSupersaw(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
+                          else if (track.instrument === 'inst-pluck') triggerPluck(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
+                          else if (track.instrument === 'inst-acid') triggerAcid(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
+                          else if (track.instrument === 'inst-organ') triggerOrgan(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
+                          else triggerSubtractive(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
+                      }
+                  }
+              }
+
+              if (currentActiveIds) {
+                  for (const id of synth.activeNoteIds) { 
+                      if (!currentActiveIds.has(id) && !String(id).startsWith('live_')) synth.activeNoteIds.delete(id); 
+                  }
+              } else {
+                  for (const id of synth.activeNoteIds) { 
+                      if (!String(id).startsWith('live_')) synth.activeNoteIds.delete(id); 
+                  }
+              }
           }
-        } else if (track.type === 'audio' && shouldPlayTrack) {
+        } else if (track.type === 'audio' && isTrackEnabled && activeClip) {
             if (!synth.activeNoteIds.has(activeClip.id)) {
                 synth.activeNoteIds.add(activeClip.id);
                 
@@ -5795,6 +5885,9 @@ const initAudioEngine = async (explicitTracks = null) => {
           case 'UPDATE_INSTRUMENT_PARAM': 
               setTracks(prev => prev.map(t => t.id === action.payload.trackId ? { ...t, instrumentParams: { ...t.instrumentParams, [action.payload.param]: action.payload.value } } : t)); 
               break;
+          case 'TOGGLE_ARP': setTracks(prev => prev.map(t => t.id === action.payload.trackId ? { ...t, arpEnabled: !t.arpEnabled } : t)); break;
+          case 'UPDATE_ARP_RATE': setTracks(prev => prev.map(t => t.id === action.payload.trackId ? { ...t, arpRate: action.payload.rate } : t)); break;
+          case 'UPDATE_ARP_PATTERN': setTracks(prev => prev.map(t => t.id === action.payload.trackId ? { ...t, arpPattern: action.payload.pattern } : t)); break;
           case 'UPDATE_NOTES': setTracks(prev => prev.map(t => t.id === action.payload.trackId ? { ...t, clips: t.clips.map(c => c.id === action.payload.clipId ? { ...c, notes: action.payload.notes } : c) } : t)); break;
           case 'ADD_LFO': setLfos(prev => [...prev, action.payload]); break;
           case 'UPDATE_LFO': setLfos(prev => prev.map(l => l.id === action.payload.id ? { ...l, ...action.payload.updates } : l)); break;
@@ -6355,10 +6448,11 @@ const initAudioEngine = async (explicitTracks = null) => {
               finalTrackId = Date.now() + Math.floor(Math.random() * 1000);
               const newTrack = {
                   id: finalTrackId,
-                  name: (internalSampleName || 'Audio').substring(0, 16),
-                  type: 'audio',
+                  name: file.name.split('.')[0].substring(0, 16),
+                  type: fileType,
                   color: USER_COLORS[Math.floor(Math.random() * USER_COLORS.length)],
-                  volume: 80, pan: 0, muted: false, solo: false, armed: false, clips: [], effects: [], audioInputId: ''
+                  volume: 80, pan: 0, muted: false, solo: false, armed: false, clips: [], effects: [],
+                  ...(fileType === 'midi' ? { instrument: 'inst-subtractive', instrumentParams: {cutoff:2000, res:1}, arpEnabled: false, arpRate: 0.25, arpPattern: 'up' } : { audioInputId: '' })
               };
               dispatchDawAction({ type: 'ADD_TRACK', payload: newTrack });
           }
@@ -7260,6 +7354,16 @@ const initAudioEngine = async (explicitTracks = null) => {
                                         )}
                                     </div>
                                     <div className="flex items-center gap-0.5 shrink-0">
+                                        {t.type === 'midi' && (
+                                            <button 
+                                                onClick={(e) => { e.stopPropagation(); dispatchDawAction({ type: 'TOGGLE_ARP', payload: { trackId: t.id } }); }} 
+                                                onContextMenu={(e) => handleContextMenu(e, 'arp-controls', { trackId: t.id })}
+                                                className={`w-6 h-5 rounded-sm text-[8px] font-bold transition-colors ${t.arpEnabled ? 'bg-purple-500 text-black' : 'text-[#888] bg-[#222] hover:bg-[#555]'}`} 
+                                                title="Arpeggiator (Right-Click for Settings)"
+                                            >
+                                                ARP
+                                            </button>
+                                        )}
                                         <button onClick={(e) => { e.stopPropagation(); dispatchDawAction({ type: 'TOGGLE_ARM', payload: { trackId: t.id } }); }} className={`w-5 h-5 rounded-sm flex items-center justify-center transition-colors ${t.armed ? 'text-black bg-[#ff5a5a]' : 'text-[#888] bg-[#222] hover:bg-[#555]'}`}><Circle size={8} fill={t.armed ? "currentColor" : "none"}/></button>
                                         <button onClick={(e) => { e.stopPropagation(); dispatchDawAction({ type: 'TOGGLE_MUTE', payload: { trackId: t.id } }); }} className={`w-5 h-5 rounded-sm text-[9px] font-bold transition-colors ${t.muted ? 'bg-[#ffae00] text-black' : 'text-[#888] bg-[#222] hover:bg-[#555]'}`}>M</button>
                                         <button onClick={(e) => { e.stopPropagation(); dispatchDawAction({ type: 'TOGGLE_SOLO', payload: { trackId: t.id } }); }} className={`w-5 h-5 rounded-sm text-[9px] font-bold transition-colors ${t.solo ? 'bg-[#00d0ff] text-black' : 'text-[#888] bg-[#222] hover:bg-[#555]'}`}>S</button>
@@ -8275,6 +8379,36 @@ const initAudioEngine = async (explicitTracks = null) => {
                     <button onClick={() => { deleteEffect(contextMenu.payload.trackId, contextMenu.payload.fxId); setContextMenu(null); }} className="w-full text-left px-4 py-2 text-sm text-red-400 hover:bg-neutral-800 hover:text-red-300 flex items-center gap-2"><Trash2 size={14}/> Remove Effect</button>
                   </>
                 )}
+                {contextMenu.type === 'arp-controls' && (() => {
+                    const track = tracks.find(t => t.id === contextMenu.payload.trackId);
+                    if (!track) return null;
+                    return (
+                        <div onClick={(e) => e.stopPropagation()} className="px-4 py-3 flex flex-col gap-3 min-w-[180px]">
+                            <div className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider border-b border-neutral-800 pb-2 flex items-center gap-2">
+                                <Activity size={12} className="text-purple-400"/> Arpeggiator
+                            </div>
+                            <div className="flex flex-col gap-1.5">
+                                <label className="text-[9px] font-bold text-[#888] uppercase tracking-wider">Rate</label>
+                                <select value={track.arpRate || 0.25} onChange={e => { dispatchDawAction({ type: 'UPDATE_ARP_RATE', payload: { trackId: track.id, rate: Number(e.target.value) }}); }} className="w-full bg-neutral-950 border border-neutral-800 rounded p-1.5 text-xs text-white outline-none focus:border-purple-500 cursor-pointer">
+                                    <option value={1}>1/4</option>
+                                    <option value={0.5}>1/8</option>
+                                    <option value={0.25}>1/16</option>
+                                    <option value={0.125}>1/32</option>
+                                    <option value={0.0625}>1/64</option>
+                                </select>
+                            </div>
+                            <div className="flex flex-col gap-1.5">
+                                <label className="text-[9px] font-bold text-[#888] uppercase tracking-wider">Pattern</label>
+                                <select value={track.arpPattern || 'up'} onChange={e => { dispatchDawAction({ type: 'UPDATE_ARP_PATTERN', payload: { trackId: track.id, pattern: e.target.value }}); }} className="w-full bg-neutral-950 border border-neutral-800 rounded p-1.5 text-xs text-white outline-none focus:border-purple-500 cursor-pointer">
+                                    <option value="up">Up</option>
+                                    <option value="down">Down</option>
+                                    <option value="up-down">Up-Down</option>
+                                    <option value="random">Random</option>
+                                </select>
+                            </div>
+                        </div>
+                    );
+                })()}
                 {contextMenu.type === 'midi-learn' && (
                   <>
                     <div className="px-4 py-2 text-[10px] text-neutral-500 font-bold uppercase tracking-wider border-b border-neutral-800">Control & Automation</div>
