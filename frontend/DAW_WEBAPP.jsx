@@ -3481,21 +3481,22 @@ const initAudioEngine = async (explicitTracks = null) => {
               lastMetronomeBeatRef.current = beatToPlay;
               triggerMetronome(audioCtxRef.current, masterGainRef.current, beatToPlay % 4 === 0, now);
           }
+      }
 
-          // CRITICAL PERFORMANCE FIX: Prevent massive React re-renders by mutating DOM directly at 60fps
-          stateRefs.current.currentTime = newTime;
-          if (playheadRef.current) playheadRef.current.style.left = `${newTime * BEAT_WIDTH}px`;
-          if (timeDisplayRef.current) timeDisplayRef.current.innerText = formatTime(newTime, stateRefs.current.bpm);
-          if (posDisplayRef.current) posDisplayRef.current.innerText = `${Math.floor(newTime / 4) + 1}.${Math.floor(newTime % 4) + 1}.1`;
-          
-          if (stateRefs.current.isRecording) {
-              tracksRef.current.forEach(t => {
-                  if (t.armed) {
-                      const previewEl = document.getElementById(`record-preview-${t.id}`);
-                      if (previewEl) previewEl.style.width = `${Math.max(1, (newTime - recordingStartTimeRef.current) * BEAT_WIDTH)}px`;
-                  }
-              });
-          }
+      // CRITICAL PERFORMANCE FIX: Prevent massive React re-renders by mutating DOM directly at 60fps
+      // Run this unconditionally outside the isPlaying check so the UI responds to manual scrubs/stops instantly!
+      stateRefs.current.currentTime = newTime;
+      if (playheadRef.current) playheadRef.current.style.left = `${newTime * BEAT_WIDTH}px`;
+      if (timeDisplayRef.current) timeDisplayRef.current.innerText = formatTime(newTime, stateRefs.current.bpm);
+      if (posDisplayRef.current) posDisplayRef.current.innerText = `${Math.floor(newTime / 4) + 1}.${Math.floor(newTime % 4) + 1}.1`;
+      
+      if (stateRefs.current.isRecording && isPlayingState) {
+          tracksRef.current.forEach(t => {
+              if (t.armed) {
+                  const previewEl = document.getElementById(`record-preview-${t.id}`);
+                  if (previewEl) previewEl.style.width = `${Math.max(1, (newTime - recordingStartTimeRef.current) * BEAT_WIDTH)}px`;
+              }
+          });
       }
 
       // CPU Jitter Calculation
