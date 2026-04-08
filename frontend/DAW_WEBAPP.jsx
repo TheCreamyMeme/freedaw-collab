@@ -3,7 +3,7 @@ import {
   Play, Pause, Square, Circle, SkipBack, SkipForward,
   Volume2, Mic, Music, Radio, 
   Settings, Users, Plus, Maximize2, 
-  Folder, Sliders, Piano,
+  Folder, Sliders, Piano, Palette,
   MousePointer2, Pencil, Eraser, X, Grid, Trash2, Activity,
   Settings2, Plug, Power, LogOut, FileAudio, FileCode, Cpu,
   Repeat, Home, Save, Download, Upload, FileJson, Info, AlertTriangle, CheckCircle2, Network, Video, VideoOff, MicOff, Lock, Copy, MoreHorizontal, Scissors, Mail, Globe, Instagram, Twitter, Bell, Loader2
@@ -13,6 +13,16 @@ import { io } from 'socket.io-client';
 const API_BASE_URL = 'https://api.sprig.cc';
 
 const USER_COLORS = ['bg-emerald-500', 'bg-blue-500', 'bg-purple-500', 'bg-pink-500', 'bg-red-500', 'bg-orange-500', 'bg-yellow-500', 'bg-cyan-500'];
+const TAILWIND_TO_HEX = {
+  'bg-emerald-500': '#10b981',
+  'bg-blue-500': '#3b82f6',
+  'bg-purple-500': '#a855f7',
+  'bg-pink-500': '#ec4899',
+  'bg-red-500': '#ef4444',
+  'bg-orange-500': '#f97316',
+  'bg-yellow-500': '#eab308',
+  'bg-cyan-500': '#06b6d4'
+};
 const getDeterministicColor = (username) => {
     if (!username) return USER_COLORS[0];
     const hash = String(username).split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
@@ -367,32 +377,37 @@ const parseMidiFile = async (file) => {
 };
 
 // --- Dynamic Grid Styling Engine ---
-const getGridStyle = (snap, beatWidth, isPianoRoll = false) => {
+const getGridStyle = (snap, beatWidth, isPianoRoll = false, isLight = false) => {
     const measureW = beatWidth * 4;
     const beatW = beatWidth;
     const snapW = snap > 0 ? beatWidth * snap : 0;
     const baseH = isPianoRoll ? '16px' : '100%';
     
+    const cPitch = isLight ? 'rgba(0,0,0,0.05)' : 'rgba(255,255,255,0.03)';
+    const cStrong = isLight ? 'rgba(0,0,0,0.15)' : 'rgba(255,255,255,0.1)';
+    const cMed = isLight ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.04)';
+    const cWeak = isLight ? 'rgba(0,0,0,0.03)' : 'rgba(255,255,255,0.02)';
+
     const layers = [];
     const sizes = [];
 
     // Horizontal Pitch Lines (Piano Roll only)
     if (isPianoRoll) {
-        layers.push(`linear-gradient(to bottom, rgba(255,255,255,0.03) 1px, transparent 1px)`);
+        layers.push(`linear-gradient(to bottom, ${cPitch} 1px, transparent 1px)`);
         sizes.push(`100% 16px`);
     }
     
     // Measure Lines (Strongest)
-    layers.push(`linear-gradient(to right, rgba(255,255,255,0.1) 1px, transparent 1px)`);
+    layers.push(`linear-gradient(to right, ${cStrong} 1px, transparent 1px)`);
     sizes.push(`${measureW}px ${baseH}`);
     
     // Beat Lines (Medium)
-    layers.push(`linear-gradient(to right, rgba(255,255,255,0.04) 1px, transparent 1px)`);
+    layers.push(`linear-gradient(to right, ${cMed} 1px, transparent 1px)`);
     sizes.push(`${beatW}px ${baseH}`);
     
     // Snap Sub-divisions (Flat gray)
     if (snapW > 0 && snap !== 1 && snap !== 4) {
-        layers.push(`linear-gradient(to right, rgba(255,255,255,0.02) 1px, transparent 1px)`);
+        layers.push(`linear-gradient(to right, ${cWeak} 1px, transparent 1px)`);
         sizes.push(`${snapW}px ${baseH}`);
     }
 
@@ -601,22 +616,22 @@ const SampleTreeRenderer = React.memo(({ node, level = 0, expandedFolders, toggl
         <div className="flex flex-col w-full">
             {!isRoot && (
                 <div 
-                    className={`group flex items-center justify-between p-1.5 rounded-sm cursor-pointer transition-colors hover:bg-[#444] mb-[1px] ${level > 1 ? 'ml-3 border-l border-[#333] pl-2' : ''}`}
+                    className={`group flex items-center justify-between p-1.5 rounded-sm cursor-pointer transition-colors hover:bg-neutral-800 mb-[1px] ${level > 1 ? 'ml-3 border-l border-neutral-800 pl-2' : ''}`}
                     onClick={() => toggleFolder(node.path)}
                 >
                     <div className="flex items-center gap-2 overflow-hidden flex-1">
                         <Folder size={12} className="text-cyan-500 shrink-0" fill={expandedFolders[node.path] ? "currentColor" : "none"} />
-                        <span className="text-[10px] font-bold text-[#e0e0e0] uppercase tracking-wider truncate select-none">{node.name}</span>
+                        <span className="text-[10px] font-bold text-neutral-300 uppercase tracking-wider truncate select-none">{node.name}</span>
                     </div>
                     {onDeleteFolder && (
-                        <button onClick={(e) => { e.stopPropagation(); onDeleteFolder(e, node); }} className="text-[#888] hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity p-1 shrink-0" title="Delete Folder">
+                        <button onClick={(e) => { e.stopPropagation(); onDeleteFolder(e, node); }} className="text-neutral-500 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity p-1 shrink-0" title="Delete Folder">
                             <Trash2 size={12}/>
                         </button>
                     )}
                 </div>
             )}
             {(isRoot || expandedFolders[node.path]) && (
-                <div className={`flex flex-col ${!isRoot ? 'ml-3 border-l border-[#333] pl-2' : ''}`}>
+                <div className={`flex flex-col ${!isRoot ? 'ml-3 border-l border-neutral-800 pl-2' : ''}`}>
                     {childrenArray.map(child => {
                         if (child.isDir) {
                             return <SampleTreeRenderer key={child.path} node={child} level={level + 1} expandedFolders={expandedFolders} toggleFolder={toggleFolder} onPreview={onPreview} onAssign={onAssign} onDelete={onDelete} onDeleteFolder={onDeleteFolder} />;
@@ -630,16 +645,16 @@ const SampleTreeRenderer = React.memo(({ node, level = 0, expandedFolders, toggl
                                             e.dataTransfer.setData('internal_sample_name', child.displayName);
                                         }}
                                         onClick={() => onPreview(child.id)}
-                                        className={`group flex items-center justify-between p-1.5 rounded-sm text-[10px] text-[#b3b3b3] border border-transparent hover:bg-[#444] cursor-pointer transition-colors mb-[1px] ${!isRoot ? '' : 'bg-[#222] border-[#111]'}`}
+                                        className={`group flex items-center justify-between p-1.5 rounded-sm text-[10px] text-neutral-400 border border-transparent hover:bg-neutral-800 cursor-pointer transition-colors mb-[1px] ${!isRoot ? '' : 'bg-neutral-900 border-neutral-800'}`}
                                     >
 
                                     <div className="flex items-center gap-2 overflow-hidden flex-1">
-                                        <div className="w-6 h-6 rounded-sm bg-[#2d2d2d] border border-[#111] flex items-center justify-center text-emerald-500 shadow-sm shrink-0"><FileAudio size={10}/></div>
-                                        <span className="font-bold text-[#e0e0e0] uppercase tracking-wider truncate" title={child.displayName}>{child.displayName}</span>
+                                        <div className="w-6 h-6 rounded-sm bg-neutral-800 border border-neutral-700 flex items-center justify-center text-emerald-500 shadow-sm shrink-0"><FileAudio size={10}/></div>
+                                        <span className="font-bold text-neutral-300 uppercase tracking-wider truncate" title={child.displayName}>{child.displayName}</span>
                                     </div>
                                     <div className="flex items-center gap-1 shrink-0">
-                                        {onAssign && <button onClick={(e) => { e.stopPropagation(); onAssign(child.id); }} className="bg-[#444] hover:bg-cyan-500 text-[#b3b3b3] hover:text-black border border-[#222] px-2 py-1 text-[9px] rounded-sm font-bold uppercase tracking-wider transition-colors shrink-0">Assign</button>}
-                                        {onDelete && <button onClick={(e) => { e.stopPropagation(); onDelete(e, child.id); }} className="text-[#888] hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity p-1 shrink-0" title="Delete Sample"><Trash2 size={12}/></button>}
+                                        {onAssign && <button onClick={(e) => { e.stopPropagation(); onAssign(child.id); }} className="bg-neutral-800 hover:bg-cyan-500 text-neutral-400 hover:text-black border border-neutral-700 px-2 py-1 text-[9px] rounded-sm font-bold uppercase tracking-wider transition-colors shrink-0">Assign</button>}
+                                        {onDelete && <button onClick={(e) => { e.stopPropagation(); onDelete(e, child.id); }} className="text-neutral-500 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity p-1 shrink-0" title="Delete Sample"><Trash2 size={12}/></button>}
                                     </div>
                                 </div>
                             );
@@ -789,6 +804,101 @@ const getBitcrusherCurve = (bitDepth) => {
   bitcrusherCurveCache[bitDepth] = curve;
   return curve;
 };
+
+// --- Global Theme Engine ---
+const ThemeEngine = React.memo(({ theme }) => {
+    const isLight = theme.mode === 'light';
+    return (
+        <style>{`
+            :root {
+                --color-primary: ${theme.primary};
+                --color-secondary: ${theme.secondary};
+                --color-tertiary: ${theme.tertiary};
+            }
+            ${isLight ? `
+            .bg-\\[\\#2b2b2b\\] { background-color: #f3f4f6 !important; }
+            .bg-\\[\\#3a3a3a\\] { background-color: #ffffff !important; }
+            .bg-\\[\\#222222\\], .bg-\\[\\#222\\] { background-color: #e5e7eb !important; }
+            .bg-\\[\\#111111\\], .bg-\\[\\#111\\] { background-color: #d1d5db !important; }
+            .bg-\\[\\#1a1a1a\\] { background-color: #f9fafb !important; }
+            .bg-\\[\\#333333\\], .bg-\\[\\#333\\] { background-color: #e5e7eb !important; }
+            .bg-\\[\\#2d2d2d\\] { background-color: #f3f4f6 !important; }
+            .bg-\\[\\#242424\\] { background-color: #f9fafb !important; }
+            .bg-\\[\\#2a2b2b\\] { background-color: #ffffff !important; }
+            .bg-\\[\\#444444\\], .bg-\\[\\#444\\] { background-color: #d1d5db !important; }
+            
+            .text-\\[\\#e0e0e0\\] { color: #111827 !important; }
+            .text-\\[\\#b3b3b3\\] { color: #374151 !important; }
+            .text-\\[\\#888888\\], .text-\\[\\#888\\] { color: #6b7280 !important; }
+            .text-\\[\\#666\\] { color: #9ca3af !important; }
+            .text-white { color: #000000 !important; }
+            
+            .bg-neutral-950 { background-color: #f3f4f6 !important; }
+            .bg-neutral-900 { background-color: #ffffff !important; }
+            .bg-neutral-800 { background-color: #e5e7eb !important; }
+            .bg-neutral-700 { background-color: #d1d5db !important; }
+            .bg-neutral-900\\/60 { background-color: rgba(255,255,255,0.6) !important; }
+            .bg-neutral-900\\/80 { background-color: rgba(255,255,255,0.8) !important; }
+
+            .border-\\[\\#111111\\], .border-\\[\\#111\\] { border-color: #d1d5db !important; }
+            .border-\\[\\#222222\\], .border-\\[\\#222\\] { border-color: #e5e7eb !important; }
+            .border-\\[\\#333333\\], .border-\\[\\#333\\] { border-color: #d1d5db !important; }
+            .border-\\[\\#444\\] { border-color: #9ca3af !important; }
+            .border-neutral-700 { border-color: #d1d5db !important; }
+            .border-neutral-800, .border-neutral-800\\/50 { border-color: #e5e7eb !important; }
+            
+            .text-neutral-300 { color: #374151 !important; }
+            .text-neutral-400 { color: #4b5563 !important; }
+            .text-neutral-500 { color: #6b7280 !important; }
+            .text-neutral-600 { color: #9ca3af !important; }
+
+            .shadow-inner { box-shadow: inset 0 2px 4px 0 rgba(0, 0, 0, 0.05) !important; }
+            .shadow-2xl { box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.1) !important; }
+
+            .custom-scrollbar::-webkit-scrollbar-track { background: #e5e7eb !important; }
+            .custom-scrollbar::-webkit-scrollbar-thumb { background: #9ca3af !important; border-color: #e5e7eb !important; }
+            .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #6b7280 !important; }
+
+            :root {
+                --vu-grid-v: linear-gradient(to bottom, transparent 1px, rgba(255, 255, 255, 0.4) 1px);
+                --vu-grid-h: linear-gradient(to right, transparent 1px, rgba(255, 255, 255, 0.4) 1px);
+            }
+            ` : `
+            :root {
+                --vu-grid-v: linear-gradient(to bottom, transparent 1px, rgba(0, 0, 0, 0.6) 1px);
+                --vu-grid-h: linear-gradient(to right, transparent 1px, rgba(0, 0, 0, 0.6) 1px);
+            }
+            `}
+
+            /* Theme Overrides */
+            .text-cyan-500 { color: var(--color-primary) !important; }
+            .bg-cyan-500 { background-color: var(--color-primary) !important; }
+            .border-cyan-500 { border-color: var(--color-primary) !important; }
+            .hover\\:bg-cyan-500:hover { background-color: var(--color-primary) !important; }
+            .hover\\:text-cyan-500:hover { color: var(--color-primary) !important; }
+            .hover\\:border-cyan-500:hover { border-color: var(--color-primary) !important; }
+            
+            .text-purple-500, .text-purple-400 { color: var(--color-secondary) !important; }
+            .bg-purple-500 { background-color: var(--color-secondary) !important; }
+            .border-purple-500 { border-color: var(--color-secondary) !important; }
+            .hover\\:bg-purple-500:hover { background-color: var(--color-secondary) !important; }
+            .hover\\:text-purple-500:hover, .hover\\:text-purple-400:hover { color: var(--color-secondary) !important; }
+            .hover\\:border-purple-500:hover { border-color: var(--color-secondary) !important; }
+            
+            .text-amber-500 { color: var(--color-tertiary) !important; }
+            .bg-amber-500 { background-color: var(--color-tertiary) !important; }
+            .border-amber-500 { border-color: var(--color-tertiary) !important; }
+            .hover\\:bg-amber-500:hover { background-color: var(--color-tertiary) !important; }
+            .hover\\:text-amber-500:hover { color: var(--color-tertiary) !important; }
+
+            /* Hardcoded SVG path fixes for the UI */
+            path[stroke="#06b6d4"] { stroke: var(--color-primary) !important; }
+            path[stroke="#a855f7"] { stroke: var(--color-secondary) !important; }
+            path[stroke="#f59e0b"] { stroke: var(--color-tertiary) !important; }
+            path[stroke="#3b82f6"] { stroke: var(--color-primary) !important; }
+        `}</style>
+    );
+});
 
 // --- Reusable DAW Radial Knob Component ---
 const Knob = React.memo(({ id, param, value, min, max, step, isLog, onChange, onContextMenu, mappedRange, onRangeAdjust, lfoMappedRange, onLfoRangeAdjust }) => {
@@ -1003,17 +1113,15 @@ const Knob = React.memo(({ id, param, value, min, max, step, isLog, onChange, on
     const angle = -135 + (percent || 0) * 270;
     const displayName = param.replace(/([A-Z0-9])/g, ' $1').trim();
 
-    const getDotStyle = (val) => {
-        // Clamp visual rotation strictly to the knob's absolute mechanical bounds
-        const clampedVal = Math.max(0, Math.min(1, val));
-        return {
-            left: '50%',
-            top: `2px`,
-            transformOrigin: `50% 14px`,
-            transform: `translate(-50%, 0) rotate(${-135 + clampedVal * 270}deg)`
-        };
-    };
+    // Radii for stacked arcs
+    const baseR = 36;
+    const midiR = 44;
+    const lfoR = mappedRange ? 52 : 44;
 
+    const getDotStyle = (val) => {
+        const clampedVal = Math.max(0, Math.min(1, val));
+        return { transform: `rotate(${-135 + clampedVal * 270}deg)` };
+    };
 
     const prevAngleRef = useRef(angle);
 
@@ -1024,6 +1132,8 @@ const Knob = React.memo(({ id, param, value, min, max, step, isLog, onChange, on
 
         ['midi', 'lfo'].forEach(type => {
             const el = document.getElementById(id ? `knob-live-${type}-${id}` : '');
+            const arcEl = document.getElementById(id ? `knob-${type}-arc-${id}` : '');
+            
             if (el) {
                 if (!el.style.transform) {
                     el.style.transform = `rotate(${angle}deg)`;
@@ -1035,6 +1145,19 @@ const Knob = React.memo(({ id, param, value, min, max, step, isLog, onChange, on
                             el.style.transform = `rotate(${currentAngle + delta}deg)`;
                         }
                     }
+                }
+            }
+
+            if (arcEl && delta !== 0) {
+                const match = arcEl.style.transform.match(/rotate\((.*?)deg\)/);
+                if (match) {
+                    const currentAngle = parseFloat(match[1]);
+                    if (!isNaN(currentAngle)) {
+                        arcEl.style.transform = `rotate(${currentAngle + delta}deg)`;
+                    }
+                } else {
+                    // Fallback to base angle if transform is missing
+                    arcEl.style.transform = `rotate(${angle}deg)`;
                 }
             }
         });
@@ -1064,8 +1187,8 @@ const Knob = React.memo(({ id, param, value, min, max, step, isLog, onChange, on
             const minRot = Math.max(-135, Math.min(135, centerAngle - spreadDeg / 2));
             const maxRot = Math.max(-135, Math.min(135, centerAngle + spreadDeg / 2));
 
-            if (minEl) minEl.style.transform = `translate(-50%, 0) rotate(${minRot}deg)`;
-            if (maxEl) maxEl.style.transform = `translate(-50%, 0) rotate(${maxRot}deg)`;
+            if (minEl) minEl.style.transform = `rotate(${minRot}deg)`;
+            if (maxEl) maxEl.style.transform = `rotate(${maxRot}deg)`;
             
             reqId = requestAnimationFrame(updateLfoBounds);
         };
@@ -1081,13 +1204,48 @@ const Knob = React.memo(({ id, param, value, min, max, step, isLog, onChange, on
                 onPointerDown={handlePointerDown}
                 onWheel={handleWheel}
             >
-                <svg className="absolute inset-0 w-full h-full pointer-events-none" viewBox="0 0 100 100" style={{ zIndex: 0 }}>
-                    <path d="M 21.5 85 A 45 45 0 1 1 78.5 85" fill="none" stroke="#222" strokeWidth="6" strokeLinecap="round" />
+                <svg className="absolute inset-0 w-full h-full pointer-events-none" viewBox="0 0 100 100" overflow="visible" style={{ zIndex: 0 }}>
+                    {/* Background Tracks */}
+                    <circle cx="50" cy="50" r={baseR} fill="none" stroke="#222" strokeWidth="6" strokeLinecap="round" style={{ transformOrigin: '50% 50%', transform: 'rotate(135deg)', strokeDasharray: `${2 * Math.PI * baseR * 0.75} ${2 * Math.PI * baseR}` }} />
+                    {mappedRange && <circle cx="50" cy="50" r={midiR} fill="none" stroke="#222" strokeWidth="6" strokeLinecap="round" style={{ transformOrigin: '50% 50%', transform: 'rotate(135deg)', strokeDasharray: `${2 * Math.PI * midiR * 0.75} ${2 * Math.PI * midiR}` }} />}
+                    {lfoMappedRange && <circle cx="50" cy="50" r={lfoR} fill="none" stroke="#222" strokeWidth="6" strokeLinecap="round" style={{ transformOrigin: '50% 50%', transform: 'rotate(135deg)', strokeDasharray: `${2 * Math.PI * lfoR * 0.75} ${2 * Math.PI * lfoR}` }} />}
+                    
+                    {/* Base Value Arc */}
+                    <circle 
+                        id={id ? `knob-base-arc-${id}` : undefined}
+                        cx="50" cy="50" r={baseR} 
+                        fill="none" stroke="var(--color-primary, #06b6d4)" strokeWidth="6" strokeLinecap="round"
+                        style={{ transformOrigin: '50% 50%', transform: 'rotate(135deg)', strokeDasharray: `${Math.max(0.1, (percent || 0) * (2 * Math.PI * baseR * 0.75))} ${2 * Math.PI * baseR}` }} 
+                    />
+
+                    {/* MIDI Arc */}
+                    {mappedRange && (
+                        <circle 
+                            id={id ? `knob-midi-arc-${id}` : undefined}
+                            cx="50" cy="50" r={midiR} 
+                            fill="none" stroke="#4ade80" strokeWidth="6" strokeLinecap="round"
+                            style={{ transformOrigin: '50% 50%', transform: `rotate(135deg)`, strokeDasharray: `0 ${2 * Math.PI * midiR}` }} 
+                        />
+                    )}
+
+                    {/* LFO Arc */}
+                    {lfoMappedRange && (
+                        <circle 
+                            id={id ? `knob-lfo-arc-${id}` : undefined}
+                            cx="50" cy="50" r={lfoR} 
+                            fill="none" stroke="var(--color-secondary, #c084fc)" strokeWidth="6" strokeLinecap="round"
+                            style={{ transformOrigin: '50% 50%', transform: `rotate(135deg)`, strokeDasharray: `0 ${2 * Math.PI * lfoR}` }} 
+                        />
+                    )}
                 </svg>
                 {mappedRange && (
                     <>
-                        <div className="absolute w-[2px] h-[2px] bg-[#4ade80] rounded-full z-10 pointer-events-none" style={getDotStyle(mappedRange.min)} title="MIDI Min" />
-                        <div className="absolute w-[2px] h-[2px] bg-[#f87171] rounded-full z-10 pointer-events-none" style={getDotStyle(mappedRange.max)} title="MIDI Max" />
+                        <div className="absolute inset-0 pointer-events-none z-10" style={getDotStyle(mappedRange.min)}>
+                            <div className="absolute left-1/2 -translate-x-1/2 w-[1.5px] h-[2px] bg-[#4ade80]" style={{ top: `calc(${50 - midiR}% - 1px)` }} title="MIDI Min" />
+                        </div>
+                        <div className="absolute inset-0 pointer-events-none z-10" style={getDotStyle(mappedRange.max)}>
+                            <div className="absolute left-1/2 -translate-x-1/2 w-[1.5px] h-[2px] bg-[#f87171]" style={{ top: `calc(${50 - midiR}% - 1px)` }} title="MIDI Max" />
+                        </div>
                     </>
                 )}
                 {lfoMappedRange && (() => {
@@ -1096,23 +1254,23 @@ const Knob = React.memo(({ id, param, value, min, max, step, isLog, onChange, on
                     const maxAngle = Math.max(-135, Math.min(135, angle + spreadDeg / 2));
                     return (
                         <>
-                            <div id={id ? `lfo-min-${id}` : undefined} className="absolute w-[2px] h-[2px] bg-[#c084fc] rounded-full z-10 pointer-events-none" style={{ left: '50%', top: '2px', transformOrigin: '50% 14px', transform: `translate(-50%, 0) rotate(${minAngle}deg)` }} title="LFO Min" />
-                            <div id={id ? `lfo-max-${id}` : undefined} className="absolute w-[2px] h-[2px] bg-[#e879f9] rounded-full z-10 pointer-events-none" style={{ left: '50%', top: '2px', transformOrigin: '50% 14px', transform: `translate(-50%, 0) rotate(${maxAngle}deg)` }} title="LFO Max" />
+                            <div id={id ? `lfo-min-${id}` : undefined} className="absolute inset-0 pointer-events-none z-10" style={{ transform: `rotate(${minAngle}deg)` }}>
+                                <div className="absolute left-1/2 -translate-x-1/2 w-[1.5px] h-[2px]" style={{ backgroundColor: 'var(--color-secondary, #c084fc)', top: `calc(${50 - lfoR}% - 1px)` }} title="LFO Min" />
+                            </div>
+                            <div id={id ? `lfo-max-${id}` : undefined} className="absolute inset-0 pointer-events-none z-10" style={{ transform: `rotate(${maxAngle}deg)` }}>
+                                <div className="absolute left-1/2 -translate-x-1/2 w-[1.5px] h-[2px]" style={{ backgroundColor: 'var(--color-secondary, #e879f9)', top: `calc(${50 - lfoR}% - 1px)` }} title="LFO Max" />
+                            </div>
                         </>
                     );
                 })()}
-                <div id={id ? `knob-rot-${id}` : undefined} className="absolute inset-0" style={{ transform: `rotate(${angle}deg)` }}>
-                    <div className="mx-auto mt-0.5 w-[2px] h-3 bg-[#444] group-hover:bg-[#888] transition-colors pointer-events-none" />
+                <div id={id ? `knob-rot-${id}` : undefined} className="absolute inset-0 pointer-events-none" style={{ transform: `rotate(${angle}deg)` }}>
+                    <div className="absolute left-1/2 -translate-x-1/2 w-[2px] h-[10px] bg-[#444] group-hover:bg-[#888] transition-colors" style={{ top: `calc(${50 - baseR}% + 2px)` }} />
                 </div>
                 {mappedRange && (
-                    <div id={id ? `knob-live-midi-${id}` : undefined} className="absolute inset-0 pointer-events-none z-20">
-                        <div className="mx-auto mt-[-3px] w-1.5 h-1.5 bg-[#4ade80] rounded-full" />
-                    </div>
+                    <div id={id ? `knob-live-midi-${id}` : undefined} className="absolute inset-0 pointer-events-none z-20" />
                 )}
                 {lfoMappedRange && (
-                    <div id={id ? `knob-live-lfo-${id}` : undefined} className="absolute inset-0 pointer-events-none z-30">
-                        <div className="mx-auto mt-[-3px] w-1.5 h-1.5 bg-[#c084fc] rounded-full" />
-                    </div>
+                    <div id={id ? `knob-live-lfo-${id}` : undefined} className="absolute inset-0 pointer-events-none z-30" />
                 )}
             </div>
             <div className="flex flex-col items-center w-full">
@@ -1860,10 +2018,10 @@ const VuMeter = ({ trackId, fxId, synthsRef, masterFxNodesRef, isMaster, masterA
     const MeterBar = ({ curtainRef, clipRef, dotRef, isVertical }) => (
         <div className={`flex ${isVertical ? 'flex-col h-full flex-1' : 'flex-row w-full flex-1'} items-center gap-[1px]`}>
             <div ref={clipRef} className={`bg-neutral-800 rounded-[1px] transition-colors duration-75 shrink-0 ${isVertical ? 'w-full h-1' : 'h-full w-1'}`} />
-            <div className={`relative overflow-hidden rounded-[1px] border border-neutral-900 shadow-inner ${isVertical ? 'w-full flex-1 bg-gradient-to-t' : 'h-full flex-1 bg-gradient-to-r'} from-green-500 via-yellow-400 to-red-500`}>
+            <div className={`relative overflow-hidden rounded-[1px] border border-neutral-900 shadow-inner ${isVertical ? 'w-full flex-1' : 'h-full flex-1'}`} style={{ backgroundImage: isVertical ? 'linear-gradient(to top, var(--color-primary), var(--color-tertiary), #ef4444)' : 'linear-gradient(to right, var(--color-primary), var(--color-tertiary), #ef4444)' }}>
                 <div ref={curtainRef} className={`absolute bg-neutral-950/95 backdrop-blur-sm ${isVertical ? 'top-0 left-0 w-full' : 'top-0 right-0 h-full'}`} style={{ [isVertical ? 'height' : 'width']: '100%' }} />
                 <div ref={dotRef} className={`absolute bg-white shadow-[0_0_4px_rgba(255,255,255,0.8)] z-10 ${isVertical ? 'left-0 w-full h-[1px]' : 'top-0 h-full w-[1px]'}`} style={{ [isVertical ? 'bottom' : 'left']: '0%' }} />
-                <div className={`absolute inset-0 pointer-events-none ${isVertical ? 'bg-[linear-gradient(to_bottom,transparent_1px,rgba(0,0,0,0.6)_1px)] bg-[length:100%_3px]' : 'bg-[linear-gradient(to_right,transparent_1px,rgba(0,0,0,0.6)_1px)] bg-[length:3px_100%]'}`} />
+                <div className={`absolute inset-0 pointer-events-none ${isVertical ? 'bg-[length:100%_3px]' : 'bg-[length:3px_100%]'}`} style={{ backgroundImage: isVertical ? 'var(--vu-grid-v)' : 'var(--vu-grid-h)' }} />
             </div>
         </div>
     );
@@ -2153,7 +2311,7 @@ const SampleCropper = React.memo(({ sampleId, settings, onChange }) => {
     );
 });
 
-const GlobalStatusBar = React.memo(({ masterAnalyserRef, latencyMs }) => {
+const GlobalStatusBar = React.memo(({ masterAnalyserRef, latencyMs, theme }) => {
     const specRef = useRef(null);
     const waveRef = useRef(null);
     const scopeRef = useRef(null);
@@ -2189,9 +2347,11 @@ const GlobalStatusBar = React.memo(({ masterAnalyserRef, latencyMs }) => {
                     ctx.lineTo(x, y);
                 }
                 ctx.lineTo(w, h);
-                ctx.fillStyle = 'rgba(34, 197, 94, 0.3)';
+                ctx.fillStyle = theme?.primary || '#06b6d4';
+                ctx.globalAlpha = 0.3;
                 ctx.fill();
-                ctx.strokeStyle = '#22c55e';
+                ctx.globalAlpha = 1.0;
+                ctx.strokeStyle = theme?.primary || '#06b6d4';
                 ctx.lineWidth = 1;
                 ctx.stroke();
             }
@@ -2219,12 +2379,22 @@ const GlobalStatusBar = React.memo(({ masterAnalyserRef, latencyMs }) => {
                     const h = specRef.current.height;
                     ctx.clearRect(0, 0, w, h);
                     
-                    ctx.fillStyle = '#06b6d4'; // cyan-500
-                    const barW = w / (fDataL.length / 2); // only draw bottom half of freq spectrum
+                    let hasSignalSpec = false;
                     for (let i = 0; i < fDataL.length / 2; i++) {
-                        const val = Math.max(fDataL[i], fDataR[i]) / 255;
-                        const barH = val * h;
-                        ctx.fillRect(i * barW, h - barH, Math.max(1, barW - 0.5), barH);
+                        if (fDataL[i] > 2 || fDataR[i] > 2) {
+                            hasSignalSpec = true;
+                            break;
+                        }
+                    }
+                    
+                    ctx.fillStyle = theme?.primary || '#06b6d4';
+                    if (hasSignalSpec) {
+                        const barW = w / (fDataL.length / 2); // only draw bottom half of freq spectrum
+                        for (let i = 0; i < fDataL.length / 2; i++) {
+                            const val = Math.max(fDataL[i], fDataR[i]) / 255;
+                            const barH = val * h;
+                            ctx.fillRect(i * barW, h - barH, Math.max(1, barW - 0.5), barH);
+                        }
                     }
                 }
 
@@ -2235,15 +2405,28 @@ const GlobalStatusBar = React.memo(({ masterAnalyserRef, latencyMs }) => {
                     const h = waveRef.current.height;
                     ctx.clearRect(0, 0, w, h);
                     
-                    ctx.beginPath();
+                    let hasSignalWave = false;
                     for (let i = 0; i < tDataL.length; i++) {
-                        const val = ((tDataL[i] + tDataR[i]) / 2) / 128.0;
-                        const x = (i / tDataL.length) * w;
-                        const y = (val * h) / 2;
-                        if (i === 0) ctx.moveTo(x, y);
-                        else ctx.lineTo(x, y);
+                        if (Math.abs(tDataL[i] - 128) > 2 || Math.abs(tDataR[i] - 128) > 2) {
+                            hasSignalWave = true;
+                            break;
+                        }
                     }
-                    ctx.strokeStyle = '#eab308'; // yellow-500
+                    
+                    ctx.beginPath();
+                    if (!hasSignalWave) {
+                        ctx.moveTo(0, h / 2);
+                        ctx.lineTo(w, h / 2);
+                    } else {
+                        for (let i = 0; i < tDataL.length; i++) {
+                            const val = ((tDataL[i] + tDataR[i]) / 2) / 128.0;
+                            const x = (i / (tDataL.length - 1)) * w;
+                            const y = (val * h) / 2;
+                            if (i === 0) ctx.moveTo(x, y);
+                            else ctx.lineTo(x, y);
+                        }
+                    }
+                    ctx.strokeStyle = theme?.tertiary || '#eab308';
                     ctx.lineWidth = 1.5;
                     ctx.stroke();
                 }
@@ -2254,8 +2437,11 @@ const GlobalStatusBar = React.memo(({ masterAnalyserRef, latencyMs }) => {
                     const w = scopeRef.current.width;
                     const h = scopeRef.current.height;
                     
-                    ctx.fillStyle = 'rgba(17, 17, 17, 0.4)'; // fade effect for trails
+                    // Transparent fade effect that dynamically preserves the CSS background
+                    ctx.globalCompositeOperation = 'destination-out';
+                    ctx.fillStyle = 'rgba(0, 0, 0, 0.3)'; 
                     ctx.fillRect(0, 0, w, h);
+                    ctx.globalCompositeOperation = 'source-over';
                     
                     ctx.beginPath();
                     let hasSignal = false;
@@ -2272,7 +2458,7 @@ const GlobalStatusBar = React.memo(({ masterAnalyserRef, latencyMs }) => {
                         else ctx.lineTo(x, y);
                     }
                     if (hasSignal) {
-                        ctx.strokeStyle = '#a855f7'; // purple-500
+                        ctx.strokeStyle = theme?.secondary || '#a855f7';
                         ctx.lineWidth = 1;
                         ctx.stroke();
                     }
@@ -2432,6 +2618,11 @@ function DAWStudio() {
   const toggleSampleFolder = useCallback((path) => setExpandedSampleFolders(p => ({...p, [path]: !p[path]})), []);
   const sampleTree = React.useMemo(() => buildSampleTree(userSamples), [userSamples]);
 
+  const [theme, setTheme] = useState(() => {
+      const saved = localStorage.getItem('freedaw_theme');
+      return saved ? JSON.parse(saved) : { mode: 'dark', primary: '#06b6d4', secondary: '#a855f7', tertiary: '#f59e0b' };
+  });
+  const isLightMode = theme.mode === 'light';
   const [contextMenu, setContextMenu] = useState(null);
   const [showPeerList, setShowPeerList] = useState(false);
   const [editingTrackId, setEditingTrackId] = useState(null);
@@ -2572,6 +2763,10 @@ function DAWStudio() {
   }, []);
 
   useEffect(() => { tracksRef.current = tracks; }, [tracks]);
+  useEffect(() => {
+      localStorage.setItem('freedaw_theme', JSON.stringify(theme));
+  }, [theme]);
+
   useEffect(() => { projectNameRef.current = projectName; }, [projectName]);
   useEffect(() => { selectedTrackIdRef.current = selectedTrackId; }, [selectedTrackId]);
   useEffect(() => { selectedClipIdsRef.current = selectedClipIds; }, [selectedClipIds]);
@@ -2789,7 +2984,9 @@ function DAWStudio() {
   }, [isPlaying, isRecording, bpm]);
 
   useEffect(() => {
-    const closeMenu = () => setContextMenu(null);
+    const closeMenu = () => {
+        setContextMenu(null);
+    };
     window.addEventListener('click', closeMenu);
     return () => window.removeEventListener('click', closeMenu);
   }, []);
@@ -3856,8 +4053,20 @@ const initAudioEngine = async (explicitTracks = null) => {
 
                           const knobLive = document.getElementById(`knob-live-lfo-fx-${mapping.trackId}-${mapping.fxId}-${mapping.param}`);
                           const knobVal = document.getElementById(`knob-val-fx-${mapping.trackId}-${mapping.fxId}-${mapping.param}`);
+                          const lfoArc = document.getElementById(`knob-lfo-arc-fx-${mapping.trackId}-${mapping.fxId}-${mapping.param}`);
+                          
                           if (knobLive) knobLive.style.transform = `rotate(${angle}deg)`;
                           if (knobVal) knobVal.innerText = mappedVal >= 1000 ? (mappedVal / 1000).toFixed(1) + 'k' : mappedVal.toFixed(constraints.step < 1 ? 2 : 0);
+                          if (lfoArc) {
+                              const r = parseFloat(lfoArc.getAttribute('r'));
+                              const c = 2 * Math.PI * r;
+                              const minP = Math.max(0, Math.min(1, Math.min(basePercent, rawPercent)));
+                              const maxP = Math.max(0, Math.min(1, Math.max(basePercent, rawPercent)));
+                              const len = (maxP - minP) * (c * 0.75);
+                              const rot = 135 + (minP * 270);
+                              lfoArc.style.transform = `rotate(${rot}deg)`;
+                              lfoArc.style.strokeDasharray = `${Math.max(0.1, len)} ${c}`;
+                          }
                       }
                   } else if (mapping.type === 'inst_param') {
                       const constraints = getParamConstraints(mapping.param);
@@ -3900,8 +4109,20 @@ const initAudioEngine = async (explicitTracks = null) => {
                           
                           const knobLive = document.getElementById(`knob-live-lfo-inst-${mapping.trackId}-${mapping.param}`);
                           const knobVal = document.getElementById(`knob-val-inst-${mapping.trackId}-${mapping.param}`);
+                          const lfoArc = document.getElementById(`knob-lfo-arc-inst-${mapping.trackId}-${mapping.param}`);
+                          
                           if (knobLive) knobLive.style.transform = `rotate(${angle}deg)`;
                           if (knobVal) knobVal.innerText = mappedVal >= 1000 ? (mappedVal / 1000).toFixed(1) + 'k' : mappedVal.toFixed(constraints.step < 1 ? 2 : 0);
+                          if (lfoArc) {
+                              const r = parseFloat(lfoArc.getAttribute('r'));
+                              const c = 2 * Math.PI * r;
+                              const minP = Math.max(0, Math.min(1, Math.min(basePercent, rawPercent)));
+                              const maxP = Math.max(0, Math.min(1, Math.max(basePercent, rawPercent)));
+                              const len = (maxP - minP) * (c * 0.75);
+                              const rot = 135 + (minP * 270);
+                              lfoArc.style.transform = `rotate(${rot}deg)`;
+                              lfoArc.style.strokeDasharray = `${Math.max(0.1, len)} ${c}`;
+                          }
                       }
                   } else if (mapping.type === 'mixer_vol') {
 
@@ -4004,6 +4225,13 @@ const initAudioEngine = async (explicitTracks = null) => {
                                         const angle = -135 + clampedPercent * 270;
                                         knobRot.style.transform = `rotate(${angle}deg)`;
                                         knobVal.innerText = val >= 1000 ? (val / 1000).toFixed(1) + 'k' : val.toFixed(constraints.step < 1 ? 2 : 0);
+                                        
+                                        const baseArc = document.getElementById(`knob-base-arc-fx-${track.id}-${fxId}-${pName}`);
+                                        if (baseArc) {
+                                            const r = parseFloat(baseArc.getAttribute('r'));
+                                            const c = 2 * Math.PI * r;
+                                            baseArc.style.strokeDasharray = `${Math.max(0.1, clampedPercent * (c * 0.75))} ${c}`;
+                                        }
                                     }
                                 }
                             } else if (paramKey.startsWith('inst_param_')) {
@@ -4023,6 +4251,13 @@ const initAudioEngine = async (explicitTracks = null) => {
                                         const angle = -135 + clampedPercent * 270;
                                         knobRot.style.transform = `rotate(${angle}deg)`;
                                         knobVal.innerText = val >= 1000 ? (val / 1000).toFixed(1) + 'k' : val.toFixed(constraints.step < 1 ? 2 : 0);
+                                        
+                                        const baseArc = document.getElementById(`knob-base-arc-inst-${track.id}-${pName}`);
+                                        if (baseArc) {
+                                            const r = parseFloat(baseArc.getAttribute('r'));
+                                            const c = 2 * Math.PI * r;
+                                            baseArc.style.strokeDasharray = `${Math.max(0.1, clampedPercent * (c * 0.75))} ${c}`;
+                                        }
                                     }
                                 }
                             }
@@ -4314,6 +4549,13 @@ const initAudioEngine = async (explicitTracks = null) => {
                                 const angle = -135 + (percent || 0) * 270;
                                 knobLive.style.transform = `rotate(${angle}deg)`;
                                 knobVal.innerText = baseVal >= 1000 ? (baseVal / 1000).toFixed(1) + 'k' : baseVal.toFixed(constraints.step < 1 ? 2 : 0);
+                                
+                                const lfoArc = document.getElementById(`knob-lfo-arc-fx-${mapping.trackId}-${mapping.fxId}-${mapping.param}`);
+                                if (lfoArc) {
+                                    const r = parseFloat(lfoArc.getAttribute('r'));
+                                    lfoArc.style.transform = `rotate(${angle}deg)`;
+                                    lfoArc.style.strokeDasharray = `0 ${2 * Math.PI * r}`;
+                                }
                             }
                         }
                     } else if (mapping.type === 'inst_param') {
@@ -4329,6 +4571,13 @@ const initAudioEngine = async (explicitTracks = null) => {
                                 const angle = -135 + (percent || 0) * 270;
                                 knobLive.style.transform = `rotate(${angle}deg)`;
                                 knobVal.innerText = baseVal >= 1000 ? (baseVal / 1000).toFixed(1) + 'k' : baseVal.toFixed(constraints.step < 1 ? 2 : 0);
+                                
+                                const lfoArc = document.getElementById(`knob-lfo-arc-inst-${mapping.trackId}-${mapping.param}`);
+                                if (lfoArc) {
+                                    const r = parseFloat(lfoArc.getAttribute('r'));
+                                    lfoArc.style.transform = `rotate(${angle}deg)`;
+                                    lfoArc.style.strokeDasharray = `0 ${2 * Math.PI * r}`;
+                                }
                             }
                         }
                 } else if (mapping.type === 'mixer_vol') {
@@ -4869,8 +5118,28 @@ const initAudioEngine = async (explicitTracks = null) => {
                             applyAudioEffectParam(mapping.trackId, mapping.fxId, mapping.param, mappedVal);
                             const knobLive = document.getElementById(`knob-live-midi-fx-${mapping.trackId}-${mapping.fxId}-${mapping.param}`);
                             const knobVal = document.getElementById(`knob-val-fx-${mapping.trackId}-${mapping.fxId}-${mapping.param}`);
+                            const midiArc = document.getElementById(`knob-midi-arc-fx-${mapping.trackId}-${mapping.fxId}-${mapping.param}`);
+                            
                             if (knobLive) knobLive.style.transform = `rotate(${angle}deg)`;
                             if (knobVal) knobVal.innerText = mappedVal >= 1000 ? (mappedVal / 1000).toFixed(1) + 'k' : mappedVal.toFixed(constraints.step < 1 ? 2 : 0);
+                            
+                            if (midiArc) {
+                                const r = parseFloat(midiArc.getAttribute('r'));
+                                const c = 2 * Math.PI * r;
+                                const track = tracksRef.current.find(t => t.id === mapping.trackId);
+                                const fx = track?.effects?.find(f => f.id === mapping.fxId);
+                                const baseVal = fx?.params[mapping.param] ?? constraints.min;
+                                const basePercent = constraints.isLog 
+                                    ? (Math.log(Math.max(0.001, baseVal)) - Math.log(Math.max(0.001, constraints.min))) / (Math.log(constraints.max) - Math.log(Math.max(0.001, constraints.min)))
+                                    : (baseVal - constraints.min) / (constraints.max - constraints.min);
+                                
+                                const minP = Math.max(0, Math.min(1, Math.min(basePercent, rawPercent)));
+                                const maxP = Math.max(0, Math.min(1, Math.max(basePercent, rawPercent)));
+                                const len = (maxP - minP) * (c * 0.75);
+                                const rot = 135 + (minP * 270);
+                                midiArc.style.transform = `rotate(${rot}deg)`;
+                                midiArc.style.strokeDasharray = `${Math.max(0.1, len)} ${c}`;
+                            }
                         } else if (mapping.type === 'inst_param') {
                             const synth = synthsRef.current[mapping.trackId];
                             if (synth) {
@@ -4880,8 +5149,27 @@ const initAudioEngine = async (explicitTracks = null) => {
                             
                             const knobLive = document.getElementById(`knob-live-midi-inst-${mapping.trackId}-${mapping.param}`);
                             const knobVal = document.getElementById(`knob-val-inst-${mapping.trackId}-${mapping.param}`);
+                            const midiArc = document.getElementById(`knob-midi-arc-inst-${mapping.trackId}-${mapping.param}`);
+                            
                             if (knobLive) knobLive.style.transform = `rotate(${angle}deg)`;
                             if (knobVal) knobVal.innerText = mappedVal >= 1000 ? (mappedVal / 1000).toFixed(1) + 'k' : mappedVal.toFixed(constraints.step < 1 ? 2 : 0);
+                            
+                            if (midiArc) {
+                                const r = parseFloat(midiArc.getAttribute('r'));
+                                const c = 2 * Math.PI * r;
+                                const track = tracksRef.current.find(t => t.id === mapping.trackId);
+                                const baseVal = track?.instrumentParams?.[mapping.param] ?? constraints.min;
+                                const basePercent = constraints.isLog 
+                                    ? (Math.log(Math.max(0.001, baseVal)) - Math.log(Math.max(0.001, constraints.min))) / (Math.log(constraints.max) - Math.log(Math.max(0.001, constraints.min)))
+                                    : (baseVal - constraints.min) / (constraints.max - constraints.min);
+                                
+                                const minP = Math.max(0, Math.min(1, Math.min(basePercent, rawPercent)));
+                                const maxP = Math.max(0, Math.min(1, Math.max(basePercent, rawPercent)));
+                                const len = (maxP - minP) * (c * 0.75);
+                                const rot = 135 + (minP * 270);
+                                midiArc.style.transform = `rotate(${rot}deg)`;
+                                midiArc.style.strokeDasharray = `${Math.max(0.1, len)} ${c}`;
+                            }
                         } else if (mapping.type === 'lfo_param') {
                             dispatchDawAction({ type: 'UPDATE_LFO', payload: { id: mapping.lfoId, updates: { [mapping.param]: mappedVal } } });
                         }
@@ -5934,6 +6222,7 @@ const initAudioEngine = async (explicitTracks = null) => {
               delete synthsRef.current[action.payload.id];
               break;
           case 'RENAME_TRACK': setTracks(prev => prev.map(t => t.id === action.payload.id ? { ...t, name: action.payload.name } : t)); break;
+          case 'UPDATE_TRACK_COLOR': setTracks(prev => prev.map(t => t.id === action.payload.trackId ? { ...t, color: action.payload.color } : t)); break;
           case 'UPDATE_TRACK_VOL': 
               setTracks(prev => prev.map(t => t.id === action.payload.id ? { ...t, volume: action.payload.volume } : t)); 
               applyAudioTrackVol(action.payload.id, action.payload.volume);
@@ -7211,6 +7500,7 @@ const initAudioEngine = async (explicitTracks = null) => {
         }}
         className="flex flex-col h-screen bg-[#2b2b2b] text-neutral-300 font-sans select-none outline-none"
     >
+      <ThemeEngine theme={theme} />
       
       {/* Loading Overlay */}
       {isProcessingAudio && (
@@ -7299,8 +7589,8 @@ const initAudioEngine = async (explicitTracks = null) => {
       <div className="flex flex-1 overflow-hidden relative">
         {/* Left Toolbar */}
         <div className="w-14 bg-[#333333] border-r border-[#111111] flex flex-col items-center py-4 gap-4 z-20 shrink-0">
-          <button onClick={() => setActiveView(activeView === 'mixer' ? 'arrangement' : 'mixer')} className={`p-2 rounded-sm transition-all duration-100 ${activeView==='mixer'?'bg-[#444] text-amber-500':'text-neutral-400 hover:bg-[#444] hover:text-white'}`} title="Mixer Console"><Sliders size={20}/></button>
-          <button onClick={() => setActiveView(activeView === 'lfos' ? 'arrangement' : 'lfos')} className={`p-2 rounded-sm transition-all duration-100 ${activeView==='lfos'?'bg-[#444] text-amber-500':'text-neutral-400 hover:bg-[#444] hover:text-white'}`} title="LFO Rack"><Activity size={20}/></button>
+          <button onClick={() => setActiveView(activeView === 'mixer' ? 'arrangement' : 'mixer')} className={`p-2 rounded-sm transition-all duration-100 ${activeView==='mixer'?'bg-[#444] text-cyan-500':'text-neutral-400 hover:bg-[#444] hover:text-white'}`} title="Mixer Console"><Sliders size={20}/></button>
+          <button onClick={() => setActiveView(activeView === 'lfos' ? 'arrangement' : 'lfos')} className={`p-2 rounded-sm transition-all duration-100 ${activeView==='lfos'?'bg-[#444] text-purple-500':'text-neutral-400 hover:bg-[#444] hover:text-white'}`} title="LFO Rack"><Activity size={20}/></button>
           <button onClick={() => setActiveView(activeView === 'browser' ? 'arrangement' : 'browser')} className={`p-2 rounded-sm transition-all duration-100 ${activeView==='browser'?'bg-[#444] text-amber-500':'text-neutral-400 hover:bg-[#444] hover:text-white'}`} title="Plugin Browser"><Folder size={20}/></button>
         </div>
 
@@ -7433,11 +7723,18 @@ const initAudioEngine = async (explicitTracks = null) => {
              {tracks.map(t => (
                <div key={t.id} className="w-28 bg-[#3a3a3a] border border-[#111] rounded-sm flex flex-col items-center py-3 shrink-0 relative group transition-colors">
                   <button onClick={(e) => handleContextMenu(e, 'track', { trackId: t.id })} className="absolute top-1.5 right-1.5 text-[#888] hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"><MoreHorizontal size={12}/></button>
-                  <div 
-                      className={`w-2 h-2 rounded-sm mb-1.5 border border-[#111] ${t.color.replace('bg-', 'bg-').replace('-500', '-400')} cursor-pointer hover:brightness-125 transition-transform`} 
-                      title="Click to cycle color"
-                      onClick={(e) => { e.stopPropagation(); const colors = ['bg-emerald-500', 'bg-blue-500', 'bg-purple-500', 'bg-pink-500', 'bg-red-500', 'bg-orange-500', 'bg-yellow-500', 'bg-cyan-500']; dispatchDawAction({ type: 'UPDATE_TRACK_COLOR', payload: { trackId: t.id, color: colors[(colors.indexOf(t.color) + 1) % colors.length] }}); }}
-                  />
+                  <label className="relative mb-1.5 flex justify-center cursor-pointer hover:scale-110 transition-transform" title="Click to change color" onClick={e => e.stopPropagation()}>
+                      <div 
+                          className={`w-2.5 h-2.5 rounded-sm border border-[#111] ${t.color.startsWith('#') ? '' : t.color.replace('-500', '-400')}`} 
+                          style={t.color.startsWith('#') ? { backgroundColor: t.color } : {}}
+                      />
+                      <input 
+                          type="color" 
+                          value={t.color.startsWith('#') ? t.color : (TAILWIND_TO_HEX[t.color] || '#10b981')} 
+                          onChange={(e) => dispatchDawAction({ type: 'UPDATE_TRACK_COLOR', payload: { trackId: t.id, color: e.target.value }})}
+                          className="absolute opacity-0 w-full h-full cursor-pointer" 
+                      />
+                  </label>
                   <span className="text-[10px] font-bold text-[#e0e0e0] uppercase tracking-wider truncate w-full text-center px-1">{t.name}</span>
                   
                   <div className="w-full px-3 mt-2 flex flex-col items-center" onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'mixer_pan', trackId: t.id })}>
@@ -7453,7 +7750,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                   <div className="flex-1 w-full flex justify-center py-3 relative mt-2 min-h-[180px]" onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'mixer_vol', trackId: t.id })}>
                      <div className="flex justify-center gap-1.5 h-full w-full pointer-events-none">
                          <div className="w-1.5 bg-[#111] rounded-sm h-full relative">
-                            <div id={`vol-fill-mix-${t.id}`} className={`absolute bottom-0 w-full rounded-sm opacity-80 ${t.color.replace('bg-', 'bg-').replace('-500', '-400')}`} style={{ height: `${t.volume}%` }} />
+                            <div id={`vol-fill-mix-${t.id}`} className={`absolute bottom-0 w-full rounded-sm opacity-80 ${t.color.startsWith('#') ? '' : t.color.replace('bg-', 'bg-').replace('-500', '-400')}`} style={{ height: `${t.volume}%`, backgroundColor: t.color.startsWith('#') ? t.color : undefined }} />
                          </div>
                          <VuMeter trackId={t.id} synthsRef={synthsRef} isVertical={true} />
                      </div>
@@ -7492,7 +7789,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                 <div key={lfo.id} className="min-w-[24rem] max-w-lg h-max max-h-[400px] bg-[#3a3a3a] border border-[#222] rounded-sm p-4 flex flex-col shrink-0 relative group hover:border-[#555] transition-colors">
                     <div className="flex justify-between items-center mb-3 border-b border-[#222] pb-2 shrink-0">
                        <div className="flex items-center gap-2">
-                          <Activity size={12} className="text-amber-500" />
+                          <Activity size={12} className="text-purple-500" />
                           <span className="text-[10px] font-bold text-[#e0e0e0] uppercase tracking-wider">{lfo.name}</span>
                        </div>
                        <button onClick={() => dispatchDawAction({ type: 'DELETE_LFO', payload: { id: lfo.id } })} className="text-[#888] hover:text-[#ff5a5a] opacity-0 group-hover:opacity-100 transition-opacity"><Trash2 size={12}/></button>
@@ -7504,7 +7801,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                             <select 
                                 value={lfo.type} 
                                 onChange={(e) => dispatchDawAction({ type: 'UPDATE_LFO', payload: { id: lfo.id, updates: { type: e.target.value } } })}
-                                className="w-full bg-[#222] border border-[#111] rounded-sm p-1.5 text-[10px] text-white outline-none focus:border-amber-500 cursor-pointer uppercase tracking-wider font-bold"
+                                className="w-full bg-[#222] border border-[#111] rounded-sm p-1.5 text-[10px] text-white outline-none focus:border-purple-500 cursor-pointer uppercase tracking-wider font-bold"
                             >
                                 <option value="sine">Sine</option>
                                 <option value="triangle">Triangle</option>
@@ -7534,7 +7831,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                                         }
                                         dispatchDawAction({ type: 'UPDATE_LFO', payload: { id: lfo.id, updates: { steps: next } } });
                                     }}
-                                    className="w-full bg-[#222] border border-[#111] rounded-sm p-1.5 text-[10px] font-bold text-white outline-none focus:border-amber-500 uppercase text-center"
+                                    className="w-full bg-[#222] border border-[#111] rounded-sm p-1.5 text-[10px] font-bold text-white outline-none focus:border-purple-500 uppercase text-center"
                                 />
                             </div>
                         )}
@@ -7570,14 +7867,14 @@ const initAudioEngine = async (explicitTracks = null) => {
                     </div>
 
                     <div className="relative w-full flex-1 min-h-[100px] bg-[#222] border border-[#111] rounded-sm overflow-hidden mt-4 shrink-0">
-                        <div id={`lfo-vis-dot-${lfo.id}`} className="absolute w-2.5 h-2.5 bg-amber-500 rounded-full shadow-[0_0_8px_#f59e0b] -ml-[5px] -mt-[5px] z-20 pointer-events-none" style={{ left: '0%', top: '50%' }} />
+                        <div id={`lfo-vis-dot-${lfo.id}`} className="absolute w-2.5 h-2.5 bg-purple-500 rounded-full shadow-[0_0_8px_#a855f7] -ml-[5px] -mt-[5px] z-20 pointer-events-none" style={{ left: '0%', top: '50%' }} />
                         
                         {lfo.type !== 'stepped' && (
                             <div className="absolute inset-y-0 left-0 w-full flex items-center pointer-events-none z-10">
-                                {lfo.type === 'sine' && <svg width="100%" height="100%" preserveAspectRatio="none" viewBox="0 0 100 100"><path d="M0,50 L5,34.5 L10,20.6 L15,9.5 L20,2.4 L25,0 L30,2.4 L35,9.5 L40,20.6 L45,34.5 L50,50 L55,65.5 L60,79.4 L65,90.5 L70,97.6 L75,100 L80,97.6 L85,90.5 L90,79.4 L95,65.5 L100,50" fill="none" stroke="#f59e0b" strokeWidth="1.5" opacity="0.4"/></svg>}
-                                {lfo.type === 'triangle' && <svg width="100%" height="100%" preserveAspectRatio="none" viewBox="0 0 100 100"><path d="M0,50 L25,0 L75,100 L100,50" fill="none" stroke="#f59e0b" strokeWidth="1.5" opacity="0.4"/></svg>}
-                                {lfo.type === 'square' && <svg width="100%" height="100%" preserveAspectRatio="none" viewBox="0 0 100 100"><path d="M0,0 L50,0 L50,100 L100,100" fill="none" stroke="#f59e0b" strokeWidth="1.5" opacity="0.4"/></svg>}
-                                {lfo.type === 'sawtooth' && <svg width="100%" height="100%" preserveAspectRatio="none" viewBox="0 0 100 100"><path d="M0,100 L100,0 V100" fill="none" stroke="#f59e0b" strokeWidth="1.5" opacity="0.4"/></svg>}
+                                {lfo.type === 'sine' && <svg width="100%" height="100%" preserveAspectRatio="none" viewBox="0 0 100 100"><path d="M0,50 L5,34.5 L10,20.6 L15,9.5 L20,2.4 L25,0 L30,2.4 L35,9.5 L40,20.6 L45,34.5 L50,50 L55,65.5 L60,79.4 L65,90.5 L70,97.6 L75,100 L80,97.6 L85,90.5 L90,79.4 L95,65.5 L100,50" fill="none" stroke="#a855f7" strokeWidth="1.5" opacity="0.4"/></svg>}
+                                {lfo.type === 'triangle' && <svg width="100%" height="100%" preserveAspectRatio="none" viewBox="0 0 100 100"><path d="M0,50 L25,0 L75,100 L100,50" fill="none" stroke="#a855f7" strokeWidth="1.5" opacity="0.4"/></svg>}
+                                {lfo.type === 'square' && <svg width="100%" height="100%" preserveAspectRatio="none" viewBox="0 0 100 100"><path d="M0,0 L50,0 L50,100 L100,100" fill="none" stroke="#a855f7" strokeWidth="1.5" opacity="0.4"/></svg>}
+                                {lfo.type === 'sawtooth' && <svg width="100%" height="100%" preserveAspectRatio="none" viewBox="0 0 100 100"><path d="M0,100 L100,0 V100" fill="none" stroke="#a855f7" strokeWidth="1.5" opacity="0.4"/></svg>}
                             </div>
                         )}
 
@@ -7585,8 +7882,8 @@ const initAudioEngine = async (explicitTracks = null) => {
                             <div className="absolute inset-0 flex gap-px p-1 items-end z-10">
                                 {(lfo.steps || [0.5,0.5,0.5,0.5,0.5,0.5,0.5,0.5]).map((val, i) => (
                                     <div key={i} className="relative w-full h-full bg-[#111] rounded-sm flex flex-col justify-end group hover:bg-[#333] transition-colors">
-                                        <div className="absolute bottom-0 w-full bg-amber-500/20 rounded-sm pointer-events-none transition-all duration-75" style={{ height: `${val * 100}%` }} />
-                                        <div className="absolute bottom-0 w-full h-[2px] bg-amber-500 pointer-events-none transition-all duration-75 group-hover:bg-amber-400" style={{ bottom: `calc(${val * 100}% - 1px)` }} />
+                                        <div className="absolute bottom-0 w-full bg-purple-500/20 rounded-sm pointer-events-none transition-all duration-75" style={{ height: `${val * 100}%` }} />
+                                        <div className="absolute bottom-0 w-full h-[2px] bg-purple-500 pointer-events-none transition-all duration-75 group-hover:bg-purple-400" style={{ bottom: `calc(${val * 100}% - 1px)` }} />
                                         <input 
                                             type="range" 
                                             orient="vertical" 
@@ -7610,7 +7907,7 @@ const initAudioEngine = async (explicitTracks = null) => {
 
              <div className="w-32 min-w-[8rem] h-48 max-h-[400px] border border-[#222] bg-[#3a3a3a] hover:border-[#555] rounded-sm flex flex-col items-center justify-center shrink-0 cursor-pointer group transition-colors" onClick={() => dispatchDawAction({ type: 'ADD_LFO', payload: { id: `lfo_${Date.now()}`, name: `LFO ${lfos.length + 1}`, type: 'sine', rate: 1.0, depth: 100, steps: [0.5,0.5,0.5,0.5,0.5,0.5,0.5,0.5], mappings: [], automation: {}, activeAutomationParam: 'rate' }})}>
 
-                <Plus size={20} className="text-[#888] group-hover:text-amber-500 mb-2 transition-colors"/>
+                <Plus size={20} className="text-[#888] group-hover:text-purple-500 mb-2 transition-colors"/>
                 <span className="text-[10px] text-[#888] group-hover:text-[#ccc] font-bold uppercase tracking-wider transition-colors text-center px-2">Add LFO</span>
              </div>
           </div>
@@ -7670,11 +7967,18 @@ const initAudioEngine = async (explicitTracks = null) => {
                                 {isPeered && <div className={`absolute left-0 top-0 bottom-0 w-1 ${isPeered.color || 'bg-cyan-500'}`} title={`${isPeered.username} is active`} />}
                                 <div className="flex justify-between items-center">
                                     <div className="flex items-center gap-2 pl-1 overflow-hidden flex-1 mr-2">
-                                        <div 
-                                          className={`w-2.5 h-2.5 rounded-sm ${t.color.replace('bg-', 'bg-').replace('-500', '-400')} shrink-0 cursor-pointer`} 
-                                          title="Click to cycle color"
-                                          onClick={(e) => { e.stopPropagation(); const colors = ['bg-emerald-500', 'bg-blue-500', 'bg-purple-500', 'bg-pink-500', 'bg-red-500', 'bg-orange-500', 'bg-yellow-500', 'bg-cyan-500']; dispatchDawAction({ type: 'UPDATE_TRACK_COLOR', payload: { trackId: t.id, color: colors[(colors.indexOf(t.color) + 1) % colors.length] }}); }}
-                                        />
+                                        <label className="relative flex items-center justify-center shrink-0 cursor-pointer hover:scale-110 transition-transform" title="Click to change color" onClick={e => e.stopPropagation()}>
+                                            <div 
+                                              className={`w-2.5 h-2.5 rounded-sm ${t.color.startsWith('#') ? '' : t.color.replace('-500', '-400')}`} 
+                                              style={t.color.startsWith('#') ? { backgroundColor: t.color } : {}}
+                                            />
+                                            <input 
+                                                type="color" 
+                                                value={t.color.startsWith('#') ? t.color : (TAILWIND_TO_HEX[t.color] || '#10b981')} 
+                                                onChange={(e) => dispatchDawAction({ type: 'UPDATE_TRACK_COLOR', payload: { trackId: t.id, color: e.target.value }})}
+                                                className="absolute opacity-0 w-full h-full cursor-pointer" 
+                                            />
+                                        </label>
                                         {editingTrackId === t.id ? (
                                             <input autoFocus onBlur={() => setEditingTrackId(null)} onKeyDown={(e) => e.key === 'Enter' && setEditingTrackId(null)} value={t.name} onChange={(e) => dispatchDawAction({ type: 'RENAME_TRACK', payload: { id: t.id, name: e.target.value } })} className="bg-[#222] text-xs font-bold text-white outline-none border border-[#111] rounded-sm px-1 w-full" />
                                         ) : (
@@ -7702,7 +8006,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                                     <div className="flex gap-2 items-center relative">
                                         <Volume2 size={10} className="text-neutral-500 shrink-0 z-10"/>
                                         <div className="flex-1 h-1 bg-black rounded-full relative border border-neutral-800 pointer-events-none">
-                                            <div id={`vol-fill-arr-${t.id}`} className={`absolute left-0 top-0 bottom-0 rounded-full opacity-60 ${t.color}`} style={{ width: `${t.volume}%` }} />
+                                            <div id={`vol-fill-arr-${t.id}`} className={`absolute left-0 top-0 bottom-0 rounded-full opacity-60 ${t.color.startsWith('#') ? '' : t.color}`} style={{ width: `${t.volume}%`, backgroundColor: t.color.startsWith('#') ? t.color : undefined }} />
                                         </div>
                                         <input id={`vol-input-arr-${t.id}`} type="range" min="0" max="100" value={t.volume} onChange={(e) => dispatchDawAction({ type: 'UPDATE_TRACK_VOL', payload: { id: t.id, volume: Number(e.target.value) } })} onWheel={(e) => { e.stopPropagation(); dispatchDawAction({ type: 'UPDATE_TRACK_VOL', payload: { id: t.id, volume: Math.min(100, Math.max(0, t.volume + (e.deltaY < 0 ? 5 : -5))) } }); }} className="absolute inset-0 opacity-0 cursor-pointer w-full pl-4" />
                                     </div>
@@ -7731,14 +8035,14 @@ const initAudioEngine = async (explicitTracks = null) => {
                             if (autoKeys.length === 0) return null;
                             return (
                                 <div key={`lfo-header-${lfo.id}`} className="flex flex-col w-full">
-                                    <div className="h-8 bg-[#2d2d2d] border-b border-[#111] px-2 flex items-center border-l-[3px] border-l-amber-500">
-                                        <Activity size={10} className="text-amber-500 mr-2"/>
+                                    <div className="h-8 bg-[#2d2d2d] border-b border-[#111] px-2 flex items-center border-l-[3px] border-l-purple-500">
+                                        <Activity size={10} className="text-purple-500 mr-2"/>
                                         <span className="text-[10px] font-bold text-[#888] uppercase tracking-wider">{lfo.name}</span>
                                     </div>
                                     {autoKeys.map(paramKey => (
-                                        <div key={paramKey} className="h-16 border-b border-[#222] bg-[#333] pl-6 pr-2 py-2 flex items-center shadow-inner relative border-l-[3px] border-l-amber-500/50">
+                                        <div key={paramKey} className="h-16 border-b border-[#222] bg-[#333] pl-6 pr-2 py-2 flex items-center shadow-inner relative border-l-[3px] border-l-purple-500/50">
                                             <span className="text-[10px] text-[#888] font-bold uppercase tracking-wider truncate w-full" title={paramKey}>
-                                                <Activity size={10} className="inline mr-1.5 mb-0.5 text-amber-500" />
+                                                <Activity size={10} className="inline mr-1.5 mb-0.5 text-purple-500" />
                                                 {paramKey}
                                             </span>
                                         </div>
@@ -7858,7 +8162,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                                 </div>
                             )}
                             {/* Grid Background */}
-                            <div className="absolute inset-0 pointer-events-none" style={getGridStyle(snapGrid, BEAT_WIDTH, false)} />
+                            <div className="absolute inset-0 pointer-events-none" style={getGridStyle(snapGrid, BEAT_WIDTH, false, isLightMode)} />
                             {/* Playhead */}
                             <div ref={playheadRef} className="absolute top-0 bottom-0 w-px bg-blue-500 z-30 shadow-[0_0_10px_rgba(59,130,246,0.8)] pointer-events-none" style={{ left: `${currentTime * BEAT_WIDTH}px` }}><div className="w-3 h-3 bg-blue-500 rotate-45 absolute -top-1.5 -left-1.5"/></div>
 
@@ -7920,8 +8224,8 @@ const initAudioEngine = async (explicitTracks = null) => {
                                               const sliceBeat = snap(x / BEAT_WIDTH);
                                               handleContextMenu(e, 'clip', { trackId: t.id, clipId: c.id, sliceBeat });
                                           }}
-                                          className={`clip-element absolute top-[1px] bottom-[1px] rounded-sm overflow-hidden cursor-grab active:cursor-grabbing ${t.color.replace('bg-', 'bg-').replace('-500', '-600')} transition-all group/clip ${selectedClipIds.includes(c.id) ? 'border-2 border-white brightness-125 z-40' : isPeerSelected ? `border-[4px] ${(peeringUsers[0].color || getDeterministicColor(peeringUsers[0].username)).replace('bg-', 'border-')} brightness-[1.3] shadow-lg z-30` : 'border border-black/60 hover:brightness-110 z-10'}`} 
-                                          style={{ left: `${c.start * BEAT_WIDTH}px`, width: `${c.duration * BEAT_WIDTH}px`, zIndex: draggingClip?.clipId === c.id || selectedClipIds.includes(c.id) ? 50 : (isPeerSelected ? 40 : 10) }}
+                                          className={`clip-element absolute top-[1px] bottom-[1px] rounded-sm overflow-hidden cursor-grab active:cursor-grabbing ${t.color.startsWith('#') ? '' : t.color.replace('bg-', 'bg-').replace('-500', '-600')} transition-all group/clip ${selectedClipIds.includes(c.id) ? 'border-2 border-white brightness-125 z-40' : isPeerSelected ? `border-[4px] ${(peeringUsers[0].color || getDeterministicColor(peeringUsers[0].username)).replace('bg-', 'border-')} brightness-[1.3] shadow-lg z-30` : 'border border-black/60 hover:brightness-110 z-10'}`} 
+                                          style={{ left: `${c.start * BEAT_WIDTH}px`, width: `${c.duration * BEAT_WIDTH}px`, zIndex: draggingClip?.clipId === c.id || selectedClipIds.includes(c.id) ? 50 : (isPeerSelected ? 40 : 10), backgroundColor: t.color.startsWith('#') ? t.color : undefined }}
                                         >
                                             {/* Peer Selection Indicators */}
                                             {isPeerSelected && (
@@ -8145,7 +8449,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                                                             }
                                                             return (
                                                                 <g key={`seg-${prev.id}`}>
-                                                                    <path d={d} stroke="#f59e0b" strokeWidth="2" fill="none" opacity="0.8" className="pointer-events-none" />
+                                                                    <path d={d} stroke="#a855f7" strokeWidth="2" fill="none" opacity="0.8" className="pointer-events-none" />
                                                                     <path d={d} stroke="transparent" strokeWidth="12" fill="none" className="cursor-ns-resize pointer-events-auto"
                                                                         onMouseDown={(e) => {
                                                                             e.stopPropagation();
@@ -8168,7 +8472,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                                                     return (
                                                         <div 
                                                             key={p.id}
-                                                            className="absolute w-2.5 h-2.5 bg-white border-2 border-amber-500 rounded-full -ml-[5px] -mt-[5px] cursor-pointer pointer-events-auto shadow-md hover:scale-150 transition-transform z-10"
+                                                            className="absolute w-2.5 h-2.5 bg-white border-2 border-purple-500 rounded-full -ml-[5px] -mt-[5px] cursor-pointer pointer-events-auto shadow-md hover:scale-150 transition-transform z-10"
                                                             style={{ left: `${p.time * BEAT_WIDTH}px`, top: `${y}px` }}
                                                             onMouseDown={(e) => {
                                                                 e.stopPropagation();
@@ -8261,7 +8565,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                             })}
                         </div>
                         <div className="bg-[#242424] relative shrink-0" style={{ width: `${rollWidthPx}px`, height: `${84 * 16}px` }} onDoubleClick={(e) => handlePianoGridDoubleClick(e, bottomDock.trackId, bottomDock.clipId)}>
-                            <div className="absolute inset-0 pointer-events-none" style={getGridStyle(snapGrid, BEAT_WIDTH, true)} />
+                            <div className="absolute inset-0 pointer-events-none" style={getGridStyle(snapGrid, BEAT_WIDTH, true, isLightMode)} />
                             
                             {activeClip?.notes?.map(n => (
                                 <div 
@@ -8912,6 +9216,34 @@ const initAudioEngine = async (explicitTracks = null) => {
                                 </div>
 
                                 <div className="mt-4 border-t border-neutral-800 pt-4 pb-2">
+                                    <h3 className="text-xs font-bold text-white mb-2 flex items-center gap-1.5"><Palette size={12}/> Theme & Colors</h3>
+                                    <div className="grid grid-cols-2 gap-4 bg-neutral-950 p-3 rounded-lg border border-neutral-800 shadow-inner">
+                                        <div className="flex flex-col gap-1.5 col-span-2">
+                                            <label className="text-[10px] text-neutral-400 font-bold uppercase tracking-wider">Interface Mode</label>
+                                            <select value={theme.mode} onChange={e => setTheme(t => ({...t, mode: e.target.value}))} className="w-full bg-neutral-900 border border-neutral-700 rounded-md px-2 py-1.5 text-xs text-white outline-none cursor-pointer focus:border-blue-500 transition-colors">
+                                                <option value="dark">Dark Mode (Default)</option>
+                                                <option value="light">Light Mode</option>
+                                            </select>
+                                        </div>
+                                        <div className="flex flex-col gap-1.5">
+                                            <label className="text-[10px] text-neutral-400 font-bold uppercase tracking-wider flex items-center justify-between">Primary <span className="w-3 h-3 rounded-full inline-block border border-black/20" style={{backgroundColor: theme.primary}}/></label>
+                                            <input type="color" value={theme.primary} onChange={e => setTheme(t => ({...t, primary: e.target.value}))} className="w-full h-8 rounded-md cursor-pointer border border-neutral-700 p-0 overflow-hidden" />
+                                        </div>
+                                        <div className="flex flex-col gap-1.5">
+                                            <label className="text-[10px] text-neutral-400 font-bold uppercase tracking-wider flex items-center justify-between">Secondary <span className="w-3 h-3 rounded-full inline-block border border-black/20" style={{backgroundColor: theme.secondary}}/></label>
+                                            <input type="color" value={theme.secondary} onChange={e => setTheme(t => ({...t, secondary: e.target.value}))} className="w-full h-8 rounded-md cursor-pointer border border-neutral-700 p-0 overflow-hidden" />
+                                        </div>
+                                        <div className="flex flex-col gap-1.5 col-span-2">
+                                            <label className="text-[10px] text-neutral-400 font-bold uppercase tracking-wider flex items-center justify-between">Tertiary <span className="w-3 h-3 rounded-full inline-block border border-black/20" style={{backgroundColor: theme.tertiary}}/></label>
+                                            <input type="color" value={theme.tertiary} onChange={e => setTheme(t => ({...t, tertiary: e.target.value}))} className="w-full h-8 rounded-md cursor-pointer border border-neutral-700 p-0 overflow-hidden" />
+                                        </div>
+                                        <div className="col-span-2 mt-1">
+                                            <button onClick={() => setTheme({ mode: 'dark', primary: '#06b6d4', secondary: '#a855f7', tertiary: '#f59e0b' })} className="w-full py-1.5 bg-neutral-800 hover:bg-neutral-700 text-xs font-bold text-neutral-300 rounded transition-colors uppercase tracking-wider border border-neutral-700">Reset Defaults</button>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="mt-4 border-t border-neutral-800 pt-4 pb-2">
                                     <h3 className="text-xs font-bold text-white mb-2 flex items-center gap-1.5"><Sliders size={12}/> Custom MIDI Mappings</h3>
                                     {Object.keys(midiMappings).length === 0 ? (
                                         <p className="text-[10px] text-neutral-500 italic bg-neutral-950 p-3 rounded-lg border border-neutral-800">No custom mappings yet. Right click a knob to assign your controller.</p>
@@ -9317,7 +9649,7 @@ const initAudioEngine = async (explicitTracks = null) => {
       </div>
 
       {/* Global Status Bar */}
-      <GlobalStatusBar masterAnalyserRef={masterAnalyserRef} latencyMs={latencyCompensationMs} />
+      <GlobalStatusBar masterAnalyserRef={masterAnalyserRef} latencyMs={latencyCompensationMs} theme={theme} />
       
     </div>
   );
