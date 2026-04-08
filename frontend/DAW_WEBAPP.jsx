@@ -2218,6 +2218,7 @@ function DAWStudio() {
   const [isAutomationMode, setIsAutomationMode] = useState(false);
   const [draggingPlayhead, setDraggingPlayhead] = useState(false);
   const [dockHeight, setDockHeight] = useState(260);
+  const [minDockHeight, setMinDockHeight] = useState(260);
   const [draggingDockHeight, setDraggingDockHeight] = useState(false);
   const [sidePanelWidth, setSidePanelWidth] = useState(500);
   const [draggingSidePanel, setDraggingSidePanel] = useState(false);
@@ -5059,6 +5060,37 @@ const initAudioEngine = async (explicitTracks = null) => {
     window.addEventListener('wheel', handleWheel, { passive: false });
     return () => window.removeEventListener('wheel', handleWheel);
   }, []);
+
+  // Auto-fit Device Rack Height when effects/instruments change
+  const activeTrackEffectsLength = bottomDock?.trackId === 'master' ? masterEffects.length : tracks.find(t => t.id === bottomDock?.trackId)?.effects?.length;
+  const activeTrackInstrument = tracks.find(t => t.id === bottomDock?.trackId)?.instrument;
+
+  useEffect(() => {
+      if (bottomDock?.type === 'devices') {
+          const timer = setTimeout(() => {
+              const wrappers = document.querySelectorAll('.fx-content-wrapper');
+              let maxNeeded = 260; // Absolute minimum rack height
+              wrappers.forEach(w => {
+                  // scrollHeight of the inner wrapper + 24px Card Header + 16px Card Padding + 24px Dock Header + 24px Dock Padding = ~88px extra. Round to 100 for safety margin.
+                  const needed = w.scrollHeight + 100; 
+                  if (needed > maxNeeded) maxNeeded = needed;
+              });
+              
+              setMinDockHeight(maxNeeded);
+
+              setDockHeight(prev => {
+                  // Clamp to 70% of the screen height to prevent the rack from completely hiding the timeline
+                  const safeMax = Math.min(maxNeeded, window.innerHeight * 0.7);
+                  // Only expand the rack if the new plugin needs more room. Never shrink automatically.
+                  if (safeMax > prev) return safeMax;
+                  return prev;
+              });
+          }, 100); // 100ms allows React and Tailwind to finish DOM reflow
+          return () => clearTimeout(timer);
+      } else {
+          setMinDockHeight(260); // Reset for piano roll and audio editor
+      }
+  }, [bottomDock?.trackId, bottomDock?.type, activeTrackEffectsLength, activeTrackInstrument]);
 
   useEffect(() => {
       const token = localStorage.getItem('freedaw_token');
@@ -7909,7 +7941,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                 const rollWidthPx = activeClipDuration * BEAT_WIDTH;
                 
                 return (
-                <div style={{ height: dockHeight }} className="bg-[#333333] border-t border-[#111111] flex flex-col shrink-0 z-30 relative">
+                <div style={{ height: Math.max(dockHeight, 260) }} className="bg-[#333333] border-t border-[#111111] flex flex-col shrink-0 z-30 relative">
                     <div className="absolute top-0 left-0 right-0 h-1.5 -translate-y-1/2 cursor-ns-resize hover:bg-cyan-500 z-50 transition-colors" onMouseDown={() => setDraggingDockHeight(true)} />
                     <div className="h-6 bg-[#444444] flex justify-between items-center px-4 border-b border-[#222222] shrink-0">
                         <div className="flex items-center gap-4">
@@ -8083,7 +8115,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                 }
 
                 return (
-                <div style={{ height: dockHeight }} className="bg-[#1a1a1a] border-t border-[#111111] flex flex-col shrink-0 z-30 relative select-none min-h-[260px]">
+                <div style={{ height: Math.max(dockHeight, minDockHeight) }} className="bg-[#1a1a1a] border-t border-[#111111] flex flex-col shrink-0 z-30 relative select-none">
                     <div className="absolute top-0 left-0 right-0 h-1.5 -translate-y-1/2 cursor-ns-resize hover:bg-cyan-500 z-50 transition-colors" onMouseDown={() => setDraggingDockHeight(true)} />
                     <div className="h-6 bg-[#2d2d2d] flex justify-between items-center px-4 border-b border-[#111] shrink-0">
                         <div className="flex items-center gap-2">
@@ -8293,7 +8325,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                                    <button onClick={() => deleteEffect(bottomDock.trackId, fx.id)} className="text-[#888] hover:text-[#f87171] opacity-0 group-hover:opacity-100 transition-opacity ml-4"><X size={12}/></button>
                                 </div>
                                 <div className="flex-1 flex px-3 py-2 gap-4">
-                                    <div className="flex-1 flex flex-col">
+                                    <div className="flex-1 flex flex-col fx-content-wrapper">
                                         {fx.type === 'parametric-eq' && <ParametricEqVisualizer trackId={bottomDock.trackId} fxId={fx.id} params={fx.params} onParamChange={(p, v) => handleEffectParamChange(bottomDock.trackId, fx.id, p, v)} synthsRef={synthsRef} audioCtxRef={audioCtxRef} masterFxNodesRef={masterFxNodesRef} />}
                                     <div className="flex-1 flex flex-wrap gap-x-6 gap-y-4 content-start">
                                        {Object.keys(fx.params || {}).map(param => {
