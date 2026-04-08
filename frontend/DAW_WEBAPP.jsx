@@ -588,7 +588,7 @@ const buildSampleTree = (samples) => {
     return root;
 };
 
-const SampleTreeRenderer = React.memo(({ node, level = 0, expandedFolders, toggleFolder, onPreview, onAssign, onDelete }) => {
+const SampleTreeRenderer = React.memo(({ node, level = 0, expandedFolders, toggleFolder, onPreview, onAssign, onDelete, onDeleteFolder }) => {
     const isRoot = level === 0;
     const childrenArray = Object.values(node.children || {}).sort((a, b) => {
         if (a.isDir && !b.isDir) return -1;
@@ -600,18 +600,25 @@ const SampleTreeRenderer = React.memo(({ node, level = 0, expandedFolders, toggl
         <div className="flex flex-col w-full">
             {!isRoot && (
                 <div 
-                    className={`flex items-center gap-2 p-1.5 rounded-sm cursor-pointer transition-colors hover:bg-[#444] mb-[1px] ${level > 1 ? 'ml-3 border-l border-[#333] pl-2' : ''}`}
+                    className={`group flex items-center justify-between p-1.5 rounded-sm cursor-pointer transition-colors hover:bg-[#444] mb-[1px] ${level > 1 ? 'ml-3 border-l border-[#333] pl-2' : ''}`}
                     onClick={() => toggleFolder(node.path)}
                 >
-                    <Folder size={12} className="text-cyan-500 shrink-0" fill={expandedFolders[node.path] ? "currentColor" : "none"} />
-                    <span className="text-[10px] font-bold text-[#e0e0e0] uppercase tracking-wider truncate select-none">{node.name}</span>
+                    <div className="flex items-center gap-2 overflow-hidden flex-1">
+                        <Folder size={12} className="text-cyan-500 shrink-0" fill={expandedFolders[node.path] ? "currentColor" : "none"} />
+                        <span className="text-[10px] font-bold text-[#e0e0e0] uppercase tracking-wider truncate select-none">{node.name}</span>
+                    </div>
+                    {onDeleteFolder && (
+                        <button onClick={(e) => { e.stopPropagation(); onDeleteFolder(e, node); }} className="text-[#888] hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity p-1 shrink-0" title="Delete Folder">
+                            <Trash2 size={12}/>
+                        </button>
+                    )}
                 </div>
             )}
             {(isRoot || expandedFolders[node.path]) && (
                 <div className={`flex flex-col ${!isRoot ? 'ml-3 border-l border-[#333] pl-2' : ''}`}>
                     {childrenArray.map(child => {
                         if (child.isDir) {
-                            return <SampleTreeRenderer key={child.path} node={child} level={level + 1} expandedFolders={expandedFolders} toggleFolder={toggleFolder} onPreview={onPreview} onAssign={onAssign} onDelete={onDelete} />;
+                            return <SampleTreeRenderer key={child.path} node={child} level={level + 1} expandedFolders={expandedFolders} toggleFolder={toggleFolder} onPreview={onPreview} onAssign={onAssign} onDelete={onDelete} onDeleteFolder={onDeleteFolder} />;
                         } else {
                             return (
                                     <div 
@@ -5379,6 +5386,38 @@ const initAudioEngine = async (explicitTracks = null) => {
           showToast("Sample deleted.", "info");
       } catch(err) { showToast("Failed to delete sample.", "error"); }
   };
+
+  const handleDeleteFolder = async (e, folderNode) => {
+      e.stopPropagation();
+      const getSampleIdsRecursive = (node) => {
+          let ids = [];
+          Object.values(node.children || {}).forEach(child => {
+              if (child.isDir) {
+                  ids = ids.concat(getSampleIdsRecursive(child));
+              } else {
+                  ids.push(child.id);
+              }
+          });
+          return ids;
+      };
+
+      const idsToDelete = getSampleIdsRecursive(folderNode);
+      if (idsToDelete.length === 0) return;
+
+      try {
+          if (authTokenRef.current && !authTokenRef.current.startsWith('local_token_')) {
+              await Promise.all(idsToDelete.map(id => fetch(`${API_BASE_URL}/api/samples/${id}`, { method: 'DELETE', headers: { 'Authorization': `Bearer ${authTokenRef.current}` } })));
+          }
+          setUserSamples(prev => prev.filter(s => !idsToDelete.includes(s.id)));
+          idsToDelete.forEach(id => {
+              globalAudioBufferCache.delete(id);
+              idb.delete('samples', id).catch(()=>{});
+          });
+          showToast(`Deleted folder and ${idsToDelete.length} sample(s).`, "info");
+      } catch(err) {
+          showToast("Failed to delete folder contents.", "error");
+      }
+  };
   const loadProjects = async (token) => {
       try {
           const offlineProjs = await idb.getAll('projects');
@@ -7146,6 +7185,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                         }
                     }}
                     onDelete={handleDeleteSample}
+                    onDeleteFolder={handleDeleteFolder}
                 />
                 {userSamples.length === 0 && <p className="text-[10px] font-bold uppercase tracking-wider text-[#888] mt-4 text-center">No samples found.</p>}
               </div>
@@ -8870,6 +8910,8 @@ const initAudioEngine = async (explicitTracks = null) => {
                                             }
                                         }}
                                         onAssign={(id) => assignSampleToPad(samplePickerTarget.trackId, samplePickerTarget.note, id)}
+                                        onDelete={handleDeleteSample}
+                                        onDeleteFolder={handleDeleteFolder}
                                     />
                                     {userSamples.length === 0 && <p className="text-[10px] font-bold uppercase tracking-wider text-[#888] mt-4 text-center">No samples found. Upload some!</p>}
                                 </div>
