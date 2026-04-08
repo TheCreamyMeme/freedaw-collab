@@ -3883,11 +3883,17 @@ const initAudioEngine = async (explicitTracks = null) => {
                   const timeBase = stateRefs.current.isPlaying ? newTime : (now * (stateRefs.current.bpm / 60));
                   const currentArpStep = Math.floor(timeBase / arpRate);
 
+                  // Detect huge time jumps (scrubbing, or transport start/stop) and resync the arp
+                  if (synth.lastArpStep !== undefined && Math.abs(currentArpStep - synth.lastArpStep) > 1) {
+                      synth.lastArpStep = currentArpStep - 1;
+                  }
+
                   // FIX: Ensure 0 doesn't evaluate to falsy, preventing a massive note burst on step 0
                   if (currentArpStep > (synth.lastArpStep !== undefined ? synth.lastArpStep : -1)) {
                       synth.lastArpStep = currentArpStep;
 
                       let sortedPitches = [...new Set(activeChord.map(n => n.pitch))].sort((a,b) => a - b);
+
                       
                       if (track.arpPattern === 'down') sortedPitches.reverse();
                       else if (track.arpPattern === 'up-down' && sortedPitches.length > 1) {
@@ -4791,9 +4797,13 @@ const initAudioEngine = async (explicitTracks = null) => {
               return; 
           }
       } else {
-          // 3. DAW FOCUS: Prevent space and arrows from scrolling the page
-          if (code === 'Space' || code === 'ArrowLeft' || code === 'ArrowRight' || code === 'Backspace' || code === 'Delete') {
+          // 3. DAW FOCUS: Prevent space, enter, and arrows from triggering browser defaults (like clicking focused buttons)
+          if (code === 'Space' || code === 'Enter' || code === 'ArrowLeft' || code === 'ArrowRight' || code === 'Backspace' || code === 'Delete') {
               e.preventDefault();
+              // Remove focus from buttons to remove the white outline and prevent accidental double-triggers
+              if (document.activeElement && document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA') {
+                  document.activeElement.blur();
+              }
           }
           // Prevent default for cut/copy/paste so it targets our DAW engine, not the browser text clipboard
           if (cmd && ['c', 'v', 'x'].includes(key)) {
