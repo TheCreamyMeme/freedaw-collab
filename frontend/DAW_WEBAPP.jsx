@@ -2099,6 +2099,174 @@ const SampleCropper = React.memo(({ sampleId, settings, onChange }) => {
     );
 });
 
+const GlobalStatusBar = React.memo(({ masterAnalyserRef, latencyMs }) => {
+    const specRef = useRef(null);
+    const waveRef = useRef(null);
+    const scopeRef = useRef(null);
+    const cpuRef = useRef(null);
+
+    const cpuHistory = useRef(new Float32Array(60));
+    const lastRaf = useRef(performance.now());
+
+    useEffect(() => {
+        let reqId;
+        const draw = () => {
+            const now = performance.now();
+            const deltaMs = now - lastRaf.current;
+            lastRaf.current = now;
+
+            // CPU Load (Calculate Jitter)
+            const load = Math.min(100, Math.max(0, ((deltaMs - 16.6) / 16.6) * 100));
+            const hist = cpuHistory.current;
+            for (let i = 0; i < hist.length - 1; i++) hist[i] = hist[i + 1];
+            hist[hist.length - 1] = load;
+
+            if (cpuRef.current) {
+                const ctx = cpuRef.current.getContext('2d');
+                const w = cpuRef.current.width;
+                const h = cpuRef.current.height;
+                ctx.clearRect(0, 0, w, h);
+                
+                ctx.beginPath();
+                ctx.moveTo(0, h);
+                for (let i = 0; i < hist.length; i++) {
+                    const x = (i / (hist.length - 1)) * w;
+                    const y = h - (hist[i] / 100) * h;
+                    ctx.lineTo(x, y);
+                }
+                ctx.lineTo(w, h);
+                ctx.fillStyle = 'rgba(34, 197, 94, 0.3)';
+                ctx.fill();
+                ctx.strokeStyle = '#22c55e';
+                ctx.lineWidth = 1;
+                ctx.stroke();
+            }
+
+            // Audio Visualizers
+            const analyserObj = masterAnalyserRef?.current;
+            if (analyserObj && analyserObj.L && analyserObj.R) {
+                const aL = analyserObj.L;
+                const aR = analyserObj.R;
+                
+                const fDataL = new Uint8Array(aL.frequencyBinCount);
+                const fDataR = new Uint8Array(aR.frequencyBinCount);
+                aL.getByteFrequencyData(fDataL);
+                aR.getByteFrequencyData(fDataR);
+
+                const tDataL = new Uint8Array(aL.frequencyBinCount);
+                const tDataR = new Uint8Array(aR.frequencyBinCount);
+                aL.getByteTimeDomainData(tDataL);
+                aR.getByteTimeDomainData(tDataR);
+
+                // Spectrum
+                if (specRef.current) {
+                    const ctx = specRef.current.getContext('2d');
+                    const w = specRef.current.width;
+                    const h = specRef.current.height;
+                    ctx.clearRect(0, 0, w, h);
+                    
+                    ctx.fillStyle = '#06b6d4'; // cyan-500
+                    const barW = w / (fDataL.length / 2); // only draw bottom half of freq spectrum
+                    for (let i = 0; i < fDataL.length / 2; i++) {
+                        const val = Math.max(fDataL[i], fDataR[i]) / 255;
+                        const barH = val * h;
+                        ctx.fillRect(i * barW, h - barH, Math.max(1, barW - 0.5), barH);
+                    }
+                }
+
+                // Waveform
+                if (waveRef.current) {
+                    const ctx = waveRef.current.getContext('2d');
+                    const w = waveRef.current.width;
+                    const h = waveRef.current.height;
+                    ctx.clearRect(0, 0, w, h);
+                    
+                    ctx.beginPath();
+                    for (let i = 0; i < tDataL.length; i++) {
+                        const val = ((tDataL[i] + tDataR[i]) / 2) / 128.0;
+                        const x = (i / tDataL.length) * w;
+                        const y = (val * h) / 2;
+                        if (i === 0) ctx.moveTo(x, y);
+                        else ctx.lineTo(x, y);
+                    }
+                    ctx.strokeStyle = '#eab308'; // yellow-500
+                    ctx.lineWidth = 1.5;
+                    ctx.stroke();
+                }
+
+                // Stereo Scope (Vectorscope / Goniometer)
+                if (scopeRef.current) {
+                    const ctx = scopeRef.current.getContext('2d');
+                    const w = scopeRef.current.width;
+                    const h = scopeRef.current.height;
+                    
+                    ctx.fillStyle = 'rgba(17, 17, 17, 0.4)'; // fade effect for trails
+                    ctx.fillRect(0, 0, w, h);
+                    
+                    ctx.beginPath();
+                    let hasSignal = false;
+                    for (let i = 0; i < tDataL.length; i++) {
+                        const l = (tDataL[i] / 128.0) - 1;
+                        const r = (tDataR[i] / 128.0) - 1;
+                        if (Math.abs(l) > 0.01 || Math.abs(r) > 0.01) hasSignal = true;
+                        
+                        // Rotated by 45 degrees to form a diamond shape 
+                        const x = (l - r) * (w / 2.5) + (w / 2);
+                        const y = (l + r) * (h / 2.5) + (h / 2);
+                        
+                        if (i === 0) ctx.moveTo(x, y);
+                        else ctx.lineTo(x, y);
+                    }
+                    if (hasSignal) {
+                        ctx.strokeStyle = '#a855f7'; // purple-500
+                        ctx.lineWidth = 1;
+                        ctx.stroke();
+                    }
+                }
+            }
+
+            reqId = requestAnimationFrame(draw);
+        };
+        reqId = requestAnimationFrame(draw);
+        return () => cancelAnimationFrame(reqId);
+    }, [masterAnalyserRef]);
+
+    return (
+        <div className="h-10 bg-[#1a1a1a] border-t border-[#111] shrink-0 flex items-center justify-end px-4 text-[#888] text-[9px] font-bold uppercase tracking-wider z-50 w-full relative gap-6">
+            
+            <div className="flex items-center gap-2 shrink-0 h-full py-1.5" title="CPU Load">
+                <span className="text-[8px] text-neutral-500">CPU</span>
+                <canvas ref={cpuRef} width={80} height={24} className="rounded-[3px] border border-[#333] w-[80px] h-[24px] bg-[#111]" />
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0 h-full py-1.5" title="Round-trip Latency">
+                <span className="text-[8px] text-neutral-500">LAT</span>
+                <div className="rounded-[3px] border border-[#333] w-[40px] h-[24px] bg-[#111] flex items-center justify-center text-cyan-500 font-mono text-[9px]">
+                    {latencyMs ? Math.round(latencyMs) : '0'}ms
+                </div>
+            </div>
+
+            <div className="w-px h-5 bg-[#333] mx-1" />
+
+            <div className="flex items-center gap-2 shrink-0 h-full py-1.5" title="Master Spectrum">
+                <span className="text-[8px] text-neutral-500">FREQ</span>
+                <canvas ref={specRef} width={100} height={24} className="rounded-[3px] border border-[#333] w-[100px] h-[24px] bg-[#111]" />
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0 h-full py-1.5" title="Master Waveform">
+                <span className="text-[8px] text-neutral-500">WAVE</span>
+                <canvas ref={waveRef} width={100} height={24} className="rounded-[3px] border border-[#333] w-[100px] h-[24px] bg-[#111]" />
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0 h-full py-1.5" title="Stereo Imager">
+                <span className="text-[8px] text-neutral-500">STEREO</span>
+                <canvas ref={scopeRef} width={24} height={24} className="rounded-[3px] border border-[#333] w-[24px] h-[24px] bg-[#111]" />
+            </div>
+            
+        </div>
+    );
+});
+
 export default class App extends Component {
   constructor(props) { super(props); this.state = { hasError: false, error: null }; }
   static getDerivedStateFromError(error) { return { hasError: true, error }; }
@@ -2241,8 +2409,6 @@ function DAWStudio() {
   const [globalKey, setGlobalKey] = useState('C');
   const [globalScale, setGlobalScale] = useState('Chromatic');
   const [hoverInfo, setHoverInfo] = useState('Welcome to FreeDaw Live. Hover over elements for details.');
-  const cpuMeterRef = useRef(null);
-  const lastRafTimeRef = useRef(performance.now());
 
   const audioCtxRef = useRef(null);
   const masterSummingBusRef = useRef(null);
@@ -3505,16 +3671,6 @@ const initAudioEngine = async (explicitTracks = null) => {
                   if (previewEl) previewEl.style.width = `${Math.max(1, (newTime - recordingStartTimeRef.current) * BEAT_WIDTH)}px`;
               }
           });
-      }
-
-      // CPU Jitter Calculation
-      if (cpuMeterRef.current) {
-          const nowPerf = performance.now();
-          const deltaMs = nowPerf - lastRafTimeRef.current;
-          lastRafTimeRef.current = nowPerf;
-          const load = Math.min(100, Math.max(0, ((deltaMs - 16.6) / 16.6) * 100));
-          cpuMeterRef.current.style.width = `${load}%`;
-          cpuMeterRef.current.style.backgroundColor = load > 80 ? '#ef4444' : load > 40 ? '#eab308' : '#22c55e';
       }
 
       // Evaluate LFOs tied to Project Time
@@ -9101,18 +9257,7 @@ const initAudioEngine = async (explicitTracks = null) => {
       </div>
 
       {/* Global Status Bar */}
-      <div className="h-6 bg-[#1a1a1a] border-t border-[#111] shrink-0 flex items-center justify-between px-4 text-[#888] text-[9px] font-bold uppercase tracking-wider z-50 w-full relative">
-          <div className="flex items-center gap-2 truncate">
-              <Info size={12} className="text-cyan-500 shrink-0" />
-              <span className="truncate">{hoverInfo}</span>
-          </div>
-          <div className="flex items-center gap-2 shrink-0" onMouseEnter={() => setHoverInfo("Performance Meter: Measures Audio/UI Thread latency.")} onMouseLeave={() => setHoverInfo("Welcome to FreeDaw Live.")}>
-              <span>CPU Load</span>
-              <div className="w-16 h-1.5 bg-[#111] rounded-sm overflow-hidden border border-[#222]">
-                  <div ref={cpuMeterRef} className="h-full bg-green-500 w-0 transition-all duration-75" />
-              </div>
-          </div>
-      </div>
+      <GlobalStatusBar masterAnalyserRef={masterAnalyserRef} latencyMs={latencyCompensationMs} />
       
     </div>
   );
