@@ -2398,8 +2398,16 @@ function DAWStudio() {
               }
 
               try {
-                  const constraints = track.audioInputId ? { deviceId: { exact: track.audioInputId } } : true;
-                  const stream = await navigator.mediaDevices.getUserMedia({ audio: constraints });
+                  const constraints = {
+                      audio: {
+                          ...(track.audioInputId ? { deviceId: { exact: track.audioInputId } } : {}),
+                          echoCancellation: false,
+                          noiseSuppression: false,
+                          autoGainControl: false,
+                          latency: 0
+                      }
+                  };
+                  const stream = await navigator.mediaDevices.getUserMedia(constraints);
                   
                   const isStillArmed = tracksRef.current.find(t => t.id === track.id)?.armed;
                   if (!isStillArmed) {
@@ -2834,7 +2842,7 @@ function DAWStudio() {
 
 const initAudioEngine = async (explicitTracks = null) => {
   if (!audioCtxRef.current) {
-    audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)();
+    audioCtxRef.current = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 'interactive' });
     
     // Initialize Advanced WebAssembly / AudioWorklet Engine
     try {
@@ -2878,8 +2886,16 @@ const initAudioEngine = async (explicitTracks = null) => {
   const startAudioRecording = async (track) => {
       if (track.type !== 'audio') return;
       try {
-          const constraints = track.audioInputId ? { deviceId: { exact: track.audioInputId } } : true;
-          const stream = await navigator.mediaDevices.getUserMedia({ audio: constraints });
+          const constraints = {
+              audio: {
+                  ...(track.audioInputId ? { deviceId: { exact: track.audioInputId } } : {}),
+                  echoCancellation: false,
+                  noiseSuppression: false,
+                  autoGainControl: false,
+                  latency: 0
+              }
+          };
+          const stream = await navigator.mediaDevices.getUserMedia(constraints);
           const mr = new MediaRecorder(stream);
           mediaRecorderRef.current = mr;
           recordedChunksRef.current = [];
