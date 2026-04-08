@@ -527,6 +527,7 @@ const getParamConstraints = (param) => {
     if (!param) return { min: 0, max: 1, step: 0.01 };
     const p = String(param).toLowerCase();
     if (p === 'size') return { min: 0.1, max: 3.0, step: 0.1 };
+    if (p === 'width') return { min: 0, max: 3.0, step: 0.01 };
     if (p.includes('freq') || p === 'cutoff' || p === 'damping' || p === 'tone') return { min: 20, max: 20000, step: 1, isLog: true };
     if (p.includes('gain') || p === 'low' || p === 'mid' || p === 'high') return { min: -24, max: 24, step: 0.1 };
     if (p.includes('q') || p === 'res') return { min: 0.1, max: 20, step: 0.1 };
@@ -681,6 +682,7 @@ const INTERNAL_PLUGINS = [
   { id: 'fx-tremolo', name: 'Tremolo', category: 'effect', type: 'tremolo', vendor: 'FreeDaw-Collab', params: { rate: 5.0, ampDepth: 0.8 } },
   { id: 'fx-ringmod', name: 'Ring Modulator', category: 'effect', type: 'ringmod', vendor: 'FreeDaw-Collab', params: { freq: 400, mix: 0.5 } },
   { id: 'fx-eq3', name: '3-Band EQ', category: 'effect', type: 'eq3', vendor: 'FreeDaw-Collab', params: { low: 0, mid: 0, high: 0 } },
+  { id: 'fx-widener', name: 'Stereo Widener', category: 'effect', type: 'stereo-widener', vendor: 'FreeDaw-Collab', params: { width: 1.5, mix: 1.0 } },
   
   { id: 'inst-subtractive', name: 'Analog Subtractive', category: 'instrument', type: 'subtractive', vendor: 'FreeDaw-Collab' },
   { id: 'inst-fm', name: 'Operator FM Synth', category: 'instrument', type: 'fm', vendor: 'FreeDaw-Collab' },
@@ -1248,12 +1250,25 @@ const _createFXNode = async (ctx, fx) => {
     input.connect(node); node.connect(filter); filter.connect(dcBlocker); dcBlocker.connect(wet); wet.connect(output);
     return { input, output, node, filter, dcBlocker, wet, dry, fxType: 'distortion' };
   } else if (fx.type === 'chorus') {
-    const delay = ctx.createDelay(); delay.delayTime.value = fx.params?.delayTime || 0.03;
+    // True Stereo Chorus (Inverted L/R Sweep)
+    const stereoInput = ctx.createGain(); stereoInput.channelCount = 2; stereoInput.channelCountMode = 'explicit';
+    const splitter = ctx.createChannelSplitter(2);
+    const merger = ctx.createChannelMerger(2);
+    const delayL = ctx.createDelay(); delayL.delayTime.value = fx.params?.delayTime || 0.03;
+    const delayR = ctx.createDelay(); delayR.delayTime.value = fx.params?.delayTime || 0.03;
     const osc = ctx.createOscillator(); osc.type = 'sine'; osc.frequency.value = fx.params?.rate || 1.5;
-    const modGain = ctx.createGain(); modGain.gain.value = fx.params?.modDepth || 0.003;
-    osc.connect(modGain); modGain.connect(delay.delayTime); osc.start();
-    input.connect(delay); delay.connect(wet); wet.connect(output);
-    return { input, output, delay, lfo: osc, lfoGain: modGain, wet, dry, fxType: 'chorus' };
+    const modGainL = ctx.createGain(); modGainL.gain.value = fx.params?.modDepth || 0.003;
+    const modGainR = ctx.createGain(); modGainR.gain.value = -(fx.params?.modDepth || 0.003); // Invert phase for R channel
+    
+    osc.connect(modGainL); modGainL.connect(delayL.delayTime);
+    osc.connect(modGainR); modGainR.connect(delayR.delayTime);
+    osc.start();
+    
+    input.connect(stereoInput); stereoInput.connect(splitter);
+    splitter.connect(delayL, 0); splitter.connect(delayR, 1);
+    delayL.connect(merger, 0, 0); delayR.connect(merger, 0, 1);
+    merger.connect(wet); wet.connect(output);
+    return { input, output, delayL, delayR, lfo: osc, modGainL, modGainR, wet, dry, fxType: 'chorus' };
   } else if (fx.type === 'phaser') {
     const ap1 = ctx.createBiquadFilter(); ap1.type = 'allpass'; ap1.frequency.value = 1000;
     const ap2 = ctx.createBiquadFilter(); ap2.type = 'allpass'; ap2.frequency.value = 1000;
@@ -1292,6 +1307,37 @@ const _createFXNode = async (ctx, fx) => {
     const node = ctx.createWaveShaper(); node.curve = getBitcrusherCurve(fx.params?.bitDepth || 4);
     input.connect(node); node.connect(wet); wet.connect(output);
     return { input, output, node, wet, dry, fxType: 'bitcrusher' };
+  } else if (fx.type === 'stereo-widener') {
+    // Mid/Side Processing Matrix
+    const stereoInput = ctx.createGain(); stereoInput.channelCount = 2; stereoInput.channelCountMode = 'explicit';
+    const splitter = ctx.createChannelSplitter(2);
+    const merger = ctx.createChannelMerger(2);
+    
+    input.connect(stereoInput); stereoInput.connect(splitter);
+    
+    const mid = ctx.createGain(); mid.gain.value = 0.5;
+    splitter.connect(mid, 0); splitter.connect(mid, 1);
+    
+    const side = ctx.createGain(); side.gain.value = 0.5;
+    const invertR = ctx.createGain(); invertR.gain.value = -1;
+    splitter.connect(side, 0);
+    splitter.connect(invertR, 1); invertR.connect(side);
+    
+    const widthGain = ctx.createGain(); widthGain.gain.value = fx.params?.width || 1.5;
+    side.connect(widthGain);
+    
+    const outL = ctx.createGain();
+    mid.connect(outL); widthGain.connect(outL);
+    
+    const outR = ctx.createGain();
+    const invertSide = ctx.createGain(); invertSide.gain.value = -1;
+    widthGain.connect(invertSide);
+    mid.connect(outR); invertSide.connect(outR);
+    
+    outL.connect(merger, 0, 0); outR.connect(merger, 0, 1);
+    merger.connect(wet); wet.connect(output);
+    
+    return { input, output, widthGain, wet, dry, fxType: 'stereo-widener' };
   } else if (fx.type === 'autopan') {
     const panner = ctx.createStereoPanner ? ctx.createStereoPanner() : ctx.createPanner();
     const osc = ctx.createOscillator(); osc.type = 'sine'; osc.frequency.value = fx.params?.rate || 2.0;
@@ -1494,7 +1540,15 @@ const triggerSupersaw = (ctx, bus, pitch, time, vol, dur, p={}, vel=100, pbNode)
       const osc = ctx.createOscillator(); osc.type = 'sawtooth';
       osc.frequency.setValueAtTime(baseFreq, time); osc.detune.setValueAtTime((p.detune||25) * ((i/(count-1))*2-1), time);
       if (pbNode) pbNode.connect(osc.detune);
-      osc.connect(env); osc.start(time); osc.stop(time + dur + (p.release||0.5) + 0.02);
+      
+      // Spread oscillators across the stereo field
+      const panner = ctx.createStereoPanner ? ctx.createStereoPanner() : ctx.createPanner();
+      const panValue = count > 1 ? ((i / (count - 1)) * 2 - 1) * 0.8 : 0;
+      if (panner.pan) panner.pan.value = panValue;
+      else panner.setPosition(panValue, 0, 1 - Math.abs(panValue));
+      
+      osc.connect(panner); panner.connect(env);
+      osc.start(time); osc.stop(time + dur + (p.release||0.5) + 0.02);
   }
   env.connect(bus);
 };
@@ -4468,11 +4522,17 @@ const initAudioEngine = async (explicitTracks = null) => {
   } else if (nodeObj.fxType === 'filter') {
       if (param === 'freq') nodeObj.node.frequency.setTargetAtTime(numVal, now, 0.05);
           if (param === 'res') nodeObj.node.Q.setTargetAtTime(numVal, now, 0.05);
-      } else if (nodeObj.fxType === 'chorus' || nodeObj.fxType === 'autopan') {
+      } else if (nodeObj.fxType === 'chorus') {
           if (param === 'rate') nodeObj.lfo.frequency.setTargetAtTime(numVal, now, 0.05);
-          if (param === 'modDepth' || param === 'panDepth') nodeObj.lfoGain.gain.setTargetAtTime(numVal, now, 0.05);
-          if (nodeObj.fxType === 'chorus' && param === 'delayTime') nodeObj.delay.delayTime.setTargetAtTime(numVal, now, 0.05);
-          if (nodeObj.fxType === 'chorus' && param === 'mix') { nodeObj.wet.gain.setTargetAtTime(numVal, now, 0.05); nodeObj.dry.gain.setTargetAtTime(1-numVal, now, 0.05); }
+          if (param === 'modDepth') { nodeObj.modGainL.gain.setTargetAtTime(numVal, now, 0.05); nodeObj.modGainR.gain.setTargetAtTime(-numVal, now, 0.05); }
+          if (param === 'delayTime') { nodeObj.delayL.delayTime.setTargetAtTime(numVal, now, 0.05); nodeObj.delayR.delayTime.setTargetAtTime(numVal, now, 0.05); }
+          if (param === 'mix') { nodeObj.wet.gain.setTargetAtTime(numVal, now, 0.05); nodeObj.dry.gain.setTargetAtTime(1-numVal, now, 0.05); }
+      } else if (nodeObj.fxType === 'stereo-widener') {
+          if (param === 'width') nodeObj.widthGain.gain.setTargetAtTime(numVal, now, 0.05);
+          if (param === 'mix') { nodeObj.wet.gain.setTargetAtTime(numVal, now, 0.05); nodeObj.dry.gain.setTargetAtTime(1-numVal, now, 0.05); }
+      } else if (nodeObj.fxType === 'autopan') {
+          if (param === 'rate') nodeObj.lfo.frequency.setTargetAtTime(numVal, now, 0.05);
+          if (param === 'panDepth') nodeObj.lfoGain.gain.setTargetAtTime(numVal, now, 0.05);
       } else if (nodeObj.fxType === 'phaser') {
           if (param === 'rate') nodeObj.lfo.frequency.setTargetAtTime(numVal, now, 0.05);
           if (param === 'freqDepth') nodeObj.lfoGain.gain.setTargetAtTime(numVal, now, 0.05);
