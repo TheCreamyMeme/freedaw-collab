@@ -6341,7 +6341,21 @@ const initAudioEngine = async (explicitTracks = null) => {
   const allPeersList = Object.values(peers);
   const projectPeersList = allPeersList.filter(p => p.projectId === projectId);
 
+  const renderCurrentUserAvatar = () => (
+      <div onClick={() => setShowProfileMenu(true)} className="w-8 h-8 bg-neutral-800 rounded-full border-2 border-neutral-900 overflow-hidden relative cursor-pointer shadow-sm hover:ring-2 hover:ring-blue-500 transition-all shrink-0" title="Edit Profile">
+          {currentUser?.avatar ? (
+              <img src={currentUser.avatar} alt="Me" className="w-full h-full object-cover" />
+          ) : (
+              <div className={`w-full h-full flex items-center justify-center text-xs font-bold text-white ${currentUser?.color || 'bg-emerald-500'}`}>
+                  {currentUser?.username?.charAt(0).toUpperCase() || '?'}
+              </div>
+          )}
+      </div>
+  );
+
   const renderPeerAvatars = (peerList) => {
+      if (!peerList || peerList.length === 0) return null;
+      
       const maxVisible = 5;
       const visible = peerList.slice(0, maxVisible);
       const extra = peerList.length - maxVisible;
@@ -6349,17 +6363,6 @@ const initAudioEngine = async (explicitTracks = null) => {
       return (
           <div className="relative flex items-center h-full py-1 cursor-pointer" onClick={(e) => { e.stopPropagation(); setShowPeerList(p => !p); }}>
               <div className="flex -space-x-2">
-                  <div className="relative z-50">
-                      <div className="w-8 h-8 bg-neutral-800 rounded-full border-2 border-neutral-900 overflow-hidden relative shadow-sm hover:ring-2 hover:ring-neutral-700 transition-all" title={`You\nOnline`}>
-                          {currentUser?.avatar ? (
-                              <img src={currentUser.avatar} alt="Me" className="w-full h-full object-cover" />
-                          ) : (
-                              <div className={`w-full h-full flex items-center justify-center text-xs font-bold text-white ${currentUser?.color || 'bg-emerald-500'}`}>
-                                  {currentUser?.username?.charAt(0).toUpperCase() || '?'}
-                              </div>
-                          )}
-                      </div>
-                  </div>
                   {visible.map((peer, idx) => {
                       let status = 'In Library';
                       if (peer.appView === 'daw') {
@@ -6380,19 +6383,8 @@ const initAudioEngine = async (explicitTracks = null) => {
               
               {showPeerList && (
               <div className="absolute top-full right-0 mt-2 w-64 bg-neutral-900 border border-neutral-700 shadow-2xl rounded-lg z-[100] flex flex-col max-h-64 overflow-y-auto custom-scrollbar p-2 gap-1 cursor-default" onClick={e => e.stopPropagation()}>
-                  <div className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider px-2 py-1 border-b border-neutral-800 mb-1">Active Users ({peerList.length + 1})</div>
+                  <div className="text-[10px] font-bold text-neutral-500 uppercase tracking-wider px-2 py-1 border-b border-neutral-800 mb-1">Active Peers ({peerList.length})</div>
                   
-                  {/* Current User */}
-                  <div onClick={() => { setShowProfileMenu(true); setShowPeerList(false); }} className="flex items-center gap-3 p-2 hover:bg-neutral-800 rounded-md cursor-pointer transition-colors">
-                      <div className={`w-8 h-8 ${currentUser?.avatar ? '' : (currentUser?.color || 'bg-emerald-500')} rounded-full overflow-hidden flex items-center justify-center text-xs font-bold text-white shrink-0`}>
-                          {currentUser?.avatar ? <img src={currentUser.avatar} alt="Me" className="w-full h-full object-cover" /> : (currentUser?.username || '?').charAt(0).toUpperCase()}
-                      </div>
-                      <div className="flex flex-col truncate">
-                          <span className="text-xs font-bold text-white truncate">{currentUser?.username} <span className="text-[10px] text-neutral-500 font-normal">(You)</span></span>
-                          <span className="text-[9px] text-green-400 truncate">Online</span>
-                      </div>
-                  </div>
-
                   {/* Peer Users */}
                   {peerList.map((peer, idx) => (
                       <div key={idx} onClick={() => { setViewProfileUser(peer); setShowPeerList(false); }} className="flex items-center gap-3 p-2 hover:bg-neutral-800 rounded-md cursor-pointer transition-colors">
@@ -6412,7 +6404,6 @@ const initAudioEngine = async (explicitTracks = null) => {
           </div>
       );
   };
-
   // --- RENDER: AUTH ---
   if (appView === 'auth') {
     return (
@@ -6449,10 +6440,14 @@ const initAudioEngine = async (explicitTracks = null) => {
             <header className="flex justify-between items-center mb-12 border-b border-[#111] pb-6">
                 <h1 className="text-2xl font-bold text-[#e0e0e0] uppercase tracking-wider">Project Library</h1>
                 <div className="flex items-center gap-4">
-                    <div className="flex items-center gap-4 mr-4">
-                        {renderPeerAvatars(allPeersList)}
-                        <span className="text-sm font-bold uppercase tracking-wider text-[#888]">Signed in as <b className="text-white">{currentUser?.username}</b></span>
-                    </div>
+                        <div className="flex items-center gap-4 mr-4">
+                            <div className="flex items-center gap-3">
+                                {renderCurrentUserAvatar()}
+                                {renderPeerAvatars(allPeersList)}
+                            </div>
+                            <span className="text-sm font-bold uppercase tracking-wider text-[#888]">Signed in as <b className="text-white">{currentUser?.username}</b></span>
+                        </div>
+
                     <button onClick={handleSignOut} className="bg-[#444] hover:bg-[#555] text-[#b3b3b3] hover:text-white p-2 rounded-sm transition-colors border border-[#222]" title="Sign Out">
                         <LogOut size={16} />
                     </button>
@@ -6475,28 +6470,173 @@ const initAudioEngine = async (explicitTracks = null) => {
                 ))}
             </div>
 
-            {sharedProjects.length > 0 && (
-                <>
-                    <h2 className="text-sm font-bold text-[#888] uppercase tracking-wider mb-4 flex items-center gap-2"><Users size={16} className="text-amber-500"/> Community & Shared Projects</h2>
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-12">
-                        {sharedProjects.map(proj => (
-                            <div key={proj.id} className="bg-[#3a3a3a] border border-[#222] rounded-sm p-6 group hover:border-[#555] transition-colors">
-                                <div className="flex justify-between items-start mb-4">
-                                    <div className="w-10 h-10 bg-[#2d2d2d] rounded-sm border border-[#111] flex items-center justify-center text-amber-500"><Users size={20}/></div>
-                                    <button onClick={(e) => { e.stopPropagation(); handleForkProject(proj); }} className="text-[10px] uppercase font-bold bg-amber-500/20 text-amber-500 hover:bg-amber-500/40 px-2 py-1 rounded-sm border border-amber-500/20 transition-colors" title="Fork Project">Fork</button>
+                {sharedProjects.length > 0 && (
+                    <>
+                        <h2 className="text-sm font-bold text-[#888] uppercase tracking-wider mb-4 flex items-center gap-2"><Users size={16} className="text-amber-500"/> Community & Shared Projects</h2>
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-12">
+                            {sharedProjects.map(proj => (
+                                <div key={proj.id} className="bg-[#3a3a3a] border border-[#222] rounded-sm p-6 group hover:border-[#555] transition-colors">
+                                    <div className="flex justify-between items-start mb-4">
+                                        <div className="w-10 h-10 bg-[#2d2d2d] rounded-sm border border-[#111] flex items-center justify-center text-amber-500"><Users size={20}/></div>
+                                        <button onClick={(e) => { e.stopPropagation(); handleForkProject(proj); }} className="text-[10px] uppercase font-bold bg-amber-500/20 text-amber-500 hover:bg-amber-500/40 px-2 py-1 rounded-sm border border-amber-500/20 transition-colors" title="Fork Project">Fork</button>
+                                    </div>
+                                    <h3 className="text-lg font-bold text-[#e0e0e0] mb-1 cursor-pointer hover:text-amber-400 transition-colors uppercase tracking-wider" onClick={() => loadProjectToDaw(proj)}>{proj.name}</h3>
+                                    <p className="text-[10px] font-bold uppercase text-[#888]">Shared by: <span className="text-[#ccc]">{proj.ownerName || 'Unknown'}</span></p>
+                                    <p className="text-[10px] font-bold uppercase text-[#888] mt-1">{new Date(proj.lastModified).toLocaleString()}</p>
                                 </div>
-                                <h3 className="text-lg font-bold text-[#e0e0e0] mb-1 cursor-pointer hover:text-amber-400 transition-colors uppercase tracking-wider" onClick={() => loadProjectToDaw(proj)}>{proj.name}</h3>
-                                <p className="text-[10px] font-bold uppercase text-[#888]">Shared by: <span className="text-[#ccc]">{proj.ownerName || 'Unknown'}</span></p>
-                                <p className="text-[10px] font-bold uppercase text-[#888] mt-1">{new Date(proj.lastModified).toLocaleString()}</p>
+                            ))}
+                        </div>
+                    </>
+                )}
+                {toasts.map(t => <div key={t.id} className={`fixed bottom-4 right-4 border px-4 py-3 rounded-sm z-50 shadow-lg font-bold uppercase tracking-wider ${t.type === 'success' ? 'bg-[#222] border-green-500 text-green-500' : t.type === 'error' ? 'bg-[#222] border-red-500 text-red-500' : 'bg-[#222] border-cyan-500 text-cyan-500'}`}>{t.message}</div>)}
+                
+                {/* Cropper Modal */}
+                {cropImageSrc && (
+                    <div className="fixed inset-0 z-[300] bg-black/80 backdrop-blur-sm flex items-center justify-center">
+                        <div className="bg-neutral-900 border border-neutral-700 rounded-2xl w-full max-w-md p-6 shadow-2xl">
+                            <div className="flex justify-between items-center mb-6">
+                                <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                                    <Users size={18}/> Adjust Profile Picture
+                                </h2>
+                                <button onClick={() => setCropImageSrc(null)} className="text-neutral-500 hover:text-white transition-colors"><X size={18}/></button>
                             </div>
-                        ))}
+                            <ImageCropper 
+                                src={cropImageSrc} 
+                                onComplete={handleCropComplete} 
+                                onCancel={() => setCropImageSrc(null)} 
+                            />
+                        </div>
                     </div>
-                </>
-            )}
-            {toasts.map(t => <div key={t.id} className={`fixed bottom-4 right-4 border px-4 py-3 rounded-sm z-50 shadow-lg font-bold uppercase tracking-wider ${t.type === 'success' ? 'bg-[#222] border-green-500 text-green-500' : t.type === 'error' ? 'bg-[#222] border-red-500 text-red-500' : 'bg-[#222] border-cyan-500 text-cyan-500'}`}>{t.message}</div>)}
-        </div>
-      );
-  }
+                )}
+
+                {/* Current User Edit Profile Modal */}
+                {showProfileMenu && (
+                    <div className="fixed inset-0 z-[200] bg-black/80 backdrop-blur-sm flex items-center justify-center">
+                        <div className="bg-neutral-900 border border-neutral-700 rounded-2xl w-full max-w-sm p-6 shadow-2xl">
+                            <div className="flex justify-between items-center mb-6">
+                                <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                                    <Users size={18}/> Edit Profile
+                                </h2>
+                                <button onClick={() => setShowProfileMenu(false)} className="text-neutral-500 hover:text-white transition-colors"><X size={18}/></button>
+                            </div>
+                            <div className="flex flex-col gap-4 max-h-[70vh] overflow-y-auto custom-scrollbar pr-2">
+                                <div className="flex flex-col gap-2">
+                                    <label className="text-[10px] text-neutral-400 font-bold uppercase tracking-wider">Profile Picture</label>
+                                    <div className="flex items-center gap-4">
+                                        <div className={`w-12 h-12 rounded-full border-2 border-neutral-800 overflow-hidden flex items-center justify-center text-lg font-bold text-white shadow-lg shrink-0 ${currentUser?.color || 'bg-blue-600'}`}>
+                                            {currentUser?.avatar ? (
+                                                <img src={currentUser?.avatar} alt="Me" className="w-full h-full object-cover" />
+                                            ) : (
+                                                currentUser?.username?.charAt(0).toUpperCase()
+                                            )}
+                                        </div>
+                                        <label className="bg-neutral-800 hover:bg-neutral-700 text-white px-4 py-2 rounded-lg text-xs font-bold cursor-pointer transition-colors border border-neutral-700 flex-1 text-center">
+                                            Upload New Image
+                                            <input id="home-avatar-upload" name="avatarUpload" type="file" accept="image/*" onChange={handleAvatarUpload} className="hidden" />
+                                        </label>
+                                    </div>
+                                </div>
+                                <div className="mt-2">
+                                    <label className="text-[10px] text-neutral-400 font-bold mb-2 block uppercase tracking-wider">User Bio</label>
+                                    <textarea 
+                                        id="home-profile-bio"
+                                        name="bio"
+                                        defaultValue={currentUser?.bio || ''} 
+                                        onBlur={(e) => handleProfileUpdate('bio', e.target.value)}
+                                        placeholder="Tell collaborators about your style..." 
+                                        className="w-full bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-blue-500 custom-scrollbar resize-none"
+                                        rows="3"
+                                    />
+                                </div>
+                                <div className="flex flex-col gap-2 mt-2">
+                                    <label className="text-[10px] text-neutral-400 font-bold block uppercase tracking-wider">Contact & Socials</label>
+                                    <div className="flex items-center bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-1.5 focus-within:border-blue-500 transition-colors">
+                                        <Mail size={14} className="text-neutral-500 mr-2 shrink-0" />
+                                        <input id="home-profile-email" name="email" autoComplete="email" type="email" placeholder="Email Address" defaultValue={currentUser?.email || ''} onBlur={(e) => handleProfileUpdate('email', e.target.value)} className="bg-transparent text-sm text-white w-full outline-none" />
+                                    </div>
+                                    <div className="flex items-center bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-1.5 focus-within:border-blue-500 transition-colors">
+                                        <Globe size={14} className="text-neutral-500 mr-2 shrink-0" />
+                                        <input id="home-profile-website" name="website" autoComplete="url" type="url" placeholder="Website" defaultValue={currentUser?.website || ''} onBlur={(e) => handleProfileUpdate('website', e.target.value)} className="bg-transparent text-sm text-white w-full outline-none" />
+                                    </div>
+                                    <div className="flex items-center bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-1.5 focus-within:border-blue-500 transition-colors">
+                                        <Instagram size={14} className="text-neutral-500 mr-2 shrink-0" />
+                                        <input id="home-profile-instagram" name="instagram" autoComplete="username" type="text" placeholder="Instagram Handle" defaultValue={currentUser?.instagram || ''} onBlur={(e) => handleProfileUpdate('instagram', e.target.value)} className="bg-transparent text-sm text-white w-full outline-none" />
+                                    </div>
+                                    <div className="flex items-center bg-neutral-950 border border-neutral-800 rounded-lg px-3 py-1.5 focus-within:border-blue-500 transition-colors">
+                                        <Twitter size={14} className="text-neutral-500 mr-2 shrink-0" />
+                                        <input id="home-profile-twitter" name="twitter" autoComplete="username" type="text" placeholder="X/Twitter Handle" defaultValue={currentUser?.twitter || ''} onBlur={(e) => handleProfileUpdate('twitter', e.target.value)} className="bg-transparent text-sm text-white w-full outline-none" />
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* User Profile Modal */}
+                {viewProfileUser && (
+                    <div className="fixed inset-0 z-[200] bg-black/80 backdrop-blur-sm flex items-center justify-center">
+                        <div className="bg-neutral-900 border border-neutral-700 rounded-2xl w-full max-w-sm p-6 shadow-2xl">
+                            <div className="flex justify-between items-start mb-4">
+                                <div className="flex items-center gap-4">
+                                    <div className={`w-16 h-16 rounded-full border-4 border-neutral-800 overflow-hidden flex items-center justify-center text-2xl font-bold text-white shadow-lg shrink-0 ${viewProfileUser.color || 'bg-blue-600'}`}>
+                                        {viewProfileUser.avatar ? (
+                                            <img src={viewProfileUser.avatar} alt={viewProfileUser.username} className="w-full h-full object-cover" />
+                                        ) : (
+                                            (viewProfileUser.username || '?').charAt(0).toUpperCase()
+                                        )}
+                                    </div>
+                                    <div>
+                                        <h2 className="text-xl font-bold text-white break-all">{viewProfileUser.username}</h2>
+                                        <span className="text-xs text-green-400 flex items-center gap-1.5 mt-1 font-medium">
+                                            <div className="w-2 h-2 rounded-full bg-green-500 shadow-[0_0_5px_#22c55e]"></div> Online
+                                        </span>
+                                    </div>
+                                </div>
+                                <button onClick={() => setViewProfileUser(null)} className="text-neutral-500 hover:text-white transition-colors mt-1 shrink-0"><X size={18}/></button>
+                            </div>
+                            
+                            <div className="bg-neutral-950 border border-neutral-800 rounded-xl p-4 mt-6 shadow-inner">
+                                <h3 className="text-[10px] text-neutral-500 font-bold uppercase tracking-wider mb-2">User Bio</h3>
+                                <p className="text-sm text-neutral-300 whitespace-pre-wrap leading-relaxed">
+                                    {viewProfileUser.bio ? viewProfileUser.bio : <span className="text-neutral-600 italic">No bio provided.</span>}
+                                </p>
+                                
+                                {(viewProfileUser.email || viewProfileUser.website || viewProfileUser.instagram || viewProfileUser.twitter) && (
+                                    <>
+                                        <div className="h-px bg-neutral-800 my-4" />
+                                        <h3 className="text-[10px] text-neutral-500 font-bold uppercase tracking-wider mb-3">Contact & Links</h3>
+                                        <div className="flex flex-col gap-2.5">
+                                            {viewProfileUser.email && (
+                                                <a href={`mailto:${viewProfileUser.email}`} className="flex items-center gap-2.5 text-sm text-neutral-400 hover:text-blue-400 transition-colors w-fit">
+                                                    <Mail size={14} /> {viewProfileUser.email}
+                                                </a>
+                                            )}
+                                            {viewProfileUser.website && (
+                                                <a href={viewProfileUser.website.startsWith('http') ? viewProfileUser.website : `https://${viewProfileUser.website}`} target="_blank" rel="noreferrer" className="flex items-center gap-2.5 text-sm text-neutral-400 hover:text-blue-400 transition-colors w-fit">
+                                                    <Globe size={14} /> {viewProfileUser.website.replace(/^https?:\/\//, '')}
+                                                </a>
+                                            )}
+                                            {viewProfileUser.instagram && (
+                                                <a href={`https://instagram.com/${viewProfileUser.instagram.replace('@', '')}`} target="_blank" rel="noreferrer" className="flex items-center gap-2.5 text-sm text-neutral-400 hover:text-pink-400 transition-colors w-fit">
+                                                    <Instagram size={14} /> {viewProfileUser.instagram}
+                                                </a>
+                                            )}
+                                            {viewProfileUser.twitter && (
+                                                <a href={`https://twitter.com/${viewProfileUser.twitter.replace('@', '')}`} target="_blank" rel="noreferrer" className="flex items-center gap-2.5 text-sm text-neutral-400 hover:text-sky-400 transition-colors w-fit">
+                                                    <Twitter size={14} /> {viewProfileUser.twitter}
+                                                </a>
+                                            )}
+                                        </div>
+                                    </>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                )}
+            </div>
+          );
+      }
+
 
   // Calculate dynamic timeline length based on furthest clip
   let maxBeat = 0;
@@ -6597,7 +6737,8 @@ const initAudioEngine = async (explicitTracks = null) => {
                </div>
             </div>
 
-            <div className="mr-2">
+            <div className="flex items-center gap-3 mr-2">
+                {renderCurrentUserAvatar()}
                 {renderPeerAvatars(projectPeersList)}
             </div>
             <button onClick={() => setShowSettings(true)} className="text-neutral-400 hover:text-white transition-colors" title="Studio Settings"><Settings2 size={18}/></button>
