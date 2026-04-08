@@ -2273,6 +2273,7 @@ function DAWStudio() {
   const playheadRef = useRef(null);
   const timeDisplayRef = useRef(null);
   const posDisplayRef = useRef(null);
+  const lastCursorEmitRef = useRef(0);
 
   // Missing Refs for Hotkeys, State, and Undo/Redo Engine
   const projectNameRef = useRef(projectName);
@@ -6129,6 +6130,27 @@ const initAudioEngine = async (explicitTracks = null) => {
       };
   }, [handleMouseMove, handleMouseUp]);
 
+  const handleTimelineMouseMove = useCallback((e) => {
+      if (!timelineRef.current) return;
+      const rect = timelineRef.current.getBoundingClientRect();
+      const scrollLeft = timelineRef.current.scrollLeft || 0;
+      const scrollTop = timelineRef.current.scrollTop || 0;
+      const x = e.clientX - rect.left + scrollLeft;
+      const y = e.clientY - rect.top + scrollTop;
+
+      const beat = x / BEAT_WIDTH;
+
+      const now = Date.now();
+      if (now - lastCursorEmitRef.current > 50) { 
+          if (socketRef.current) socketRef.current.emit('presence-update', { cursor: { beat, y } });
+          lastCursorEmitRef.current = now;
+      }
+  }, [BEAT_WIDTH]);
+
+  const handleTimelineMouseLeave = useCallback(() => {
+      if (socketRef.current) socketRef.current.emit('presence-update', { cursor: null });
+  }, []);
+
   const handleTimelineMouseDown = (e) => {
       if (e.target.closest('.clip-element') || draggingClip || draggingNote || draggingNoteEdge || draggingLoop || draggingExport) return;
       setSelectedClipIds([]); // Deselect all clips when clicking empty space
@@ -7019,7 +7041,32 @@ const initAudioEngine = async (explicitTracks = null) => {
                            onDragOver={handleDragOver}
                            onDragLeave={handleDragLeave}
                            onDrop={handleDrop}
+                           onMouseMove={handleTimelineMouseMove}
+                           onMouseLeave={handleTimelineMouseLeave}
                         >
+                            {/* Peer Cursors */}
+                            {Object.entries(peers).map(([peerId, peer]) => {
+                                if (!peer.cursor) return null;
+                                const colorClass = (peer.color || 'bg-blue-500').replace('bg-', 'text-');
+                                const bgClass = peer.color || 'bg-blue-500';
+                                return (
+                                    <div
+                                        key={`cursor-${peerId}`}
+                                        className="absolute z-[150] pointer-events-none transition-all duration-75 ease-linear flex flex-col items-start"
+                                        style={{
+                                            left: `${peer.cursor.beat * BEAT_WIDTH}px`,
+                                            top: `${peer.cursor.y}px`,
+                                            transform: 'translate(-2px, -2px)'
+                                        }}
+                                    >
+                                        <MousePointer2 size={18} fill="currentColor" className={`${colorClass} drop-shadow-md`} />
+                                        <span className={`text-[9px] font-bold text-white px-1.5 py-0.5 rounded shadow-sm mt-0.5 ${bgClass} border border-black/20`}>
+                                            {peer.username}
+                                        </span>
+                                    </div>
+                                );
+                            })}
+
                             {/* Drag-and-Drop Ghost Element */}
                             {dragHover && dragHover.active && (
                                 <div 
