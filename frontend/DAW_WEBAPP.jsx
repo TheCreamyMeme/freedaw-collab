@@ -2751,6 +2751,7 @@ function DAWStudio() {
   const [selectedTrackId, setSelectedTrackId] = useState(null);
   const [selectedClipIds, setSelectedClipIds] = useState([]);
   const [dragHoverHome, setDragHoverHome] = useState(false);
+  const [selectionBox, setSelectionBox] = useState(null);
 
   // Advanced UI/UX States
   const [globalKey, setGlobalKey] = useState('C');
@@ -7100,16 +7101,60 @@ const initAudioEngine = async (explicitTracks = null) => {
             } else {
                 dispatchDawAction({ type: 'UPDATE_AUTOMATION_POINT_CURVE', payload: { trackId, paramKey, pointId, curve: newCurve } });
             }
-        } else if (draggingPlayhead) {
-            if (timelineRef.current) {
-                const rect = timelineRef.current.getBoundingClientRect();
-                const x = e.clientX - rect.left + timelineRef.current.scrollLeft;
-                const newTime = Math.max(0, snap(x / BEAT_WIDTH));
-                setCurrentTime(newTime);
-                stateRefs.current.currentTime = newTime;
-                lastMetronomeBeatRef.current = Math.floor(newTime);
-            }
-        } else if (draggingDockHeight) {
+      } else if (selectionBox?.active) {
+          if (timelineRef.current) {
+              const container = timelineRef.current.querySelector('.min-h-full');
+              if (container) {
+                  const rect = container.getBoundingClientRect();
+                  const x = e.clientX - rect.left;
+                  const y = e.clientY - rect.top;
+
+                  setSelectionBox(prev => ({ ...prev, currentX: x, currentY: y }));
+                  
+                  const minX = Math.min(selectionBox.startX, x);
+                  const maxX = Math.max(selectionBox.startX, x);
+                  const minY = Math.min(selectionBox.startY, y);
+                  const maxY = Math.max(selectionBox.startY, y);
+
+                  const minBeat = minX / BEAT_WIDTH;
+                  const maxBeat = maxX / BEAT_WIDTH;
+
+                  const newSelected = new Set(selectionBox.initialSelected);
+                  
+                  let currentY = 102; // Master track (96px height) + margins (4px) + borders (2px)
+                  tracksRef.current.forEach(t => {
+                      const autoKeys = isAutomationMode ? Array.from(new Set([...Object.keys(t.automation || {}).filter(k => t.automation[k]?.length > 0), t.activeAutomationParam].filter(Boolean))) : [];
+                      const trackHeight = 96 + (autoKeys.length * 64);
+                      
+                      const trackTop = currentY;
+                      const trackBottom = currentY + trackHeight;
+                      currentY += trackHeight;
+
+                      if (maxY >= trackTop && minY <= trackBottom) {
+                          t.clips.forEach(c => {
+                              const clipMinBeat = c.start;
+                              const clipMaxBeat = c.start + c.duration;
+                              if (maxBeat >= clipMinBeat && minBeat <= clipMaxBeat) {
+                                  newSelected.add(c.id);
+                              }
+                          });
+                      }
+                  });
+
+                  setSelectedClipIds(Array.from(newSelected));
+              }
+          }
+      } else if (draggingPlayhead) {
+          if (timelineRef.current) {
+              const rect = timelineRef.current.getBoundingClientRect();
+              const x = e.clientX - rect.left + timelineRef.current.scrollLeft;
+              const newTime = Math.max(0, snap(x / BEAT_WIDTH));
+              setCurrentTime(newTime);
+              stateRefs.current.currentTime = newTime;
+              lastMetronomeBeatRef.current = Math.floor(newTime);
+          }
+      } else if (draggingDockHeight) {
+
           // Keep a minimum readable bound on the bottom rack (260px) to prevent squished crash behaviors
           setDockHeight(Math.max(260, Math.min(800, window.innerHeight - e.clientY)));
       } else if (draggingSidePanel) {
@@ -7125,7 +7170,7 @@ const initAudioEngine = async (explicitTracks = null) => {
           else if (activeView === 'browser') offset += browserTreeWidth + (selectedBrowserPlugin ? codeViewerWidth : 0);
           setTrackHeaderWidth(Math.max(200, Math.min(800, e.clientX - offset)));
       }
-  }, [draggingClip, draggingEdge, draggingNote, draggingNoteEdge, draggingLoop, draggingExport, draggingPlayhead, draggingDockHeight, draggingSidePanel, draggingBrowserTree, draggingCodeViewer, draggingTrackHeader, draggingAutoPoint, draggingAutoCurve, draggingFade, draggingStretch, BEAT_WIDTH, activeView, sidePanelWidth, browserTreeWidth, codeViewerWidth, selectedBrowserPlugin]);  
+  }, [draggingClip, draggingEdge, draggingNote, draggingNoteEdge, draggingLoop, draggingExport, draggingPlayhead, draggingDockHeight, draggingSidePanel, draggingBrowserTree, draggingCodeViewer, draggingTrackHeader, draggingAutoPoint, draggingAutoCurve, draggingFade, draggingStretch, BEAT_WIDTH, activeView, sidePanelWidth, browserTreeWidth, codeViewerWidth, selectedBrowserPlugin, selectionBox, isAutomationMode]);  
   const handleMouseUp = useCallback(() => {
       if (draggingClip) {
           const finalStart = dragValuesRef.current.start ?? draggingClip.initialStart;
@@ -7181,6 +7226,9 @@ const initAudioEngine = async (explicitTracks = null) => {
           dispatchDawAction({ type: 'UPDATE_EXPORT_REGION', payload: exportRegionRef.current });
           setDraggingExport(null);
       }
+      if (selectionBox?.active) {
+          setSelectionBox(null);
+      }
       if (draggingPlayhead) {
           setDraggingPlayhead(false);
           setCurrentTime(stateRefs.current.currentTime); // Sync react UI state cleanly on release
@@ -7190,7 +7238,7 @@ const initAudioEngine = async (explicitTracks = null) => {
       if (draggingBrowserTree) setDraggingBrowserTree(false);
       if (draggingCodeViewer) setDraggingCodeViewer(false);
       if (draggingTrackHeader) setDraggingTrackHeader(false);
-  }, [draggingClip, draggingEdge, draggingNote, draggingNoteEdge, draggingLoop, draggingExport, draggingPlayhead, draggingDockHeight, draggingSidePanel, draggingBrowserTree, draggingCodeViewer, draggingTrackHeader, draggingAutoPoint, draggingAutoCurve, draggingFade, draggingStretch]);
+  }, [draggingClip, draggingEdge, draggingNote, draggingNoteEdge, draggingLoop, draggingExport, draggingPlayhead, draggingDockHeight, draggingSidePanel, draggingBrowserTree, draggingCodeViewer, draggingTrackHeader, draggingAutoPoint, draggingAutoCurve, draggingFade, draggingStretch, selectionBox]);
 
   useEffect(() => {
       window.addEventListener('mousemove', handleMouseMove);
@@ -7222,13 +7270,42 @@ const initAudioEngine = async (explicitTracks = null) => {
       if (socketRef.current) socketRef.current.emit('presence-update', { cursor: null });
   }, []);
 
-  const handleTimelineMouseDown = (e) => {
-      if (e.target.closest('.clip-element') || draggingClip || draggingNote || draggingNoteEdge || draggingLoop || draggingExport) return;
-      setSelectedClipIds([]); // Deselect all clips when clicking empty space
+  const handleRulerMouseDown = (e) => {
+      setSelectedClipIds([]);
       setDraggingPlayhead(true);
       const rect = e.currentTarget.getBoundingClientRect();
-      const scrollLeft = e.currentTarget.scrollLeft || 0;
+      const scrollLeft = timelineRef.current ? timelineRef.current.scrollLeft : 0;
       const x = e.clientX - rect.left + scrollLeft;
+      const sg = snapGridRef.current;
+      const snap = (val) => sg === 0 ? val : Math.round(val / sg) * sg;
+      const newTime = Math.max(0, snap(x / BEAT_WIDTH));
+      setCurrentTime(newTime);
+      stateRefs.current.currentTime = newTime;
+      lastMetronomeBeatRef.current = Math.floor(newTime);
+      stopAudio();
+  };
+
+  const handleTimelineMouseDown = (e) => {
+      if (e.target.closest('.clip-element') || draggingClip || draggingNote || draggingNoteEdge || draggingLoop || draggingExport) return;
+      
+      const isAppend = e.shiftKey || e.ctrlKey || e.metaKey;
+      if (!isAppend) setSelectedClipIds([]); 
+
+      const rect = e.currentTarget.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+
+      setSelectionBox({
+          active: true,
+          startX: x,
+          startY: y,
+          currentX: x,
+          currentY: y,
+          append: isAppend,
+          initialSelected: isAppend ? selectedClipIdsRef.current : []
+      });
+
+      // Also snap playhead on click
       const sg = snapGridRef.current;
       const snap = (val) => sg === 0 ? val : Math.round(val / sg) * sg;
       const newTime = Math.max(0, snap(x / BEAT_WIDTH));
@@ -8324,7 +8401,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                 
                 {/* Timeline */}
                 <div className="flex-1 bg-[#242424] flex flex-col overflow-hidden">
-                    <div className="h-8 border-b border-[#111] bg-[#2d2d2d] relative shrink-0 overflow-hidden cursor-pointer" onMouseDown={handleTimelineMouseDown}>
+                    <div className="h-8 border-b border-[#111] bg-[#2d2d2d] relative shrink-0 overflow-hidden cursor-pointer" onMouseDown={handleRulerMouseDown}>
                        <div className="absolute top-0 bottom-0 pointer-events-none text-[10px] text-neutral-600 font-mono" style={{ width: `${dynamicTotalBeats * BEAT_WIDTH}px`, left: timelineRef.current ? -timelineRef.current.scrollLeft : 0 }}>
                           {Array.from({length: dynamicTotalBeats/4}).map((_, i) => <div key={i} className="absolute border-l border-neutral-700 pl-1 h-full" style={{ left: `${i * 4 * BEAT_WIDTH}px` }}>{i + 1}</div>)}
                           
@@ -8430,6 +8507,20 @@ const initAudioEngine = async (explicitTracks = null) => {
                                     </div>
                                 </div>
                             )}
+
+                            {/* Box Selection Overlay */}
+                            {selectionBox?.active && (
+                                <div 
+                                    className="absolute border border-blue-400 bg-blue-500/20 z-[200] pointer-events-none mix-blend-screen"
+                                    style={{
+                                        left: `${Math.min(selectionBox.startX, selectionBox.currentX)}px`,
+                                        top: `${Math.min(selectionBox.startY, selectionBox.currentY)}px`,
+                                        width: `${Math.abs(selectionBox.currentX - selectionBox.startX)}px`,
+                                        height: `${Math.abs(selectionBox.currentY - selectionBox.startY)}px`,
+                                    }}
+                                />
+                            )}
+
                             {/* Grid Background */}
                             <div className="absolute inset-0 pointer-events-none" style={getGridStyle(snapGrid, BEAT_WIDTH, false, isLightMode)} />
                             {/* Playhead */}
@@ -8476,7 +8567,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                                                   e.stopPropagation(); 
                                                   dispatchPresence(t.id); 
                                                   setSelectedTrackId(t.id);
-                                                  if (e.shiftKey) {
+                                                  if (e.shiftKey || e.ctrlKey || e.metaKey) {
                                                       setSelectedClipIds(prev => prev.includes(c.id) ? prev.filter(id => id !== c.id) : [...prev, c.id]);
                                                   } else {
                                                       if (!selectedClipIds.includes(c.id)) setSelectedClipIds([c.id]);
