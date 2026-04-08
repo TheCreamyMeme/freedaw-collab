@@ -6052,9 +6052,10 @@ const initAudioEngine = async (explicitTracks = null) => {
       } else if (draggingSidePanel) {
           setSidePanelWidth(Math.max(300, Math.min(1200, e.clientX - 56)));
       } else if (draggingTrackHeader) {
-          setTrackHeaderWidth(Math.max(160, Math.min(800, e.clientX - 56)));
+          const offset = 56 + (activeView !== 'arrangement' ? sidePanelWidth : 0);
+          setTrackHeaderWidth(Math.max(160, Math.min(800, e.clientX - offset)));
       }
-  }, [draggingClip, draggingEdge, draggingNote, draggingNoteEdge, draggingLoop, draggingExport, draggingPlayhead, draggingDockHeight, draggingSidePanel, draggingTrackHeader, draggingAutoPoint, draggingAutoCurve, draggingFade, draggingStretch, BEAT_WIDTH]);  
+  }, [draggingClip, draggingEdge, draggingNote, draggingNoteEdge, draggingLoop, draggingExport, draggingPlayhead, draggingDockHeight, draggingSidePanel, draggingTrackHeader, draggingAutoPoint, draggingAutoCurve, draggingFade, draggingStretch, BEAT_WIDTH, activeView, sidePanelWidth]);  
   const handleMouseUp = useCallback(() => {
       if (draggingClip) {
           const finalStart = dragValuesRef.current.start ?? draggingClip.initialStart;
