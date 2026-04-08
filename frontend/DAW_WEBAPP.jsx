@@ -604,7 +604,7 @@ const buildSampleTree = (samples) => {
     return root;
 };
 
-const SampleTreeRenderer = React.memo(({ node, level = 0, expandedFolders, toggleFolder, onPreview, onAssign, onDelete, onDeleteFolder }) => {
+const SampleTreeRenderer = React.memo(({ node, level = 0, expandedFolders, toggleFolder, onPreview, onAssign, onDelete, onDeleteFolder, isLightMode }) => {
     const isRoot = level === 0;
     const childrenArray = Object.values(node.children || {}).sort((a, b) => {
         if (a.isDir && !b.isDir) return -1;
@@ -616,15 +616,15 @@ const SampleTreeRenderer = React.memo(({ node, level = 0, expandedFolders, toggl
         <div className="flex flex-col w-full">
             {!isRoot && (
                 <div 
-                    className={`group flex items-center justify-between p-1.5 rounded-sm cursor-pointer transition-colors hover:bg-neutral-800 mb-[1px] ${level > 1 ? 'ml-3 border-l border-neutral-800 pl-2' : ''}`}
+                    className={`group flex items-center justify-between p-1.5 rounded-sm cursor-pointer transition-colors mb-[1px] ${level > 1 ? 'ml-3 border-l border-neutral-800 pl-2' : ''} ${isLightMode ? 'hover:bg-gray-800' : 'hover:bg-gray-200'}`}
                     onClick={() => toggleFolder(node.path)}
                 >
                     <div className="flex items-center gap-2 overflow-hidden flex-1">
                         <Folder size={12} className="text-cyan-500 shrink-0" fill={expandedFolders[node.path] ? "currentColor" : "none"} />
-                        <span className="text-[10px] font-bold text-neutral-300 uppercase tracking-wider truncate select-none">{node.name}</span>
+                        <span className={`text-[10px] font-bold uppercase tracking-wider truncate select-none transition-colors ${isLightMode ? 'text-neutral-600 group-hover:text-gray-100' : 'text-neutral-300 group-hover:text-gray-900'}`}>{node.name}</span>
                     </div>
                     {onDeleteFolder && (
-                        <button onClick={(e) => { e.stopPropagation(); onDeleteFolder(e, node); }} className="text-neutral-500 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity p-1 shrink-0" title="Delete Folder">
+                        <button onClick={(e) => { e.stopPropagation(); onDeleteFolder(e, node); }} className={`opacity-0 group-hover:opacity-100 transition-opacity p-1 shrink-0 ${isLightMode ? 'text-neutral-500 group-hover:text-red-400' : 'text-neutral-500 group-hover:text-red-600'}`} title="Delete Folder">
                             <Trash2 size={12}/>
                         </button>
                     )}
@@ -634,7 +634,7 @@ const SampleTreeRenderer = React.memo(({ node, level = 0, expandedFolders, toggl
                 <div className={`flex flex-col ${!isRoot ? 'ml-3 border-l border-neutral-800 pl-2' : ''}`}>
                     {childrenArray.map(child => {
                         if (child.isDir) {
-                            return <SampleTreeRenderer key={child.path} node={child} level={level + 1} expandedFolders={expandedFolders} toggleFolder={toggleFolder} onPreview={onPreview} onAssign={onAssign} onDelete={onDelete} onDeleteFolder={onDeleteFolder} />;
+                            return <SampleTreeRenderer key={child.path} node={child} level={level + 1} expandedFolders={expandedFolders} toggleFolder={toggleFolder} onPreview={onPreview} onAssign={onAssign} onDelete={onDelete} onDeleteFolder={onDeleteFolder} isLightMode={isLightMode} />;
                         } else {
                             return (
                                     <div 
@@ -645,16 +645,16 @@ const SampleTreeRenderer = React.memo(({ node, level = 0, expandedFolders, toggl
                                             e.dataTransfer.setData('internal_sample_name', child.displayName);
                                         }}
                                         onClick={() => onPreview(child.id)}
-                                        className={`group flex items-center justify-between p-1.5 rounded-sm text-[10px] text-neutral-400 border border-transparent hover:bg-neutral-800 cursor-pointer transition-colors mb-[1px] ${!isRoot ? '' : 'bg-neutral-900 border-neutral-800'}`}
+                                        className={`group flex items-center justify-between p-1.5 rounded-sm text-[10px] border border-transparent cursor-pointer transition-colors mb-[1px] ${!isRoot ? '' : 'bg-neutral-900 border-neutral-800'} ${isLightMode ? 'hover:bg-gray-800' : 'hover:bg-gray-200'}`}
                                     >
 
                                     <div className="flex items-center gap-2 overflow-hidden flex-1">
-                                        <div className="w-6 h-6 rounded-sm bg-neutral-800 border border-neutral-700 flex items-center justify-center text-emerald-500 shadow-sm shrink-0"><FileAudio size={10}/></div>
-                                        <span className="font-bold text-neutral-300 uppercase tracking-wider truncate" title={child.displayName}>{child.displayName}</span>
+                                        <div className={`w-6 h-6 rounded-sm border flex items-center justify-center text-emerald-500 shadow-sm shrink-0 transition-colors ${isLightMode ? 'bg-neutral-800 border-neutral-700 group-hover:bg-gray-700 group-hover:border-gray-600' : 'bg-neutral-800 border-neutral-700 group-hover:bg-gray-300 group-hover:border-gray-400'}`}><FileAudio size={10}/></div>
+                                        <span className={`font-bold uppercase tracking-wider truncate transition-colors ${isLightMode ? 'text-neutral-700 group-hover:text-gray-100' : 'text-neutral-300 group-hover:text-gray-900'}`} title={child.displayName}>{child.displayName}</span>
                                     </div>
                                     <div className="flex items-center gap-1 shrink-0">
-                                        {onAssign && <button onClick={(e) => { e.stopPropagation(); onAssign(child.id); }} className="bg-neutral-800 hover:bg-cyan-500 text-neutral-400 hover:text-black border border-neutral-700 px-2 py-1 text-[9px] rounded-sm font-bold uppercase tracking-wider transition-colors shrink-0">Assign</button>}
-                                        {onDelete && <button onClick={(e) => { e.stopPropagation(); onDelete(e, child.id); }} className="text-neutral-500 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity p-1 shrink-0" title="Delete Sample"><Trash2 size={12}/></button>}
+                                        {onAssign && <button onClick={(e) => { e.stopPropagation(); onAssign(child.id); }} className={`border px-2 py-1 text-[9px] rounded-sm font-bold uppercase tracking-wider transition-colors shrink-0 ${isLightMode ? 'bg-neutral-800 border-neutral-700 text-neutral-400 group-hover:bg-cyan-500 group-hover:border-cyan-400 group-hover:text-black' : 'bg-neutral-800 border-neutral-700 text-neutral-400 group-hover:bg-cyan-500 group-hover:border-cyan-600 group-hover:text-black'}`}>Assign</button>}
+                                        {onDelete && <button onClick={(e) => { e.stopPropagation(); onDelete(e, child.id); }} className={`opacity-0 group-hover:opacity-100 transition-opacity p-1 shrink-0 ${isLightMode ? 'text-neutral-500 group-hover:text-red-400' : 'text-neutral-500 group-hover:text-red-600'}`} title="Delete Sample"><Trash2 size={12}/></button>}
                                     </div>
                                 </div>
                             );
@@ -7588,10 +7588,46 @@ const initAudioEngine = async (explicitTracks = null) => {
 
       <div className="flex flex-1 overflow-hidden relative">
         {/* Left Toolbar */}
-        <div className="w-14 bg-[#333333] border-r border-[#111111] flex flex-col items-center py-4 gap-4 z-20 shrink-0">
-          <button onClick={() => setActiveView(activeView === 'mixer' ? 'arrangement' : 'mixer')} className={`p-2 rounded-sm transition-all duration-100 ${activeView==='mixer'?'bg-[#444] text-cyan-500':'text-neutral-400 hover:bg-[#444] hover:text-white'}`} title="Mixer Console"><Sliders size={20}/></button>
-          <button onClick={() => setActiveView(activeView === 'lfos' ? 'arrangement' : 'lfos')} className={`p-2 rounded-sm transition-all duration-100 ${activeView==='lfos'?'bg-[#444] text-purple-500':'text-neutral-400 hover:bg-[#444] hover:text-white'}`} title="LFO Rack"><Activity size={20}/></button>
-          <button onClick={() => setActiveView(activeView === 'browser' ? 'arrangement' : 'browser')} className={`p-2 rounded-sm transition-all duration-100 ${activeView==='browser'?'bg-[#444] text-amber-500':'text-neutral-400 hover:bg-[#444] hover:text-white'}`} title="Plugin Browser"><Folder size={20}/></button>
+        <div className="w-14 bg-neutral-900 border-r border-neutral-800 flex flex-col items-center py-4 gap-4 z-20 shrink-0">
+          <button 
+              onClick={() => setActiveView(activeView === 'mixer' ? 'arrangement' : 'mixer')} 
+              className={`p-2.5 rounded-xl transition-all duration-200 shadow-sm ${
+                  activeView === 'mixer' 
+                      ? 'bg-neutral-800 text-cyan-500 border border-neutral-700' 
+                      : isLightMode 
+                          ? 'text-neutral-500 hover:bg-gray-800 hover:text-gray-100 border border-transparent' 
+                          : 'text-neutral-400 hover:bg-gray-200 hover:text-gray-900 border border-transparent'
+              }`} 
+              title="Mixer Console"
+          >
+              <Sliders size={20}/>
+          </button>
+          <button 
+              onClick={() => setActiveView(activeView === 'lfos' ? 'arrangement' : 'lfos')} 
+              className={`p-2.5 rounded-xl transition-all duration-200 shadow-sm ${
+                  activeView === 'lfos' 
+                      ? 'bg-neutral-800 text-purple-500 border border-neutral-700' 
+                      : isLightMode 
+                          ? 'text-neutral-500 hover:bg-gray-800 hover:text-gray-100 border border-transparent' 
+                          : 'text-neutral-400 hover:bg-gray-200 hover:text-gray-900 border border-transparent'
+              }`} 
+              title="LFO Rack"
+          >
+              <Activity size={20}/>
+          </button>
+          <button 
+              onClick={() => setActiveView(activeView === 'browser' ? 'arrangement' : 'browser')} 
+              className={`p-2.5 rounded-xl transition-all duration-200 shadow-sm ${
+                  activeView === 'browser' 
+                      ? 'bg-neutral-800 text-amber-500 border border-neutral-700' 
+                      : isLightMode 
+                          ? 'text-neutral-500 hover:bg-gray-800 hover:text-gray-100 border border-transparent' 
+                          : 'text-neutral-400 hover:bg-gray-200 hover:text-gray-900 border border-transparent'
+              }`} 
+              title="Plugin Browser"
+          >
+              <Folder size={20}/>
+          </button>
         </div>
 
         {/* Pop-out Panels */}
@@ -7630,14 +7666,36 @@ const initAudioEngine = async (explicitTracks = null) => {
                   <div 
                       key={vst.id} 
                       onClick={() => handleBrowserPluginClick(vst)}
-                      className={`flex items-center gap-3 p-1.5 rounded-sm text-[10px] text-[#b3b3b3] border transition-colors cursor-pointer ${selectedBrowserPlugin?.id === vst.id ? 'bg-[#555] border-[#222] text-white shadow-sm' : 'hover:bg-[#444] border-transparent'}`}
+                      className={`group flex items-center gap-3 p-1.5 rounded-sm text-[10px] border transition-colors cursor-pointer ${
+                          selectedBrowserPlugin?.id === vst.id 
+                              ? 'bg-cyan-500/20 border-cyan-500/50 shadow-sm text-white' 
+                              : isLightMode 
+                                  ? 'border-transparent hover:bg-gray-800' 
+                                  : 'border-transparent hover:bg-gray-200'
+                      }`}
                   >
-                    <div className={`w-7 h-7 rounded-sm bg-[#2d2d2d] border border-[#111] flex items-center justify-center shadow-sm shrink-0 ${vst.category === 'instrument' ? 'text-amber-500' : 'text-cyan-500'}`}>
+                    <div className={`w-7 h-7 rounded-sm border flex items-center justify-center shadow-sm shrink-0 transition-colors ${
+                        isLightMode 
+                            ? 'bg-neutral-800 border-neutral-700 group-hover:bg-gray-700 group-hover:border-gray-600' 
+                            : 'bg-[#2d2d2d] border-[#111] group-hover:bg-gray-300 group-hover:border-gray-400'
+                    } ${vst.category === 'instrument' ? 'text-amber-500' : 'text-cyan-500'}`}>
                       {vst.category === 'instrument' ? <Piano size={12} /> : <Plug size={12} />}
                     </div>
                     <div className="flex flex-col overflow-hidden">
-                      <span className="font-bold text-[#e0e0e0] text-[10px] uppercase tracking-wider truncate">{vst.name}</span>
-                      <span className="text-[8px] text-[#888] uppercase font-bold truncate">{vst.vendor || 'FreeDaw'} &bull; {vst.category?.substring(0,4)}</span>
+                      <span className={`font-bold text-[10px] uppercase tracking-wider truncate transition-colors ${
+                          selectedBrowserPlugin?.id === vst.id 
+                              ? 'text-cyan-500' 
+                              : isLightMode 
+                                  ? 'text-neutral-700 group-hover:text-gray-100' 
+                                  : 'text-[#e0e0e0] group-hover:text-gray-900'
+                      }`}>{vst.name}</span>
+                      <span className={`text-[8px] uppercase font-bold truncate transition-colors ${
+                          selectedBrowserPlugin?.id === vst.id
+                              ? 'text-cyan-600'
+                              : isLightMode 
+                                  ? 'text-neutral-500 group-hover:text-gray-400' 
+                                  : 'text-[#888] group-hover:text-gray-600'
+                      }`}>{vst.vendor || 'FreeDaw'} &bull; {vst.category?.substring(0,4)}</span>
                     </div>
                   </div>
                 ))}
@@ -7649,16 +7707,38 @@ const initAudioEngine = async (explicitTracks = null) => {
                           <div 
                               key={vst.id} 
                               onClick={() => handleBrowserPluginClick(vst)}
-                              className={`group flex items-center gap-3 p-1.5 rounded-sm text-[10px] text-[#b3b3b3] border transition-colors cursor-pointer ${selectedBrowserPlugin?.id === vst.id ? 'bg-cyan-500/20 border-cyan-500/50 shadow-sm' : 'hover:bg-[#444] border-transparent'}`}
+                              className={`group flex items-center gap-3 p-1.5 rounded-sm text-[10px] border transition-colors cursor-pointer ${
+                                  selectedBrowserPlugin?.id === vst.id 
+                                      ? 'bg-cyan-500/20 border-cyan-500/50 shadow-sm' 
+                                      : isLightMode 
+                                          ? 'border-transparent hover:bg-gray-800' 
+                                          : 'border-transparent hover:bg-gray-200'
+                              }`}
                           >
-                            <div className={`w-7 h-7 rounded-sm bg-[#2d2d2d] border border-[#111] flex items-center justify-center shadow-sm shrink-0 ${vst.category === 'instrument' ? 'text-amber-500' : 'text-cyan-500'}`}>
+                            <div className={`w-7 h-7 rounded-sm border flex items-center justify-center shadow-sm shrink-0 transition-colors ${
+                                isLightMode 
+                                    ? 'bg-neutral-800 border-neutral-700 group-hover:bg-gray-700 group-hover:border-gray-600' 
+                                    : 'bg-[#2d2d2d] border-[#111] group-hover:bg-gray-300 group-hover:border-gray-400'
+                            } ${vst.category === 'instrument' ? 'text-amber-500' : 'text-cyan-500'}`}>
                               {vst.category === 'instrument' ? <Piano size={12} /> : <Plug size={12} />}
                             </div>
                             <div className="flex flex-col overflow-hidden flex-1">
-                              <span className="font-bold text-[#e0e0e0] text-[10px] uppercase tracking-wider truncate">{vst.name}</span>
-                              <span className="text-[8px] text-cyan-500 uppercase font-bold truncate">{vst.vendor || 'Custom'} &bull; {vst.category?.substring(0,4)}</span>
+                              <span className={`font-bold text-[10px] uppercase tracking-wider truncate transition-colors ${
+                                  selectedBrowserPlugin?.id === vst.id 
+                                      ? 'text-cyan-500' 
+                                      : isLightMode 
+                                          ? 'text-neutral-700 group-hover:text-gray-100' 
+                                          : 'text-[#e0e0e0] group-hover:text-gray-900'
+                              }`}>{vst.name}</span>
+                              <span className={`text-[8px] uppercase font-bold truncate transition-colors ${
+                                  selectedBrowserPlugin?.id === vst.id
+                                      ? 'text-cyan-600'
+                                      : isLightMode 
+                                          ? 'text-cyan-600 group-hover:text-cyan-300' 
+                                          : 'text-cyan-500 group-hover:text-cyan-700'
+                              }`}>{vst.vendor || 'Custom'} &bull; {vst.category?.substring(0,4)}</span>
                             </div>
-                            <button onClick={(e) => handleDeletePlugin(e, vst.id)} className="text-[#888] hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity p-1 shrink-0" title="Delete Plugin"><Trash2 size={12}/></button>
+                            <button onClick={(e) => handleDeletePlugin(e, vst.id)} className={`opacity-0 group-hover:opacity-100 transition-opacity p-1 shrink-0 ${isLightMode ? 'text-neutral-500 hover:text-red-400 group-hover:text-red-400' : 'text-[#888] hover:text-red-500 group-hover:text-red-600'}`} title="Delete Plugin"><Trash2 size={12}/></button>
                           </div>
                         ))}
                     </>
@@ -7667,11 +7747,11 @@ const initAudioEngine = async (explicitTracks = null) => {
                 <div className="text-[9px] font-bold text-emerald-500 mb-2 mt-4 uppercase tracking-wider px-2 border-t border-[#222] pt-4 flex justify-between items-center">
                     <span>Audio Samples</span>
                     <div className="flex gap-2">
-                        <label className="cursor-pointer hover:text-white transition-colors" title="Upload Audio Files">
+                        <label className={`cursor-pointer transition-colors ${isLightMode ? 'hover:text-gray-900' : 'hover:text-white'}`} title="Upload Audio Files">
                              <FileAudio size={12}/>
                              <input type="file" multiple accept="audio/*" className="hidden" onChange={e => handleBulkSampleUpload(e)} />
                         </label>
-                        <label className="cursor-pointer hover:text-white transition-colors" title="Upload Entire Folder">
+                        <label className={`cursor-pointer transition-colors ${isLightMode ? 'hover:text-gray-900' : 'hover:text-white'}`} title="Upload Entire Folder">
                              <Folder size={12}/>
                              <input type="file" webkitdirectory="true" directory="true" multiple accept="audio/*" className="hidden" onChange={e => handleBulkSampleUpload(e)} />
                         </label>
@@ -7692,6 +7772,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                     }}
                     onDelete={handleDeleteSample}
                     onDeleteFolder={handleDeleteFolder}
+                    isLightMode={isLightMode}
                 />
                 {userSamples.length === 0 && <p className="text-[10px] font-bold uppercase tracking-wider text-[#888] mt-4 text-center">No samples found.</p>}
               </div>
@@ -9460,6 +9541,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                                         onAssign={(id) => assignSampleToPad(samplePickerTarget.trackId, samplePickerTarget.note, id)}
                                         onDelete={handleDeleteSample}
                                         onDeleteFolder={handleDeleteFolder}
+                                        isLightMode={isLightMode}
                                     />
                                     {userSamples.length === 0 && <p className="text-[10px] font-bold uppercase tracking-wider text-[#888] mt-4 text-center">No samples found. Upload some!</p>}
                                 </div>
