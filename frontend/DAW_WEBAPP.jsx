@@ -3442,7 +3442,6 @@ const initAudioEngine = async (explicitTracks = null) => {
   };
 
   useEffect(() => {
-    if (!isPlaying) return;
     let reqId;
     const update = () => {
       if (!audioCtxRef.current) { reqId = requestAnimationFrame(update); return; }
@@ -3450,40 +3449,55 @@ const initAudioEngine = async (explicitTracks = null) => {
       const dt = now - lastTimeRef.current;
       lastTimeRef.current = now;
 
+      const isPlayingState = stateRefs.current.isPlaying;
       const prevTime = stateRefs.current.currentTime;
-      let newTime = prevTime + (dt * (bpm / 60));
-      
-      // Loop Logic
-      const loop = loopRegionRef.current;
-      let wrapped = false;
-      if (loop.enabled && prevTime < loop.end && newTime >= loop.end) {
-          newTime = loop.start + (newTime - loop.end);
-          wrapped = true;
-      } else if (loop.enabled && newTime >= loop.end) {
-          newTime = loop.start;
-          wrapped = true;
+      let newTime = prevTime;
+
+      // Only advance the playhead timeline if transport is actively playing
+      if (isPlayingState) {
+          newTime = prevTime + (dt * (bpm / 60));
+          
+          // Loop Logic
+          const loop = loopRegionRef.current;
+          let wrapped = false;
+          if (loop.enabled && prevTime < loop.end && newTime >= loop.end) {
+              newTime = loop.start + (newTime - loop.end);
+              wrapped = true;
+          } else if (loop.enabled && newTime >= loop.end) {
+              newTime = loop.start;
+              wrapped = true;
+          }
+
+          if (wrapped) {
+              Object.values(synthsRef.current).forEach(synth => { 
+                  if (synth.activeNoteIds) synth.activeNoteIds.clear(); 
+                  synth.lastArpStep = -1;
+              });
+              lastMetronomeBeatRef.current = Math.floor(newTime) - 1;
+          }
+
+          if (isMetronomeEnabledRef.current && Math.floor(newTime) > lastMetronomeBeatRef.current) {
+              const beatToPlay = Math.floor(newTime);
+              lastMetronomeBeatRef.current = beatToPlay;
+              triggerMetronome(audioCtxRef.current, masterGainRef.current, beatToPlay % 4 === 0, now);
+          }
+
+          // CRITICAL PERFORMANCE FIX: Prevent massive React re-renders by mutating DOM directly at 60fps
+          stateRefs.current.currentTime = newTime;
+          if (playheadRef.current) playheadRef.current.style.left = `${newTime * BEAT_WIDTH}px`;
+          if (timeDisplayRef.current) timeDisplayRef.current.innerText = formatTime(newTime, stateRefs.current.bpm);
+          if (posDisplayRef.current) posDisplayRef.current.innerText = `${Math.floor(newTime / 4) + 1}.${Math.floor(newTime % 4) + 1}.1`;
+          
+          if (stateRefs.current.isRecording) {
+              tracksRef.current.forEach(t => {
+                  if (t.armed) {
+                      const previewEl = document.getElementById(`record-preview-${t.id}`);
+                      if (previewEl) previewEl.style.width = `${Math.max(1, (newTime - recordingStartTimeRef.current) * BEAT_WIDTH)}px`;
+                  }
+              });
+          }
       }
 
-      if (wrapped) {
-          Object.values(synthsRef.current).forEach(synth => { 
-              if (synth.activeNoteIds) synth.activeNoteIds.clear(); 
-              synth.lastArpStep = -1;
-          });
-          lastMetronomeBeatRef.current = Math.floor(newTime) - 1;
-      }
-
-      if (isMetronomeEnabledRef.current && Math.floor(newTime) > lastMetronomeBeatRef.current) {
-          const beatToPlay = Math.floor(newTime);
-          lastMetronomeBeatRef.current = beatToPlay;
-          triggerMetronome(audioCtxRef.current, masterGainRef.current, beatToPlay % 4 === 0, now);
-      }
-
-      // CRITICAL PERFORMANCE FIX: Prevent massive React re-renders by mutating DOM directly at 60fps
-      stateRefs.current.currentTime = newTime;
-      if (playheadRef.current) playheadRef.current.style.left = `${newTime * BEAT_WIDTH}px`;
-      if (timeDisplayRef.current) timeDisplayRef.current.innerText = formatTime(newTime, stateRefs.current.bpm);
-      if (posDisplayRef.current) posDisplayRef.current.innerText = `${Math.floor(newTime / 4) + 1}.${Math.floor(newTime % 4) + 1}.1`;
-      
       // CPU Jitter Calculation
       if (cpuMeterRef.current) {
           const nowPerf = performance.now();
@@ -3492,15 +3506,6 @@ const initAudioEngine = async (explicitTracks = null) => {
           const load = Math.min(100, Math.max(0, ((deltaMs - 16.6) / 16.6) * 100));
           cpuMeterRef.current.style.width = `${load}%`;
           cpuMeterRef.current.style.backgroundColor = load > 80 ? '#ef4444' : load > 40 ? '#eab308' : '#22c55e';
-      }
-
-      if (stateRefs.current.isRecording) {
-          tracksRef.current.forEach(t => {
-              if (t.armed) {
-                  const previewEl = document.getElementById(`record-preview-${t.id}`);
-                  if (previewEl) previewEl.style.width = `${Math.max(1, (newTime - recordingStartTimeRef.current) * BEAT_WIDTH)}px`;
-              }
-          });
       }
 
       // Evaluate LFOs tied to Project Time
@@ -3854,7 +3859,7 @@ const initAudioEngine = async (explicitTracks = null) => {
           // 1. Collect all active notes
           const activeChord = [];
           
-          if (activeClip) {
+          if (activeClip && isPlayingState) {
               const notes = activeClip.notes || [];
               for (let i = 0; i < notes.length; i++) {
                   const note = notes[i];
@@ -3938,7 +3943,7 @@ const initAudioEngine = async (explicitTracks = null) => {
               synth.lastArpStep = -1;
               let currentActiveIds = null;
               
-              const notes = activeClip ? (activeClip.notes || []) : [];
+              const notes = (activeClip && isPlayingState) ? (activeClip.notes || []) : [];
               for (let i = 0; i < notes.length; i++) {
                   const note = notes[i];
                   if (clipTime >= note.start && clipTime < note.start + note.duration) {
@@ -4121,7 +4126,7 @@ const initAudioEngine = async (explicitTracks = null) => {
             });
         });
     };
-  }, [isPlaying, bpm, zoom, BEAT_WIDTH]);
+  }, [bpm, zoom, BEAT_WIDTH]);
 
   // --- AUDIO DISPATCH & AUDIO NODE UPDATER ---
   const applyAudioTrackVol = (trackId, vol) => {
@@ -7356,7 +7361,14 @@ const initAudioEngine = async (explicitTracks = null) => {
                                     </div>
                                     <div className="flex items-center gap-0.5 shrink-0">
                                         {t.type === 'midi' && (
-                                            <button onClick={(e) => { e.stopPropagation(); dispatchDawAction({ type: 'TOGGLE_ARP', payload: { trackId: t.id } }); }} className={`w-6 h-5 rounded-sm text-[8px] font-bold transition-colors ${t.arpEnabled ? 'bg-purple-500 text-black' : 'text-[#888] bg-[#222] hover:bg-[#555]'}`} title="Arpeggiator">ARP</button>
+                                            <button 
+                                                onClick={(e) => { e.stopPropagation(); dispatchDawAction({ type: 'TOGGLE_ARP', payload: { trackId: t.id } }); }} 
+                                                onContextMenu={(e) => handleContextMenu(e, 'arp-controls', { trackId: t.id })}
+                                                className={`w-6 h-5 rounded-sm text-[8px] font-bold transition-colors ${t.arpEnabled ? 'bg-purple-500 text-black' : 'text-[#888] bg-[#222] hover:bg-[#555]'}`} 
+                                                title="Arpeggiator (Right-Click for Settings)"
+                                            >
+                                                ARP
+                                            </button>
                                         )}
                                         <button onClick={(e) => { e.stopPropagation(); dispatchDawAction({ type: 'TOGGLE_ARM', payload: { trackId: t.id } }); }} className={`w-5 h-5 rounded-sm flex items-center justify-center transition-colors ${t.armed ? 'text-black bg-[#ff5a5a]' : 'text-[#888] bg-[#222] hover:bg-[#555]'}`}><Circle size={8} fill={t.armed ? "currentColor" : "none"}/></button>
                                         <button onClick={(e) => { e.stopPropagation(); dispatchDawAction({ type: 'TOGGLE_MUTE', payload: { trackId: t.id } }); }} className={`w-5 h-5 rounded-sm text-[9px] font-bold transition-colors ${t.muted ? 'bg-[#ffae00] text-black' : 'text-[#888] bg-[#222] hover:bg-[#555]'}`}>M</button>
