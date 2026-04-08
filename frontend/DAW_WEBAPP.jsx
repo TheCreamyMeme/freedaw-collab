@@ -6064,7 +6064,6 @@ const initAudioEngine = async (explicitTracks = null) => {
                 setCurrentTime(newTime);
                 stateRefs.current.currentTime = newTime;
                 lastMetronomeBeatRef.current = Math.floor(newTime);
-                broadcastLivePreview({ type: 'UPDATE_TIME', payload: { currentTime: newTime } });
             }
         } else if (draggingDockHeight) {
           // Keep a minimum readable bound on the bottom rack (260px) to prevent squished crash behaviors
