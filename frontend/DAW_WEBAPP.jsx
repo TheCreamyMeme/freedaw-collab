@@ -4707,34 +4707,44 @@ const initAudioEngine = async (explicitTracks = null) => {
               const now = audioCtxRef.current.currentTime;
 
               if (isNoteOn) {
-                  const pbNode = synth.pitchBendNode;
-                  if (isDrum) triggerDrum(audioCtxRef.current, synth.inputBus, noteOrCC, now, 1, armedTrack.instrumentParams, velocityOrVal);
-                  else if (armedTrack.instrument === 'inst-fm') triggerFMSynth(audioCtxRef.current, synth.inputBus, noteOrCC, now, 1, 0.25, armedTrack.instrumentParams, velocityOrVal, pbNode);
-                  else if (armedTrack.instrument === 'inst-supersaw') triggerSupersaw(audioCtxRef.current, synth.inputBus, noteOrCC, now, 1, 0.25, armedTrack.instrumentParams, velocityOrVal, pbNode);
-                  else if (armedTrack.instrument === 'inst-pluck') triggerPluck(audioCtxRef.current, synth.inputBus, noteOrCC, now, 1, 0.25, armedTrack.instrumentParams, velocityOrVal, pbNode);
-                  else if (armedTrack.instrument === 'inst-acid') triggerAcid(audioCtxRef.current, synth.inputBus, noteOrCC, now, 1, 0.25, armedTrack.instrumentParams, velocityOrVal, pbNode);
-                  else if (armedTrack.instrument === 'inst-organ') triggerOrgan(audioCtxRef.current, synth.inputBus, noteOrCC, now, 1, 0.25, armedTrack.instrumentParams, velocityOrVal, pbNode);
-                  else triggerSubtractive(audioCtxRef.current, synth.inputBus, noteOrCC, now, 1, 0.25, armedTrack.instrumentParams, velocityOrVal, pbNode);
+                  // MUST store live note unconditionally so the Arp loop can see it
+                  const wasEmpty = Object.keys(activeLiveMidiNotesRef.current).length === 0;
+                  activeLiveMidiNotesRef.current[noteOrCC] = { start: state.currentTime, velocity: velocityOrVal };
 
-                  if (state.isRecording && state.isPlaying) {
-                      activeLiveMidiNotesRef.current[noteOrCC] = { start: state.currentTime, velocity: velocityOrVal };
+                  if (armedTrack.arpEnabled) {
+                      // Force immediate trigger on the next RAF frame by tracking step alignment
+                      if (wasEmpty && audioCtxRef.current) {
+                          const timeBase = state.isPlaying ? state.currentTime : (now * (state.bpm / 60));
+                          synth.lastArpStep = Math.floor(timeBase / (armedTrack.arpRate || 0.25)) - 1;
+                      }
+                  } else {
+                      const pbNode = synth.pitchBendNode;
+                      if (isDrum) triggerDrum(audioCtxRef.current, synth.inputBus, noteOrCC, now, 1, armedTrack.instrumentParams, velocityOrVal);
+                      else if (armedTrack.instrument === 'inst-fm') triggerFMSynth(audioCtxRef.current, synth.inputBus, noteOrCC, now, 1, 0.25, armedTrack.instrumentParams, velocityOrVal, pbNode);
+                      else if (armedTrack.instrument === 'inst-supersaw') triggerSupersaw(audioCtxRef.current, synth.inputBus, noteOrCC, now, 1, 0.25, armedTrack.instrumentParams, velocityOrVal, pbNode);
+                      else if (armedTrack.instrument === 'inst-pluck') triggerPluck(audioCtxRef.current, synth.inputBus, noteOrCC, now, 1, 0.25, armedTrack.instrumentParams, velocityOrVal, pbNode);
+                      else if (armedTrack.instrument === 'inst-acid') triggerAcid(audioCtxRef.current, synth.inputBus, noteOrCC, now, 1, 0.25, armedTrack.instrumentParams, velocityOrVal, pbNode);
+                      else if (armedTrack.instrument === 'inst-organ') triggerOrgan(audioCtxRef.current, synth.inputBus, noteOrCC, now, 1, 0.25, armedTrack.instrumentParams, velocityOrVal, pbNode);
+                      else triggerSubtractive(audioCtxRef.current, synth.inputBus, noteOrCC, now, 1, 0.25, armedTrack.instrumentParams, velocityOrVal, pbNode);
                   }
               } else if (isNoteOff) {
-                if (state.isRecording && state.isPlaying && activeLiveMidiNotesRef.current[noteOrCC]) {
-                    const startBeat = activeLiveMidiNotesRef.current[noteOrCC].start;
-                    const recordedVelocity = activeLiveMidiNotesRef.current[noteOrCC].velocity;
-                    const durBeat = state.currentTime - startBeat;
-                    
-                    if (!pendingMidiClipsRef.current[armedTrack.id]) pendingMidiClipsRef.current[armedTrack.id] = [];
-                    pendingMidiClipsRef.current[armedTrack.id].push({
-                       id: `n_${Date.now()}_${noteOrCC}`,
-                       pitch: noteOrCC,
-                       start: startBeat - recordingStartTimeRef.current, 
-                       duration: Math.max(0.1, durBeat),
-                       velocity: recordedVelocity
-                    });
-                    delete activeLiveMidiNotesRef.current[noteOrCC];
-                }
+                  if (activeLiveMidiNotesRef.current[noteOrCC]) {
+                      if (state.isRecording && state.isPlaying) {
+                          const startBeat = activeLiveMidiNotesRef.current[noteOrCC].start;
+                          const recordedVelocity = activeLiveMidiNotesRef.current[noteOrCC].velocity;
+                          const durBeat = state.currentTime - startBeat;
+                          
+                          if (!pendingMidiClipsRef.current[armedTrack.id]) pendingMidiClipsRef.current[armedTrack.id] = [];
+                          pendingMidiClipsRef.current[armedTrack.id].push({
+                             id: `n_${Date.now()}_${noteOrCC}`,
+                             pitch: noteOrCC,
+                             start: startBeat - recordingStartTimeRef.current, 
+                             duration: Math.max(0.1, durBeat),
+                             velocity: recordedVelocity
+                          });
+                      }
+                      delete activeLiveMidiNotesRef.current[noteOrCC];
+                  }
             }
         }
     };
