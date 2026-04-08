@@ -5068,24 +5068,37 @@ const initAudioEngine = async (explicitTracks = null) => {
   useEffect(() => {
       if (bottomDock?.type === 'devices') {
           const timer = setTimeout(() => {
-              const wrappers = document.querySelectorAll('.fx-content-wrapper');
+              const dockEl = document.getElementById('device-dock-container');
               let maxNeeded = 260; // Absolute minimum rack height
-              wrappers.forEach(w => {
-                  // scrollHeight of the inner wrapper + 24px Card Header + 16px Card Padding + 24px Dock Header + 24px Dock Padding = ~88px extra. Round to 100 for safety margin.
-                  const needed = w.scrollHeight + 100; 
-                  if (needed > maxNeeded) maxNeeded = needed;
-              });
               
-              setMinDockHeight(maxNeeded);
+              if (dockEl) {
+                  // Temporarily force dock to 260px. This strips all flex-stretching from the children
+                  // allowing us to read their TRUE scrollHeight overflows without parent constraints.
+                  const oldHeight = dockEl.style.height;
+                  dockEl.style.height = '260px';
+                  dockEl.getBoundingClientRect(); // Force synchronous reflow
+                  
+                  const fxWrappers = dockEl.querySelectorAll('.fx-content-wrapper');
+                  fxWrappers.forEach(w => {
+                      // scrollHeight of the inner wrapper + 24px Card Header + 16px Card Padding + 24px Dock Header + 24px Dock Padding = ~88px extra. Round to 100 for safety margin.
+                      const needed = w.scrollHeight + 100; 
+                      if (needed > maxNeeded) maxNeeded = needed;
+                  });
 
-              setDockHeight(prev => {
-                  // Clamp to 70% of the screen height to prevent the rack from completely hiding the timeline
-                  const safeMax = Math.min(maxNeeded, window.innerHeight * 0.7);
-                  // Only expand the rack if the new plugin needs more room. Never shrink automatically.
-                  if (safeMax > prev) return safeMax;
-                  return prev;
-              });
-          }, 100); // 100ms allows React and Tailwind to finish DOM reflow
+                  const instWrappers = dockEl.querySelectorAll('.inst-content-wrapper');
+                  instWrappers.forEach(w => {
+                      const needed = w.scrollHeight + 100;
+                      if (needed > maxNeeded) maxNeeded = needed;
+                  });
+
+                  // Restore immediately to prevent visual flash
+                  dockEl.style.height = oldHeight; 
+              }
+              
+              // Cap at 70% of screen height to avoid completely hiding the timeline
+              const safeMax = Math.min(maxNeeded, window.innerHeight * 0.7);
+              setMinDockHeight(safeMax);
+          }, 50); // 50ms allows React to mount the new DOM nodes before measuring
           return () => clearTimeout(timer);
       } else {
           setMinDockHeight(260); // Reset for piano roll and audio editor
@@ -7942,7 +7955,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                 
                 return (
                 <div style={{ height: Math.max(dockHeight, 260) }} className="bg-[#333333] border-t border-[#111111] flex flex-col shrink-0 z-30 relative">
-                    <div className="absolute top-0 left-0 right-0 h-1.5 -translate-y-1/2 cursor-ns-resize hover:bg-cyan-500 z-50 transition-colors" onMouseDown={() => setDraggingDockHeight(true)} />
+                    <div className="absolute top-0 left-0 right-0 h-1.5 -translate-y-1/2 cursor-ns-resize hover:bg-cyan-500 z-50 transition-colors" onMouseDown={() => setDraggingDockHeight(true)} onDoubleClick={() => setDockHeight(260)} title="Double-click to reset height" />
                     <div className="h-6 bg-[#444444] flex justify-between items-center px-4 border-b border-[#222222] shrink-0">
                         <div className="flex items-center gap-4">
                            <div className="flex items-center gap-2">
@@ -8037,8 +8050,8 @@ const initAudioEngine = async (explicitTracks = null) => {
                 const bufferData = activeClip.sampleId ? globalAudioBufferCache.get(activeClip.sampleId) : null;
 
                 return (
-                <div style={{ height: dockHeight }} className="bg-[#1a1a1a] border-t border-[#111111] flex flex-col shrink-0 z-30 relative select-none min-h-[260px]">
-                    <div className="absolute top-0 left-0 right-0 h-1.5 -translate-y-1/2 cursor-ns-resize hover:bg-cyan-500 z-50 transition-colors" onMouseDown={() => setDraggingDockHeight(true)} />
+                <div style={{ height: Math.max(dockHeight, 260) }} className="bg-[#1a1a1a] border-t border-[#111111] flex flex-col shrink-0 z-30 relative select-none min-h-[260px]">
+                    <div className="absolute top-0 left-0 right-0 h-1.5 -translate-y-1/2 cursor-ns-resize hover:bg-cyan-500 z-50 transition-colors" onMouseDown={() => setDraggingDockHeight(true)} onDoubleClick={() => setDockHeight(260)} title="Double-click to reset height" />
                     <div className="h-6 bg-[#2d2d2d] flex justify-between items-center px-4 border-b border-[#111] shrink-0">
                         <div className="flex items-center gap-2">
                             <FileAudio size={14} className="text-emerald-400" />
@@ -8115,8 +8128,8 @@ const initAudioEngine = async (explicitTracks = null) => {
                 }
 
                 return (
-                <div style={{ height: Math.max(dockHeight, minDockHeight) }} className="bg-[#1a1a1a] border-t border-[#111111] flex flex-col shrink-0 z-30 relative select-none">
-                    <div className="absolute top-0 left-0 right-0 h-1.5 -translate-y-1/2 cursor-ns-resize hover:bg-cyan-500 z-50 transition-colors" onMouseDown={() => setDraggingDockHeight(true)} />
+                <div id="device-dock-container" style={{ height: Math.max(dockHeight, minDockHeight) }} className="bg-[#1a1a1a] border-t border-[#111111] flex flex-col shrink-0 z-30 relative select-none">
+                    <div className="absolute top-0 left-0 right-0 h-1.5 -translate-y-1/2 cursor-ns-resize hover:bg-cyan-500 z-50 transition-colors" onMouseDown={() => setDraggingDockHeight(true)} onDoubleClick={() => setDockHeight(260)} title="Double-click to reset height" />
                     <div className="h-6 bg-[#2d2d2d] flex justify-between items-center px-4 border-b border-[#111] shrink-0">
                         <div className="flex items-center gap-2">
                            <span className={`text-[10px] font-bold uppercase tracking-wider ${trackType === 'master' ? 'text-[#ff5a5a]' : 'text-[#b3b3b3]'}`}>{trackName}</span>
@@ -8153,7 +8166,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                                 <div className="h-6 bg-[#2d2d2d] rounded-t-md flex items-center justify-between px-2 border-b border-[#111] shrink-0">
                                     <span className="text-[10px] font-bold text-[#b3b3b3] uppercase tracking-wider">Instrument</span>
                                 </div>
-                                <div className="flex-1 flex px-3 py-2 gap-4 flex-col overflow-y-auto custom-scrollbar">
+                                <div className="flex-1 flex px-3 py-2 gap-4 flex-col overflow-y-auto custom-scrollbar inst-content-wrapper">
                                     <select 
                                         value={track.instrument || ''} 
                                         onChange={(e) => {
