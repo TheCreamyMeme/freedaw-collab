@@ -6437,21 +6437,25 @@ const initAudioEngine = async (explicitTracks = null) => {
 
       return (
         <div className="flex flex-col w-screen h-screen overflow-y-auto overflow-x-hidden bg-[#2b2b2b] text-[#b3b3b3] p-8 custom-scrollbar select-none">
-            <header className="flex justify-between items-center mb-12 border-b border-[#111] pb-6">
-                <h1 className="text-2xl font-bold text-[#e0e0e0] uppercase tracking-wider">Project Library</h1>
-                <div className="flex items-center gap-4">
-                        <div className="flex items-center gap-4 mr-4">
-                            <div className="flex items-center gap-3">
-                                {renderCurrentUserAvatar()}
-                                {renderPeerAvatars(allPeersList)}
-                            </div>
+            <header className="flex justify-between items-start mb-12 border-b border-[#111] pb-6">
+                <h1 className="text-2xl font-bold text-[#e0e0e0] uppercase tracking-wider mt-1">Project Library</h1>
+                <div className="flex flex-col items-end gap-3">
+                    <div className="flex items-center gap-4">
+                        <div className="flex items-center gap-3 mr-2">
                             <span className="text-sm font-bold uppercase tracking-wider text-[#888]">Signed in as <b className="text-white">{currentUser?.username}</b></span>
+                            {renderCurrentUserAvatar()}
                         </div>
-
-                    <button onClick={handleSignOut} className="bg-[#444] hover:bg-[#555] text-[#b3b3b3] hover:text-white p-2 rounded-sm transition-colors border border-[#222]" title="Sign Out">
-                        <LogOut size={16} />
-                    </button>
-                    <button onClick={() => { setAppView('daw'); setTracks(INITIAL_TRACKS); setProjectId(`proj_${Date.now()}`); setSharedWith([]); setProjectOwnerId(currentUser?.id); setProjectOwnerName(currentUser?.username); setIsPublic(false); }} className="bg-cyan-500 hover:bg-cyan-400 text-black font-bold uppercase tracking-wider px-4 py-2 rounded-sm flex items-center gap-2 transition-colors"><Plus size={16}/> New Project</button>
+                        <button onClick={handleSignOut} className="bg-[#444] hover:bg-[#555] text-[#b3b3b3] hover:text-white p-2 rounded-sm transition-colors border border-[#222]" title="Sign Out">
+                            <LogOut size={16} />
+                        </button>
+                        <button onClick={() => { setAppView('daw'); setTracks(INITIAL_TRACKS); setProjectId(`proj_${Date.now()}`); setSharedWith([]); setProjectOwnerId(currentUser?.id); setProjectOwnerName(currentUser?.username); setIsPublic(false); }} className="bg-cyan-500 hover:bg-cyan-400 text-black font-bold uppercase tracking-wider px-4 py-2 rounded-sm flex items-center gap-2 transition-colors"><Plus size={16}/> New Project</button>
+                    </div>
+                    {allPeersList.length > 0 && (
+                        <div className="flex items-center gap-3 pr-[132px]">
+                            <span className="text-[10px] font-bold uppercase tracking-wider text-[#666]">Peers</span>
+                            {renderPeerAvatars(allPeersList)}
+                        </div>
+                    )}
                 </div>
             </header>
             
