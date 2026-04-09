@@ -2752,6 +2752,7 @@ function DAWStudio() {
   const [selectedClipIds, setSelectedClipIds] = useState([]);
   const [dragHoverHome, setDragHoverHome] = useState(false);
   const [selectionBox, setSelectionBox] = useState(null);
+  const [selectedAutoPointIds, setSelectedAutoPointIds] = useState([]);
 
   // Advanced UI/UX States
   const [globalKey, setGlobalKey] = useState('C');
@@ -2787,6 +2788,7 @@ function DAWStudio() {
   const lastMetronomeBeatRef = useRef(-1);
   const tracksRef = useRef(tracks);
   const timelineRef = useRef(null);
+  const trackHeadersRef = useRef(null);
   const loopRegionRef = useRef(loopRegion);
   const exportRegionRef = useRef(exportRegion);
   const midiConfigRef = useRef(midiConfig);
@@ -2813,6 +2815,7 @@ function DAWStudio() {
   const projectNameRef = useRef(projectName);
   const selectedTrackIdRef = useRef(selectedTrackId);
   const selectedClipIdsRef = useRef(selectedClipIds);
+  const selectedAutoPointIdsRef = useRef(selectedAutoPointIds);
   const clipboardRef = useRef(null);
   const historyRef = useRef([]);
   const historyPtrRef = useRef(-1);
@@ -2873,6 +2876,7 @@ function DAWStudio() {
   useEffect(() => { projectNameRef.current = projectName; }, [projectName]);
   useEffect(() => { selectedTrackIdRef.current = selectedTrackId; }, [selectedTrackId]);
   useEffect(() => { selectedClipIdsRef.current = selectedClipIds; }, [selectedClipIds]);
+  useEffect(() => { selectedAutoPointIdsRef.current = selectedAutoPointIds; }, [selectedAutoPointIds]);
 
   useEffect(() => {
       if (socketRef.current && currentUser) {
@@ -4248,10 +4252,15 @@ const initAudioEngine = async (explicitTracks = null) => {
                           const f2 = document.getElementById(`vol-fill-mix-${mapping.trackId}`);
                           const i1 = document.getElementById(`vol-input-arr-${mapping.trackId}`);
                           const i2 = document.getElementById(`vol-input-mix-${mapping.trackId}`);
+                          const v1 = document.getElementById(`vol-val-arr-${mapping.trackId}`);
+                          const v2 = document.getElementById(`vol-val-mix-${mapping.trackId}`);
+                          
                           if (f1) f1.style.height = `${volPercent}%`;
                           if (f2) f2.style.height = `${volPercent}%`;
                           if (i1) i1.value = volPercent;
                           if (i2) i2.value = volPercent;
+                          if (v1) v1.innerText = `${Math.round(volPercent)}%`;
+                          if (v2) v2.innerText = Math.round(volPercent);
                       }
                   } else if (mapping.type === 'mixer_pan' && synth.panner?.pan) {
                       const baseVal = track.pan / 50;
@@ -4297,10 +4306,15 @@ const initAudioEngine = async (explicitTracks = null) => {
                                     const f2 = document.getElementById(`vol-fill-mix-${track.id}`);
                                     const i1 = document.getElementById(`vol-input-arr-${track.id}`);
                                     const i2 = document.getElementById(`vol-input-mix-${track.id}`);
+                                    const v1 = document.getElementById(`vol-val-arr-${track.id}`);
+                                    const v2 = document.getElementById(`vol-val-mix-${track.id}`);
+                                    
                                     if (f1) f1.style.height = `${val}%`;
                                     if (f2) f2.style.height = `${val}%`;
                                     if (i1) i1.value = val;
                                     if (i2) i2.value = val;
+                                    if (v1) v1.innerText = `${Math.round(val)}%`;
+                                    if (v2) v2.innerText = Math.round(val);
                                 }
                             } else if (paramKey === 'pan' && synth.panner?.pan) {
                                 const targetPan = val / 50;
@@ -4807,12 +4821,16 @@ const initAudioEngine = async (explicitTracks = null) => {
 
   const handleEffectParamChange = (trackId, fxId, param, val) => {
     dispatchDawAction({ type: 'UPDATE_EFFECT_PARAM', payload: { trackId, fxId, param, value: Number(val) } });
+    if (recordAutomationRef.current) recordAutomationRef.current(trackId, `fx_param_${fxId}_${param}`, Number(val));
   };
 
   const handleInstrumentParamChange = (trackId, param, val) => {
       if (param !== 'oscType' && param !== 'samples' && isNaN(Number(val))) return; // Protect against NaN crashes
       const finalVal = param === 'oscType' || param === 'samples' ? val : Number(val);
       dispatchDawAction({ type: 'UPDATE_INSTRUMENT_PARAM', payload: { trackId, param, value: finalVal } });
+      if (typeof finalVal === 'number') {
+          if (recordAutomationRef.current) recordAutomationRef.current(trackId, `inst_param_${param}`, finalVal);
+      }
   };
 
   const handleBulkSampleUpload = async (e, assignToTarget = null) => {
@@ -5230,9 +5248,11 @@ const initAudioEngine = async (explicitTracks = null) => {
                       if (mapping.type === 'mixer_vol') {
                           const vol = Math.max(0, Math.min(100, Math.round(normalizedVal * 100)));
                           dispatchDawAction({ type: 'UPDATE_TRACK_VOL', payload: { id: mapping.trackId, volume: vol } });
+                          if (recordAutomationRef.current) recordAutomationRef.current(mapping.trackId, 'volume', vol);
                       } else if (mapping.type === 'mixer_pan') {
                           const pan = Math.max(-50, Math.min(50, Math.round(normalizedVal * 100 - 50)));
                           dispatchDawAction({ type: 'UPDATE_TRACK_PAN', payload: { id: mapping.trackId, pan } });
+                          if (recordAutomationRef.current) recordAutomationRef.current(mapping.trackId, 'pan', pan);
                       } else if (mapping.type === 'master_vol') {
                           const vol = Math.max(0, Math.min(100, Math.round(normalizedVal * 100)));
                           handleMasterVolumeChange(vol);
@@ -5270,6 +5290,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                             const synth = synthsRef.current[mapping.trackId];
                             if (synth) synth[`lastMidiRaw_fx_${mapping.fxId}_${mapping.param}`] = rawPercent;
                             applyAudioEffectParam(mapping.trackId, mapping.fxId, mapping.param, mappedVal);
+                            if (recordAutomationRef.current) recordAutomationRef.current(mapping.trackId, `fx_param_${mapping.fxId}_${mapping.param}`, mappedVal);
                             const knobLive = document.getElementById(`knob-live-midi-fx-${mapping.trackId}-${mapping.fxId}-${mapping.param}`);
                             const knobVal = document.getElementById(`knob-val-fx-${mapping.trackId}-${mapping.fxId}-${mapping.param}`);
                             const midiArc = document.getElementById(`knob-midi-arc-fx-${mapping.trackId}-${mapping.fxId}-${mapping.param}`);
@@ -5300,6 +5321,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                                 synth[`lastMidi_inst_${mapping.param}`] = mappedVal;
                                 synth[`lastMidiRaw_inst_${mapping.param}`] = rawPercent;
                             }
+                            if (recordAutomationRef.current) recordAutomationRef.current(mapping.trackId, `inst_param_${mapping.param}`, mappedVal);
                             
                             const knobLive = document.getElementById(`knob-live-midi-inst-${mapping.trackId}-${mapping.param}`);
                             const knobVal = document.getElementById(`knob-val-inst-${mapping.trackId}-${mapping.param}`);
@@ -5352,9 +5374,13 @@ const initAudioEngine = async (explicitTracks = null) => {
               if (channel < tracksRef.current.length) {
                   const targetTrack = tracksRef.current[channel];
                   if (noteOrCC === 7) { 
-                     dispatchDawAction({ type: 'UPDATE_TRACK_VOL', payload: { id: targetTrack.id, volume: Math.round((velocityOrVal/127)*100) }});
+                     const vol = Math.round((velocityOrVal/127)*100);
+                     dispatchDawAction({ type: 'UPDATE_TRACK_VOL', payload: { id: targetTrack.id, volume: vol }});
+                     if (recordAutomationRef.current) recordAutomationRef.current(targetTrack.id, 'volume', vol);
                   } else if (noteOrCC === 10) { 
-                     dispatchDawAction({ type: 'UPDATE_TRACK_PAN', payload: { id: targetTrack.id, pan: Math.round((velocityOrVal/127)*100 - 50) }});
+                     const pan = Math.round((velocityOrVal/127)*100 - 50);
+                     dispatchDawAction({ type: 'UPDATE_TRACK_PAN', payload: { id: targetTrack.id, pan: pan }});
+                     if (recordAutomationRef.current) recordAutomationRef.current(targetTrack.id, 'pan', pan);
                   }
               }
           }
@@ -5553,6 +5579,32 @@ const initAudioEngine = async (explicitTracks = null) => {
               }));
               clipboardRef.current = { type: 'clips', data: JSON.parse(JSON.stringify(copied)) };
               showToast(`Copied ${copied.length} clip(s)`, 'info');
+          } else if (selectedAutoPointIdsRef.current.length > 0) {
+              const copiedPts = [];
+              tracksRef.current.forEach(t => {
+                  if (t.automation) {
+                      Object.keys(t.automation).forEach(paramKey => {
+                          t.automation[paramKey].forEach(p => {
+                              if (selectedAutoPointIdsRef.current.includes(p.id)) {
+                                  copiedPts.push({ ...p, trackId: t.id, paramKey });
+                              }
+                          });
+                      });
+                  }
+              });
+              lfosRef.current.forEach(lfo => {
+                  if (lfo.automation) {
+                      Object.keys(lfo.automation).forEach(paramKey => {
+                          lfo.automation[paramKey].forEach(p => {
+                              if (selectedAutoPointIdsRef.current.includes(p.id)) {
+                                  copiedPts.push({ ...p, lfoId: lfo.id, paramKey });
+                              }
+                          });
+                      });
+                  }
+              });
+              clipboardRef.current = { type: 'auto_points', data: JSON.parse(JSON.stringify(copiedPts)) };
+              showToast(`Copied ${copiedPts.length} automation point(s)`, 'info');
           }
           return;
       }
@@ -5574,6 +5626,24 @@ const initAudioEngine = async (explicitTracks = null) => {
               });
               setSelectedClipIds(newIds);
               showToast(`Pasted ${clips.length} clip(s)`, 'success');
+          } else if (clipboardRef.current?.type === 'auto_points') {
+              const pts = clipboardRef.current.data;
+              const earliestStart = Math.min(...pts.map(p => p.time));
+              const newIds = [];
+              
+              pts.forEach(p => {
+                  const newPoint = { ...p, id: `pt_${Date.now()}_${Math.random()}` };
+                  newPoint.time = stateRefs.current.currentTime + (p.time - earliestStart);
+                  
+                  newIds.push(newPoint.id);
+                  if (p.trackId) {
+                      dispatchDawAction({ type: 'ADD_AUTOMATION_POINT', payload: { trackId: p.trackId, paramKey: p.paramKey, point: newPoint } });
+                  } else if (p.lfoId) {
+                      dispatchDawAction({ type: 'ADD_LFO_AUTOMATION_POINT', payload: { lfoId: p.lfoId, paramKey: p.paramKey, point: newPoint } });
+                  }
+              });
+              setSelectedAutoPointIds(newIds);
+              showToast(`Pasted ${pts.length} automation point(s)`, 'success');
           }
           return;
       }
@@ -5610,21 +5680,79 @@ const initAudioEngine = async (explicitTracks = null) => {
               clipboardRef.current = { type: 'clips', data: JSON.parse(JSON.stringify(copied)) };
               setSelectedClipIds([]);
               showToast(`Cut ${copied.length} clip(s)`, 'info');
+          } else if (selectedAutoPointIdsRef.current.length > 0) {
+              const copiedPts = [];
+              tracksRef.current.forEach(t => {
+                  if (t.automation) {
+                      Object.keys(t.automation).forEach(paramKey => {
+                          t.automation[paramKey].forEach(p => {
+                              if (selectedAutoPointIdsRef.current.includes(p.id)) {
+                                  copiedPts.push({ ...p, trackId: t.id, paramKey });
+                                  dispatchDawAction({ type: 'DELETE_AUTOMATION_POINT', payload: { trackId: t.id, paramKey, pointId: p.id } });
+                              }
+                          });
+                      });
+                  }
+              });
+              lfosRef.current.forEach(lfo => {
+                  if (lfo.automation) {
+                      Object.keys(lfo.automation).forEach(paramKey => {
+                          lfo.automation[paramKey].forEach(p => {
+                              if (selectedAutoPointIdsRef.current.includes(p.id)) {
+                                  copiedPts.push({ ...p, lfoId: lfo.id, paramKey });
+                                  dispatchDawAction({ type: 'DELETE_LFO_AUTOMATION_POINT', payload: { lfoId: lfo.id, paramKey, pointId: p.id } });
+                              }
+                          });
+                      });
+                  }
+              });
+              clipboardRef.current = { type: 'auto_points', data: JSON.parse(JSON.stringify(copiedPts)) };
+              setSelectedAutoPointIds([]);
+              showToast(`Cut ${copiedPts.length} automation point(s)`, 'info');
           }
           return;
       }
 
       // Delete
       if (code === 'Delete' || code === 'Backspace') {
+          let deleted = false;
           if (selectedClipIdsRef.current.length > 0) {
               tracksRef.current.forEach(t => t.clips.forEach(c => {
                   if (selectedClipIdsRef.current.includes(c.id)) {
                       dispatchDawAction({ type: 'DELETE_CLIP', payload: { trackId: t.id, clipId: c.id } });
+                      deleted = true;
                   }
               }));
               setSelectedClipIds([]);
           }
-          return;
+          if (selectedAutoPointIdsRef.current.length > 0) {
+              tracksRef.current.forEach(t => {
+                  if (t.automation) {
+                      Object.keys(t.automation).forEach(paramKey => {
+                          t.automation[paramKey].forEach(p => {
+                              if (selectedAutoPointIdsRef.current.includes(p.id)) {
+                                  dispatchDawAction({ type: 'DELETE_AUTOMATION_POINT', payload: { trackId: t.id, paramKey, pointId: p.id }});
+                                  deleted = true;
+                              }
+                          });
+                      });
+                  }
+              });
+              lfosRef.current.forEach(lfo => {
+                  if (lfo.automation) {
+                      Object.keys(lfo.automation).forEach(paramKey => {
+                          lfo.automation[paramKey].forEach(p => {
+                              if (selectedAutoPointIdsRef.current.includes(p.id)) {
+                                  dispatchDawAction({ type: 'DELETE_LFO_AUTOMATION_POINT', payload: { lfoId: lfo.id, paramKey, pointId: p.id }});
+                                  deleted = true;
+                              }
+                          });
+                      });
+                  }
+              });
+              setSelectedAutoPointIds([]);
+          }
+          if (deleted) return;
       }
 
       // Select All (Ctrl/Cmd + A)
@@ -6320,7 +6448,12 @@ const initAudioEngine = async (explicitTracks = null) => {
               setTracks(prev => prev.map(t => {
                   if (t.id !== action.payload.trackId) return t;
                   const auto = t.automation || {};
-                  const pts = auto[action.payload.paramKey] || [];
+                  let pts = auto[action.payload.paramKey] || [];
+                  if (action.payload.overwriteWindow) {
+                      pts = pts.filter(p => p.time < action.payload.overwriteWindow.start || p.time > action.payload.overwriteWindow.end);
+                  } else {
+                      pts = pts.filter(p => Math.abs(p.time - action.payload.point.time) > 0.02);
+                  }
                   return { ...t, automation: { ...auto, [action.payload.paramKey]: [...pts, action.payload.point] } };
               }));
               break;
@@ -6364,7 +6497,12 @@ const initAudioEngine = async (explicitTracks = null) => {
               setLfos(prev => prev.map(l => {
                   if (l.id !== action.payload.lfoId) return l;
                   const auto = l.automation || {};
-                  const pts = auto[action.payload.paramKey] || [];
+                  let pts = auto[action.payload.paramKey] || [];
+                  if (action.payload.overwriteWindow) {
+                      pts = pts.filter(p => p.time < action.payload.overwriteWindow.start || p.time > action.payload.overwriteWindow.end);
+                  } else {
+                      pts = pts.filter(p => Math.abs(p.time - action.payload.point.time) > 0.02);
+                  }
                   return { ...l, automation: { ...auto, [action.payload.paramKey]: [...pts, action.payload.point] } };
               }));
               break;
@@ -6744,6 +6882,49 @@ const initAudioEngine = async (explicitTracks = null) => {
       if (socketRef.current) socketRef.current.emit('daw-action', { ...action, projectId: currentProjectIdRef.current });
   }, [applyDawAction]);
 
+  const recordAutomationThrottleRef = useRef({});
+    
+  const recordAutomation = useCallback((trackId, paramKey, value) => {
+      const state = stateRefs.current;
+      if (!state.isRecording || !state.isPlaying) return;
+      const track = tracksRef.current.find(t => t.id === trackId);
+      if (!track || !track.armed) return;
+
+      const now = performance.now();
+      const throttleKey = `${trackId}_${paramKey}`;
+      const lastRecord = recordAutomationThrottleRef.current[throttleKey] || 0;
+      
+      // Throttle recording points to ~33fps
+      if (now - lastRecord > 30) {
+          recordAutomationThrottleRef.current[throttleKey] = now;
+          dispatchDawAction({
+              type: 'ADD_AUTOMATION_POINT',
+              payload: {
+                  trackId,
+                  paramKey,
+                  point: { id: `pt_${Date.now()}_${Math.floor(Math.random()*1000)}`, time: state.currentTime, value },
+                  // Narrow the backward overwrite window so it doesn't delete the point we just recorded a fraction of a beat ago, 
+                  // but keep the forward window wide enough to clear old automation takes ahead of the playhead.
+                  overwriteWindow: { start: state.currentTime - 0.01, end: state.currentTime + 0.1 }
+              }
+          });
+      }
+  }, [dispatchDawAction]);
+
+  // Expose to refs for MIDI and other non-rendering callbacks
+  const recordAutomationRef = useRef(recordAutomation);
+  useEffect(() => { recordAutomationRef.current = recordAutomation; }, [recordAutomation]);
+
+  const handleTrackVolumeChange = useCallback((trackId, vol) => {
+      dispatchDawAction({ type: 'UPDATE_TRACK_VOL', payload: { id: trackId, volume: vol } });
+      if (recordAutomationRef.current) recordAutomationRef.current(trackId, 'volume', vol);
+  }, [dispatchDawAction]);
+
+  const handleTrackPanChange = useCallback((trackId, pan) => {
+      dispatchDawAction({ type: 'UPDATE_TRACK_PAN', payload: { id: trackId, pan } });
+      if (recordAutomationRef.current) recordAutomationRef.current(trackId, 'pan', pan);
+  }, [dispatchDawAction]);
+
   const handleLfoKnobRangeAdjust = useCallback((trackId, fxId, param, newMin, newMax) => {
       dispatchDawAction({ type: 'UPDATE_LFO_MAPPING_RANGE', payload: { trackId, fxId, param, rangeMin: newMin, rangeMax: newMax } });
   }, [dispatchDawAction]);
@@ -7120,6 +7301,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                   const maxBeat = maxX / BEAT_WIDTH;
 
                   const newSelected = new Set(selectionBox.initialSelected);
+                  const newSelectedAuto = new Set(selectionBox.initialSelectedAuto);
                   
                   let currentY = 102; // Master track (96px height) + margins (4px) + borders (2px)
                   tracksRef.current.forEach(t => {
@@ -7127,10 +7309,10 @@ const initAudioEngine = async (explicitTracks = null) => {
                       const trackHeight = 96 + (autoKeys.length * 64);
                       
                       const trackTop = currentY;
-                      const trackBottom = currentY + trackHeight;
-                      currentY += trackHeight;
+                      const clipAreaBottom = trackTop + 96;
 
-                      if (maxY >= trackTop && minY <= trackBottom) {
+                      // Only select clips if the box overlaps the actual 96px track lane (not the automation lanes below it)
+                      if (maxY >= trackTop && minY <= clipAreaBottom) {
                           t.clips.forEach(c => {
                               const clipMinBeat = c.start;
                               const clipMaxBeat = c.start + c.duration;
@@ -7139,9 +7321,60 @@ const initAudioEngine = async (explicitTracks = null) => {
                               }
                           });
                       }
+
+                      if (isAutomationMode) {
+                          autoKeys.forEach((paramKey, kIdx) => {
+                              const laneTop = trackTop + 96 + (kIdx * 64);
+                              const laneBottom = laneTop + 64;
+                              if (maxY >= laneTop && minY <= laneBottom) {
+                                  const pts = t.automation?.[paramKey] || [];
+                                  const minMax = getAutomationConstraints(paramKey);
+                                  pts.forEach(p => {
+                                      if (p.time >= minBeat && p.time <= maxBeat) {
+                                          const ptYRelative = 64 - ((p.value - minMax.min) / (minMax.max - minMax.min)) * 64;
+                                          const pointYAbs = laneTop + ptYRelative;
+                                          if (pointYAbs >= minY && pointYAbs <= maxY) {
+                                              newSelectedAuto.add(p.id);
+                                          }
+                                      }
+                                  });
+                              }
+                          });
+                      }
+                      
+                      currentY += trackHeight;
                   });
 
+                  if (isAutomationMode && lfosRef.current) {
+                      lfosRef.current.forEach(lfo => {
+                          const autoKeys = Array.from(new Set([...Object.keys(lfo.automation || {}).filter(k => lfo.automation[k]?.length > 0), lfo.activeAutomationParam].filter(Boolean)));
+                          if (autoKeys.length === 0) return;
+                          
+                          currentY += 32; // <div className="h-8 border-b...
+                          autoKeys.forEach((paramKey, kIdx) => {
+                              const laneTop = currentY + (kIdx * 64);
+                              const laneBottom = laneTop + 64;
+                              if (maxY >= laneTop && minY <= laneBottom) {
+                                  const pts = lfo.automation?.[paramKey] || [];
+                                  const minMax = getAutomationConstraints(paramKey);
+                                  pts.forEach(p => {
+                                      if (p.time >= minBeat && p.time <= maxBeat) {
+                                          const ptYRelative = 64 - ((p.value - minMax.min) / (minMax.max - minMax.min)) * 64;
+                                          const pointYAbs = laneTop + ptYRelative;
+                                          if (pointYAbs >= minY && pointYAbs <= maxY) {
+                                              newSelectedAuto.add(p.id);
+                                          }
+                                      }
+                                  });
+                              }
+                          });
+                          currentY += autoKeys.length * 64;
+                      });
+                  }
+
                   setSelectedClipIds(Array.from(newSelected));
+                  setSelectedAutoPointIds(Array.from(newSelectedAuto));
+
               }
           }
       } else if (draggingPlayhead) {
@@ -7272,6 +7505,7 @@ const initAudioEngine = async (explicitTracks = null) => {
 
   const handleRulerMouseDown = (e) => {
       setSelectedClipIds([]);
+      setSelectedAutoPointIds([]);
       setDraggingPlayhead(true);
       const rect = e.currentTarget.getBoundingClientRect();
       const scrollLeft = timelineRef.current ? timelineRef.current.scrollLeft : 0;
@@ -7289,7 +7523,10 @@ const initAudioEngine = async (explicitTracks = null) => {
       if (e.target.closest('.clip-element') || draggingClip || draggingNote || draggingNoteEdge || draggingLoop || draggingExport) return;
       
       const isAppend = e.shiftKey || e.ctrlKey || e.metaKey;
-      if (!isAppend) setSelectedClipIds([]); 
+      if (!isAppend) {
+          setSelectedClipIds([]); 
+          setSelectedAutoPointIds([]);
+      }
 
       const rect = e.currentTarget.getBoundingClientRect();
       const x = e.clientX - rect.left;
@@ -7302,7 +7539,8 @@ const initAudioEngine = async (explicitTracks = null) => {
           currentX: x,
           currentY: y,
           append: isAppend,
-          initialSelected: isAppend ? selectedClipIdsRef.current : []
+          initialSelected: isAppend ? selectedClipIdsRef.current : [],
+          initialSelectedAuto: isAppend ? selectedAutoPointIdsRef.current : []
       });
 
       // Also snap playhead on click
@@ -8085,7 +8323,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                   
                   <div className="w-full px-3 mt-2 flex flex-col items-center" onContextMenu={(e) => handleContextMenu(e, 'midi-learn', { type: 'mixer_pan', trackId: t.id })}>
                      <span className="text-[8px] text-[#888] font-bold uppercase tracking-wider">PAN</span>
-                     <input id={`pan-input-${t.id}`} type="range" min="-50" max="50" value={t.pan} onDoubleClick={() => dispatchDawAction({ type: 'UPDATE_TRACK_PAN', payload: { id: t.id, pan: 0 } })} onChange={(e) => dispatchDawAction({ type: 'UPDATE_TRACK_PAN', payload: { id: t.id, pan: Number(e.target.value) } })} onWheel={(e) => { e.stopPropagation(); dispatchDawAction({ type: 'UPDATE_TRACK_PAN', payload: { id: t.id, pan: Math.min(50, Math.max(-50, t.pan + (e.deltaY < 0 ? 5 : -5))) } }); }} className="w-full h-1 bg-[#222] border border-[#111] rounded-sm appearance-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-1.5 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-[#888] cursor-pointer mt-1" />
+                     <input id={`pan-input-${t.id}`} type="range" min="-50" max="50" value={t.pan} onDoubleClick={() => handleTrackPanChange(t.id, 0)} onChange={(e) => handleTrackPanChange(t.id, Number(e.target.value))} onWheel={(e) => { e.stopPropagation(); handleTrackPanChange(t.id, Math.min(50, Math.max(-50, t.pan + (e.deltaY < 0 ? 5 : -5)))); }} className="w-full h-1 bg-[#222] border border-[#111] rounded-sm appearance-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-1.5 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-[#888] cursor-pointer mt-1" />
                   </div>
 
                   <div className="flex gap-1 mt-3">
@@ -8100,9 +8338,11 @@ const initAudioEngine = async (explicitTracks = null) => {
                          </div>
                          <VuMeter trackId={t.id} synthsRef={synthsRef} isVertical={true} />
                      </div>
-                     <input id={`vol-input-mix-${t.id}`} type="range" orient="vertical" min="0" max="100" value={t.volume} onChange={(e) => dispatchDawAction({ type: 'UPDATE_TRACK_VOL', payload: { id: t.id, volume: Number(e.target.value) } })} onWheel={(e) => { e.stopPropagation(); dispatchDawAction({ type: 'UPDATE_TRACK_VOL', payload: { id: t.id, volume: Math.min(100, Math.max(0, t.volume + (e.deltaY < 0 ? 5 : -5))) } }); }} className="absolute inset-0 opacity-0 cursor-pointer h-full w-full" style={{ WebkitAppearance: 'slider-vertical' }} />
+                     <input id={`vol-input-mix-${t.id}`} type="range" orient="vertical" min="0" max="100" value={t.volume} onChange={(e) => handleTrackVolumeChange(t.id, Number(e.target.value))} onWheel={(e) => { e.stopPropagation(); handleTrackVolumeChange(t.id, Math.min(100, Math.max(0, t.volume + (e.deltaY < 0 ? 5 : -5)))); }} className="absolute inset-0 opacity-0 cursor-pointer h-full w-full" style={{ WebkitAppearance: 'slider-vertical' }} />
                   </div>
-                  <span className="text-[9px] font-mono text-[#888] font-bold mt-1">{t.volume}</span>
+                  <div className="mt-2 bg-neutral-900 border border-neutral-800 px-2 py-0.5 rounded shadow-inner min-w-[2.5rem] flex justify-center">
+                      <span className="text-[10px] font-mono font-bold text-neutral-400"><span id={`vol-val-mix-${t.id}`}>{Math.round(t.volume)}</span><span className="text-[8px] text-neutral-600 ml-[1px]">%</span></span>
+                  </div>
                </div>
              ))}
 
@@ -8124,7 +8364,9 @@ const initAudioEngine = async (explicitTracks = null) => {
                      </div>
                      <input type="range" orient="vertical" min="0" max="100" value={masterVolume} onChange={(e) => handleMasterVolumeChange(e.target.value)} onDoubleClick={() => handleMasterVolumeChange(80)} onWheel={(e) => { e.stopPropagation(); handleMasterVolumeChange(Math.min(100, Math.max(0, masterVolume + (e.deltaY < 0 ? 5 : -5)))); }} className="absolute inset-0 opacity-0 cursor-pointer h-full w-full" title="Double-click to reset" style={{ WebkitAppearance: 'slider-vertical' }} />
                   </div>
-                  <span className="text-[9px] font-mono text-[#ff5a5a] font-bold mt-1">{masterVolume}</span>
+                  <div className="mt-2 bg-neutral-900 border border-neutral-800 px-2 py-0.5 rounded shadow-inner min-w-[2.5rem] flex justify-center">
+                      <span className="text-[10px] font-mono font-bold text-[#ff5a5a]"><span id="vol-val-master-mix">{Math.round(masterVolume)}</span><span className="text-[8px] opacity-70 ml-[1px]">%</span></span>
+                  </div>
              </div>
           </div>
         )}
@@ -8274,7 +8516,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                             <button onClick={() => dispatchDawAction({ type: 'ADD_TRACK', payload: { id: Date.now(), name: 'New Audio', type: 'audio', color: USER_COLORS[Math.floor(Math.random() * USER_COLORS.length)], volume: 80, pan: 0, automation: {}, activeAutomationParam: 'volume', clips: [], effects: [] }})} className="text-[9px] uppercase text-neutral-400 hover:text-white font-bold flex items-center justify-center gap-1 bg-[#444] hover:bg-[#555] px-1.5 py-0.5 rounded-sm transition-colors flex-1"><Plus size={10} className="shrink-0"/> <span>Audio</span></button>
                         </div>
                     </div>
-                    <div className="flex-1 overflow-y-auto overflow-x-hidden custom-scrollbar pr-1">
+                    <div ref={trackHeadersRef} onScroll={(e) => { if (timelineRef.current && timelineRef.current.scrollTop !== e.currentTarget.scrollTop) timelineRef.current.scrollTop = e.currentTarget.scrollTop; }} className="flex-1 overflow-y-auto overflow-x-hidden pr-1 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
                         
                         {/* Master Track Header (Moved to Top) */}
                         <div className="flex flex-col w-full mb-1 border-b-2 border-[#111]">
@@ -8295,6 +8537,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                                             <div className="absolute left-0 top-0 bottom-0 rounded-full opacity-60 bg-[#ff5a5a]" style={{ width: `${masterVolume}%` }} />
                                         </div>
                                         <input type="range" min="0" max="100" value={masterVolume} onChange={(e) => handleMasterVolumeChange(e.target.value)} onWheel={(e) => { e.stopPropagation(); handleMasterVolumeChange(Math.min(100, Math.max(0, masterVolume + (e.deltaY < 0 ? 5 : -5)))); }} className="absolute inset-0 opacity-0 cursor-pointer w-full pl-4" />
+                                        <span id="vol-val-master-arr" className="text-[8px] font-mono text-[#ff5a5a] w-6 text-center bg-neutral-900/80 rounded px-0.5 py-[1px] border border-neutral-800/80 z-10 pointer-events-none">{Math.round(masterVolume)}%</span>
                                     </div>
                                     <div className="flex gap-2 items-center mb-1 pr-2">
                                         <Activity size={10} className="text-neutral-600 shrink-0"/>
@@ -8354,7 +8597,8 @@ const initAudioEngine = async (explicitTracks = null) => {
                                         <div className="flex-1 h-1 bg-black rounded-full relative border border-neutral-800 pointer-events-none">
                                             <div id={`vol-fill-arr-${t.id}`} className={`absolute left-0 top-0 bottom-0 rounded-full opacity-60 ${t.color.startsWith('#') ? '' : t.color}`} style={{ width: `${t.volume}%`, backgroundColor: t.color.startsWith('#') ? t.color : undefined }} />
                                         </div>
-                                        <input id={`vol-input-arr-${t.id}`} type="range" min="0" max="100" value={t.volume} onChange={(e) => dispatchDawAction({ type: 'UPDATE_TRACK_VOL', payload: { id: t.id, volume: Number(e.target.value) } })} onWheel={(e) => { e.stopPropagation(); dispatchDawAction({ type: 'UPDATE_TRACK_VOL', payload: { id: t.id, volume: Math.min(100, Math.max(0, t.volume + (e.deltaY < 0 ? 5 : -5))) } }); }} className="absolute inset-0 opacity-0 cursor-pointer w-full pl-4" />
+                                        <input id={`vol-input-arr-${t.id}`} type="range" min="0" max="100" value={t.volume} onChange={(e) => handleTrackVolumeChange(t.id, Number(e.target.value))} onWheel={(e) => { e.stopPropagation(); handleTrackVolumeChange(t.id, Math.min(100, Math.max(0, t.volume + (e.deltaY < 0 ? 5 : -5)))); }} className="absolute inset-0 opacity-0 cursor-pointer w-full pl-4" />
+                                        <span id={`vol-val-arr-${t.id}`} className="text-[8px] font-mono text-neutral-400 w-6 text-center bg-neutral-900/80 rounded px-0.5 py-[1px] border border-neutral-800/80 z-10 pointer-events-none">{Math.round(t.volume)}%</span>
                                     </div>
                                     <div className="flex gap-2 items-center mb-1 pr-2">
                                         <Activity size={10} className="text-neutral-600 shrink-0"/>
@@ -8456,7 +8700,12 @@ const initAudioEngine = async (explicitTracks = null) => {
                           )}
                        </div>
                     </div>
-                    <div ref={timelineRef} onScroll={(e) => e.currentTarget.previousSibling.firstChild.style.left = `-${e.currentTarget.scrollLeft}px`} className="flex-1 overflow-auto relative custom-scrollbar">
+                    <div ref={timelineRef} onScroll={(e) => {
+                        e.currentTarget.previousSibling.firstChild.style.left = `-${e.currentTarget.scrollLeft}px`;
+                        if (trackHeadersRef.current && trackHeadersRef.current.scrollTop !== e.currentTarget.scrollTop) {
+                            trackHeadersRef.current.scrollTop = e.currentTarget.scrollTop;
+                        }
+                    }} className="flex-1 overflow-auto relative custom-scrollbar">
                         <div 
                            className="relative min-h-full" 
                            style={{ width: `${dynamicTotalBeats * BEAT_WIDTH}px` }} 
@@ -8676,9 +8925,8 @@ const initAudioEngine = async (explicitTracks = null) => {
                                 </div>
                                 {/* Automation Lane Timeline Backgrounds */}
                                 {autoKeys.map(paramKey => (
-                                    <div key={paramKey} className="h-16 border-b border-neutral-800/50 bg-neutral-900/30 relative pointer-events-auto cursor-crosshair overflow-hidden" onMouseDown={(e) => {
+                                    <div key={paramKey} title="Double-click to add point. Drag to select." className="h-16 border-b border-neutral-800/50 bg-neutral-900/30 relative pointer-events-auto cursor-crosshair overflow-hidden" onDoubleClick={(e) => {
                                         e.stopPropagation();
-                                        if (e.button === 2) return;
                                         const rect = e.currentTarget.getBoundingClientRect();
                                         const x = e.clientX - rect.left + timelineRef.current.scrollLeft;
                                         const y = e.clientY - rect.top;
@@ -8733,16 +8981,22 @@ const initAudioEngine = async (explicitTracks = null) => {
                                         {(t.automation?.[paramKey] || []).map(p => {
                                             const minMax = getAutomationConstraints(paramKey);
                                             const y = 64 - ((p.value - minMax.min) / (minMax.max - minMax.min)) * 64;
+                                            const isSelected = selectedAutoPointIds.includes(p.id);
                                             return (
                                                 <div 
                                                     key={p.id}
-                                                    className="absolute w-2.5 h-2.5 bg-white border-2 border-blue-500 rounded-full -ml-[5px] -mt-[5px] cursor-pointer pointer-events-auto shadow-md hover:scale-150 transition-transform z-10"
+                                                    className={`absolute w-2.5 h-2.5 bg-white border-2 rounded-full -ml-[5px] -mt-[5px] cursor-pointer pointer-events-auto shadow-md transition-transform z-10 ${isSelected ? 'border-amber-400 scale-125 shadow-[0_0_8px_#fba834]' : 'border-blue-500 hover:scale-150'}`}
                                                     style={{ left: `${p.time * BEAT_WIDTH}px`, top: `${y}px` }}
                                                     onMouseDown={(e) => {
                                                         e.stopPropagation();
                                                         if (e.button === 2) {
                                                             dispatchDawAction({ type: 'DELETE_AUTOMATION_POINT', payload: { trackId: t.id, paramKey, pointId: p.id } });
                                                         } else {
+                                                            if (e.shiftKey || e.ctrlKey || e.metaKey) {
+                                                                setSelectedAutoPointIds(prev => prev.includes(p.id) ? prev.filter(id => id !== p.id) : [...prev, p.id]);
+                                                            } else {
+                                                                if (!selectedAutoPointIds.includes(p.id)) setSelectedAutoPointIds([p.id]);
+                                                            }
                                                             setDraggingAutoPoint({ trackId: t.id, paramKey, pointId: p.id, startX: e.clientX, startY: e.clientY, initialTime: p.time, initialValue: p.value, laneHeight: 64 });
                                                         }
                                                     }}
@@ -8772,9 +9026,8 @@ const initAudioEngine = async (explicitTracks = null) => {
                                     <div key={`lfo-lane-${lfo.id}`} className="flex flex-col w-full">
                                         <div className="h-8 border-b border-[#111] bg-[#222]/50 relative pointer-events-none" />
                                         {autoKeys.map(paramKey => (
-                                            <div key={paramKey} className="h-16 border-b border-[#222] bg-[#222] relative pointer-events-auto cursor-crosshair overflow-hidden" onMouseDown={(e) => {
+                                            <div key={paramKey} title="Double-click to add point. Drag to select." className="h-16 border-b border-[#222] bg-[#222] relative pointer-events-auto cursor-crosshair overflow-hidden" onDoubleClick={(e) => {
                                                 e.stopPropagation();
-                                                if (e.button === 2) return;
                                                 const rect = e.currentTarget.getBoundingClientRect();
                                                 const x = e.clientX - rect.left + timelineRef.current.scrollLeft;
                                                 const y = e.clientY - rect.top;
@@ -8829,16 +9082,22 @@ const initAudioEngine = async (explicitTracks = null) => {
                                                 {(lfo.automation?.[paramKey] || []).map(p => {
                                                     const minMax = getAutomationConstraints(paramKey);
                                                     const y = 64 - ((p.value - minMax.min) / (minMax.max - minMax.min)) * 64;
+                                                    const isSelected = selectedAutoPointIds.includes(p.id);
                                                     return (
                                                         <div 
                                                             key={p.id}
-                                                            className="absolute w-2.5 h-2.5 bg-white border-2 border-purple-500 rounded-full -ml-[5px] -mt-[5px] cursor-pointer pointer-events-auto shadow-md hover:scale-150 transition-transform z-10"
+                                                            className={`absolute w-2.5 h-2.5 bg-white border-2 rounded-full -ml-[5px] -mt-[5px] cursor-pointer pointer-events-auto shadow-md transition-transform z-10 ${isSelected ? 'border-amber-400 scale-125 shadow-[0_0_8px_#fba834]' : 'border-purple-500 hover:scale-150'}`}
                                                             style={{ left: `${p.time * BEAT_WIDTH}px`, top: `${y}px` }}
                                                             onMouseDown={(e) => {
                                                                 e.stopPropagation();
                                                                 if (e.button === 2) {
                                                                     dispatchDawAction({ type: 'DELETE_LFO_AUTOMATION_POINT', payload: { lfoId: lfo.id, paramKey, pointId: p.id } });
                                                                 } else {
+                                                                    if (e.shiftKey || e.ctrlKey || e.metaKey) {
+                                                                        setSelectedAutoPointIds(prev => prev.includes(p.id) ? prev.filter(id => id !== p.id) : [...prev, p.id]);
+                                                                    } else {
+                                                                        if (!selectedAutoPointIds.includes(p.id)) setSelectedAutoPointIds([p.id]);
+                                                                    }
                                                                     setDraggingAutoPoint({ lfoId: lfo.id, paramKey, pointId: p.id, startX: e.clientX, startY: e.clientY, initialTime: p.time, initialValue: p.value, laneHeight: 64 });
                                                                 }
                                                             }}
