@@ -2804,6 +2804,7 @@ function DAWStudio() {
   const masterEffectsRef = useRef(masterEffects);
   const lastAutoUiUpdateRef = useRef(0);
   const activeLiveAudioInputsRef = useRef({});
+  const activePreviewSourceRef = useRef(null);
   
   // NEW REFS FOR PERFORMANCE FIX
   const playheadRef = useRef(null);
@@ -3056,11 +3057,30 @@ function DAWStudio() {
           }
       })();
 
-      globalAudioBufferCache.set(sampleId, fetchPromise);
-      return await fetchPromise;
-  }, []);
+          globalAudioBufferCache.set(sampleId, fetchPromise);
+          return await fetchPromise;
+      }, []);
 
-  // Auto-fetch missing audio clips on project load/sync
+      const handlePreviewSample = useCallback(async (id) => {
+          if (activePreviewSourceRef.current) {
+              try {
+                  activePreviewSourceRef.current.stop();
+                  activePreviewSourceRef.current.disconnect();
+              } catch(e) {}
+          }
+          const sampleData = await fetchAudioSample(id);
+          if (sampleData && audioCtxRef.current) {
+              if (audioCtxRef.current.state === 'suspended') await audioCtxRef.current.resume();
+              const src = audioCtxRef.current.createBufferSource();
+              src.buffer = sampleData.buffer;
+              if (masterGainRef.current) src.connect(masterGainRef.current);
+              src.start(0);
+              activePreviewSourceRef.current = src;
+          }
+      }, [fetchAudioSample]);
+
+      // Auto-fetch missing audio clips on project load/sync
+
   useEffect(() => {
       tracks.forEach(t => {
           if (t.type === 'audio') {
@@ -3898,6 +3918,13 @@ const initAudioEngine = async (explicitTracks = null) => {
 
   const stopAudio = () => {
     const now = audioCtxRef.current?.currentTime || 0;
+    if (activePreviewSourceRef.current) {
+        try {
+            activePreviewSourceRef.current.stop();
+            activePreviewSourceRef.current.disconnect();
+        } catch(e) {}
+        activePreviewSourceRef.current = null;
+    }
     Object.values(synthsRef.current).forEach(synth => { 
         if (synth.activeNoteIds) synth.activeNoteIds.clear(); 
         if (synth.activeMidiSources) {
@@ -8267,15 +8294,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                     node={sampleTree} 
                     expandedFolders={expandedSampleFolders} 
                     toggleFolder={toggleSampleFolder}
-                    onPreview={async (id) => {
-                        const sampleData = await fetchAudioSample(id);
-                        if (sampleData && audioCtxRef.current) {
-                            const src = audioCtxRef.current.createBufferSource();
-                            src.buffer = sampleData.buffer;
-                            if (masterGainRef.current) src.connect(masterGainRef.current);
-                            src.start(0);
-                        }
-                    }}
+                    onPreview={handlePreviewSample}
                     onDelete={handleDeleteSample}
                     onDeleteFolder={handleDeleteFolder}
                     isLightMode={isLightMode}
@@ -10068,15 +10087,7 @@ const initAudioEngine = async (explicitTracks = null) => {
                                         node={sampleTree} 
                                         expandedFolders={expandedSampleFolders} 
                                         toggleFolder={toggleSampleFolder}
-                                        onPreview={async (id) => {
-                                            const sampleData = await fetchAudioSample(id);
-                                            if (sampleData && audioCtxRef.current) {
-                                                const src = audioCtxRef.current.createBufferSource();
-                                                src.buffer = sampleData.buffer;
-                                                if (masterGainRef.current) src.connect(masterGainRef.current);
-                                                src.start(0);
-                                            }
-                                        }}
+                                        onPreview={handlePreviewSample}
                                         onAssign={(id) => assignSampleToPad(samplePickerTarget.trackId, samplePickerTarget.note, id)}
                                         onDelete={handleDeleteSample}
                                         onDeleteFolder={handleDeleteFolder}
