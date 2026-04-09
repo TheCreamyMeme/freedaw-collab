@@ -3578,8 +3578,43 @@ const initAudioEngine = async (explicitTracks = null) => {
       if (armedTrack?.type === 'midi') {
           const notes = pendingMidiClipsRef.current[armedTrack.id] || [];
           if (notes.length > 0) {
-              const newClip = { id: Date.now(), start: startBeat, duration: Math.max(1, durBeats), notes };
-              dispatchDawAction({ type: 'ADD_CLIP', payload: { trackId: armedTrack.id, clip: newClip } });
+              const overlappingClip = armedTrack.clips.find(c => 
+                  Math.max(startBeat, c.start) < Math.min(startBeat + durBeats, c.start + c.duration)
+              );
+
+              if (overlappingClip) {
+                  const newClipStart = Math.min(overlappingClip.start, startBeat);
+                  const newClipEnd = Math.max(overlappingClip.start + overlappingClip.duration, startBeat + durBeats);
+                  const newDuration = newClipEnd - newClipStart;
+
+                  const shiftOld = overlappingClip.start - newClipStart;
+                  const existingNotes = (overlappingClip.notes || []).map(n => ({
+                      ...n,
+                      start: n.start + shiftOld
+                  }));
+
+                  const shiftNew = startBeat - newClipStart;
+                  const newNotesMapped = notes.map(n => ({
+                      ...n,
+                      start: n.start + shiftNew
+                  }));
+
+                  const finalNotes = [...existingNotes, ...newNotesMapped];
+
+                  dispatchDawAction({ 
+                      type: 'UPDATE_CLIP_BOUNDS', 
+                      payload: { 
+                          trackId: armedTrack.id, 
+                          clipId: overlappingClip.id, 
+                          start: newClipStart,
+                          duration: newDuration, 
+                          notes: finalNotes 
+                      } 
+                  });
+              } else {
+                  const newClip = { id: Date.now(), start: startBeat, duration: Math.max(1, durBeats), notes };
+                  dispatchDawAction({ type: 'ADD_CLIP', payload: { trackId: armedTrack.id, clip: newClip } });
+              }
           }
       } else if (armedTrack?.type === 'audio') {
           if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
@@ -4414,7 +4449,8 @@ const initAudioEngine = async (explicitTracks = null) => {
                 }
             }
 
-        const activeClip = track.clips.find(c => newTime >= c.start && newTime < c.start + c.duration);
+        const activeClips = track.clips.filter(c => newTime >= c.start && newTime < c.start + c.duration);
+        const activeClip = activeClips[0]; // Retained for audio track logic which only supports 1 clip at a time
         const isTrackEnabled = !track.muted && (!anySolo || track.solo);
 
         const targetVolume = isTrackEnabled ? track.volume / 100 : 0;
@@ -4424,7 +4460,6 @@ const initAudioEngine = async (explicitTracks = null) => {
         }
 
         if (track.type === 'midi' && isTrackEnabled) {
-          const clipTime = activeClip ? newTime - activeClip.start : 0;
           // Merge Base Params with Live LFO and Automation values
           const dynamicInstParams = { ...track.instrumentParams };
           
@@ -4461,14 +4496,17 @@ const initAudioEngine = async (explicitTracks = null) => {
           // 1. Collect all active notes
           const activeChord = [];
           
-          if (activeClip && isPlayingState) {
-              const notes = activeClip.notes || [];
-              for (let i = 0; i < notes.length; i++) {
-                  const note = notes[i];
-                  if (clipTime >= note.start && clipTime < note.start + note.duration) {
-                      activeChord.push({ ...note, source: 'clip', _clipRef: activeClip });
+          if (isPlayingState) {
+              activeClips.forEach(c => {
+                  const cTime = newTime - c.start;
+                  const notes = c.notes || [];
+                  for (let i = 0; i < notes.length; i++) {
+                      const note = notes[i];
+                      if (cTime >= note.start && cTime < note.start + note.duration) {
+                          activeChord.push({ ...note, source: 'clip', _clipRef: c });
+                      }
                   }
-              }
+              });
           }
           
           if (track.armed) {
@@ -4575,49 +4613,55 @@ const initAudioEngine = async (explicitTracks = null) => {
               synth.lastArpStep = -1;
               let currentActiveIds = null;
               
-              const notes = (activeClip && isPlayingState) ? (activeClip.notes || []) : [];
-              for (let i = 0; i < notes.length; i++) {
-                  const note = notes[i];
-                  if (clipTime >= note.start && clipTime < note.start + note.duration) {
-                      if (!currentActiveIds) currentActiveIds = new Set();
-                      currentActiveIds.add(note.id);
-                      
-                      if (!synth.activeNoteIds.has(note.id)) {
-                          synth.activeNoteIds.add(note.id);
-                          const durSeconds = note.duration * (60/stateRefs.current.bpm);
-                          const pbNode = synth.pitchBendNode;
-                          
-                          let volMult = 1;
-                          if ((activeClip.fadeIn || 0) > 0 && note.start < activeClip.fadeIn) {
-                              volMult = applyFadeCurve(note.start / activeClip.fadeIn, activeClip.fadeInCurve || 0);
-                          } else if ((activeClip.fadeOut || 0) > 0 && note.start > activeClip.duration - activeClip.fadeOut) {
-                              volMult = 1 - applyFadeCurve((note.start - (activeClip.duration - activeClip.fadeOut)) / activeClip.fadeOut, activeClip.fadeOutCurve || 0);
-                          }
-                          const finalVelocity = Math.max(1, Math.round((note.velocity || 100) * volMult));
+              if (isPlayingState) {
+                  activeClips.forEach(c => {
+                      const cTime = newTime - c.start;
+                      const notes = c.notes || [];
+                      for (let i = 0; i < notes.length; i++) {
+                          const note = notes[i];
+                          if (cTime >= note.start && cTime < note.start + note.duration) {
+                              if (!currentActiveIds) currentActiveIds = new Set();
+                              currentActiveIds.add(note.id);
+                              
+                              if (!synth.activeNoteIds.has(note.id)) {
+                                  synth.activeNoteIds.add(note.id);
+                                  const durSeconds = note.duration * (60/stateRefs.current.bpm);
+                                  const pbNode = synth.pitchBendNode;
+                                  
+                                  let volMult = 1;
+                                  if ((c.fadeIn || 0) > 0 && note.start < c.fadeIn) {
+                                      volMult = applyFadeCurve(note.start / c.fadeIn, c.fadeInCurve || 0);
+                                  } else if ((c.fadeOut || 0) > 0 && note.start > c.duration - c.fadeOut) {
+                                      volMult = 1 - applyFadeCurve((note.start - (c.duration - c.fadeOut)) / c.fadeOut, c.fadeOutCurve || 0);
+                                  }
+                              const finalVelocity = Math.max(1, Math.round((note.velocity || 100) * volMult));
 
-                          const customInst = window.FreeDawPlugins?.find(p => p.id === track.instrument);
-                          let stopFn = null;
-                          if (customInst && typeof customInst.triggerNote === 'function') {
-                              try {
-                                  stopFn = customInst.triggerNote(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
-                              } catch(e) { console.error("Custom Instrument crashed", e); }
-                          } else if (track.instrument === 'inst-drum') stopFn = triggerDrum(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, dynamicInstParams, finalVelocity);
-                          else if (track.instrument === 'inst-fm') stopFn = triggerFMSynth(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
-                          else if (track.instrument === 'inst-supersaw') stopFn = triggerSupersaw(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
-                          else if (track.instrument === 'inst-pluck') stopFn = triggerPluck(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
-                          else if (track.instrument === 'inst-acid') stopFn = triggerAcid(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
-                          else if (track.instrument === 'inst-organ') stopFn = triggerOrgan(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
-                          else stopFn = triggerSubtractive(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
-                          
-                          if (stopFn && typeof stopFn === 'function') {
-                              if (!synth.activeMidiSources) synth.activeMidiSources = new Map();
-                              synth.activeMidiSources.set(note.id, stopFn);
+                              const customInst = window.FreeDawPlugins?.find(p => p.id === track.instrument);
+                              let stopFn = null;
+                              if (customInst && typeof customInst.triggerNote === 'function') {
+                                  try {
+                                      stopFn = customInst.triggerNote(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
+                                  } catch(e) { console.error("Custom Instrument crashed", e); }
+                              } else if (track.instrument === 'inst-drum') stopFn = triggerDrum(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, dynamicInstParams, finalVelocity);
+                              else if (track.instrument === 'inst-fm') stopFn = triggerFMSynth(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
+                              else if (track.instrument === 'inst-supersaw') stopFn = triggerSupersaw(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
+                              else if (track.instrument === 'inst-pluck') stopFn = triggerPluck(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
+                              else if (track.instrument === 'inst-acid') stopFn = triggerAcid(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
+                              else if (track.instrument === 'inst-organ') stopFn = triggerOrgan(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
+                              else stopFn = triggerSubtractive(audioCtxRef.current, synth.inputBus, note.pitch, now, 1, durSeconds, dynamicInstParams, finalVelocity, pbNode);
+                              
+                              if (stopFn && typeof stopFn === 'function') {
+                                  if (!synth.activeMidiSources) synth.activeMidiSources = new Map();
+                                  synth.activeMidiSources.set(note.id, stopFn);
+                              }
                           }
                       }
                   }
+                  });
               }
 
               if (currentActiveIds) {
+
                   for (const id of synth.activeNoteIds) { 
                       if (!currentActiveIds.has(id) && !String(id).startsWith('live_')) {
                           synth.activeNoteIds.delete(id);
