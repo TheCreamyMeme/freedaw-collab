@@ -3830,8 +3830,10 @@ const initAudioEngine = async (explicitTracks = null) => {
                   }
 
                   const arrayBuffer = await blob.arrayBuffer();
+                  const bufferCopy = arrayBuffer.slice(0);
                   const audioBuffer = await audioCtxRef.current.decodeAudioData(arrayBuffer);
                   globalAudioBufferCache.set(sampleId, { buffer: audioBuffer, duration: audioBuffer.duration });
+                  idb.set('samples', { id: sampleId, data: bufferCopy }).catch(()=>{});
                   
                   const durBeats = audioBuffer.duration * (120 / 60); 
                   
@@ -4992,7 +4994,10 @@ const initAudioEngine = async (explicitTracks = null) => {
                               setUploadProgress({ progress: overallPercent, text: `Uploading ${i + 1}/${files.length}...` });
                           }
                       };
-                      xhr.onload = () => resolve();
+                      xhr.onload = () => {
+                          if (xhr.status >= 200 && xhr.status < 300) resolve();
+                          else reject(new Error(`Status ${xhr.status}`));
+                      };
                       xhr.onerror = reject;
                       xhr.send(formData);
                   });
@@ -5007,12 +5012,13 @@ const initAudioEngine = async (explicitTracks = null) => {
 
           try {
               const arrayBuffer = await file.arrayBuffer();
+              const bufferCopy = arrayBuffer.slice(0); // Copy BEFORE decode to prevent Web Audio detachment errors
               if (!audioCtxRef.current) await initAudioEngine();
               const audioBuffer = await audioCtxRef.current.decodeAudioData(arrayBuffer);
               globalAudioBufferCache.set(sampleId, { buffer: audioBuffer, duration: audioBuffer.duration });
               newSamples.push({ id: sampleId, name: safeName });
               
-              idb.set('samples', { id: sampleId, data: arrayBuffer.slice(0) }).catch(()=>{});
+              idb.set('samples', { id: sampleId, data: bufferCopy }).catch(()=>{});
           } catch (err) {
               showToast(`Failed to decode: ${file.name}`, "error");
           }
@@ -7835,7 +7841,10 @@ const initAudioEngine = async (explicitTracks = null) => {
                               setUploadProgress({ progress: (ev.loaded / ev.total) * 100, text: `Uploading ${file.name.substring(0, 16)}...` });
                           }
                       };
-                      xhr.onload = () => resolve();
+                      xhr.onload = () => {
+                          if (xhr.status >= 200 && xhr.status < 300) resolve();
+                          else reject(new Error(`Status ${xhr.status}`));
+                      };
                       xhr.onerror = reject;
                       xhr.send(formData);
                   });
@@ -7843,9 +7852,11 @@ const initAudioEngine = async (explicitTracks = null) => {
               setUploadProgress(null);
 
               const arrayBuffer = await file.arrayBuffer();
+              const bufferCopy = arrayBuffer.slice(0); // Copy BEFORE decode
               if (!audioCtxRef.current) await initAudioEngine();
               const audioBuffer = await audioCtxRef.current.decodeAudioData(arrayBuffer);
               globalAudioBufferCache.set(sampleId, { buffer: audioBuffer, duration: audioBuffer.duration });
+              idb.set('samples', { id: sampleId, data: bufferCopy }).catch(()=>{}); // Save to offline DB
               const durBeats = audioBuffer.duration * (stateRefs.current.bpm / 60);
               const newClip = { id: Date.now(), start: beat, duration: Math.max(1, durBeats), sampleId };
               dispatchDawAction({ type: 'ADD_CLIP', payload: { trackId: finalTrackId, clip: newClip } });
