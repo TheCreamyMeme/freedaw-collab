@@ -8214,11 +8214,28 @@ const initAudioEngine = async (explicitTracks = null) => {
                 style={{ width: `${browserTreeWidth}px` }}
                 onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setIsBrowserDragOver(true); }}
                 onDragLeave={(e) => { e.preventDefault(); e.stopPropagation(); setIsBrowserDragOver(false); }}
-                onDrop={(e) => {
+                onDrop={async (e) => {
                     e.preventDefault(); e.stopPropagation(); setIsBrowserDragOver(false);
-                    const files = Array.from(e.dataTransfer?.files || []);
+                    
+                    let files = [];
+                    if (e.dataTransfer?.items) {
+                        const promises = [];
+                        for (let i = 0; i < e.dataTransfer.items.length; i++) {
+                            const item = e.dataTransfer.items[i];
+                            if (item.kind === 'file') {
+                                const entry = item.webkitGetAsEntry ? item.webkitGetAsEntry() : null;
+                                if (entry) promises.push(traverseFileTree(entry, ''));
+                                else files.push(item.getAsFile());
+                            }
+                        }
+                        const nestedFiles = await Promise.all(promises);
+                        files = files.concat(nestedFiles.flat());
+                    } else {
+                        files = Array.from(e.dataTransfer?.files || []);
+                    }
+
                     const jsFiles = files.filter(f => f.name.endsWith('.js'));
-                    const audioFiles = files.filter(f => f.type.startsWith('audio/') || f.name.toLowerCase().match(/\.(wav|mp3|ogg|flac|m4a)$/));
+                    const audioFiles = files.filter(f => (f.type && f.type.startsWith('audio/')) || f.name.toLowerCase().match(/\.(wav|mp3|ogg|flac|m4a)$/));
                     
                     if (jsFiles.length) jsFiles.forEach(processPluginUpload);
                     if (audioFiles.length) handleBulkSampleUpload({ target: { files: audioFiles } });
@@ -10198,7 +10215,28 @@ const initAudioEngine = async (explicitTracks = null) => {
                                     <div 
                                         className="flex-1 flex flex-col items-center justify-center p-6 bg-[#222]"
                                         onDragOver={e => {e.preventDefault(); e.stopPropagation();}}
-                                        onDrop={e => {e.preventDefault(); e.stopPropagation(); handleBulkSampleUpload(e, samplePickerTarget); }}
+                                        onDrop={async (e) => {
+                                            e.preventDefault(); e.stopPropagation(); 
+                                            let files = [];
+                                            if (e.dataTransfer?.items) {
+                                                const promises = [];
+                                                for (let i = 0; i < e.dataTransfer.items.length; i++) {
+                                                    const item = e.dataTransfer.items[i];
+                                                    if (item.kind === 'file') {
+                                                        const entry = item.webkitGetAsEntry ? item.webkitGetAsEntry() : null;
+                                                        if (entry) promises.push(traverseFileTree(entry, ''));
+                                                        else files.push(item.getAsFile());
+                                                    }
+                                                }
+                                                const nestedFiles = await Promise.all(promises);
+                                                files = files.concat(nestedFiles.flat());
+                                            } else {
+                                                files = Array.from(e.dataTransfer?.files || []);
+                                            }
+                                            
+                                            const audioFiles = files.filter(f => (f.type && f.type.startsWith('audio/')) || f.name.toLowerCase().match(/\.(wav|mp3|ogg|flac|m4a)$/));
+                                            if (audioFiles.length) handleBulkSampleUpload({ target: { files: audioFiles } }, samplePickerTarget); 
+                                        }}
                                     >
                                         <div className="w-full h-full border-2 border-dashed border-[#444] rounded-sm flex flex-col items-center justify-center text-[#888] relative bg-[#111]/50">
                                             <Upload size={32} className="mb-2" />
