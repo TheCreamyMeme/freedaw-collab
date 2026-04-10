@@ -2787,6 +2787,7 @@ function DAWStudio() {
   const [dragHoverHome, setDragHoverHome] = useState(false);
   const [selectionBox, setSelectionBox] = useState(null);
   const [selectedAutoPointIds, setSelectedAutoPointIds] = useState([]);
+  const [uploadProgress, setUploadProgress] = useState(null);
 
   // Advanced UI/UX States
   const [globalKey, setGlobalKey] = useState('C');
@@ -3813,9 +3814,19 @@ const initAudioEngine = async (explicitTracks = null) => {
                   formData.append('audio', new File([blob], filename));
                   
                   if (authTokenRef.current) {
-                      fetch(`${API_BASE_URL}/api/samples/upload/${sampleId}`, { 
-                          method: 'POST', headers: { 'Authorization': `Bearer ${authTokenRef.current}` }, body: formData 
-                      }).catch(() => {});
+                      await new Promise((resolve) => {
+                          const xhr = new XMLHttpRequest();
+                          xhr.open('POST', `${API_BASE_URL}/api/samples/upload/${sampleId}`);
+                          xhr.setRequestHeader('Authorization', `Bearer ${authTokenRef.current}`);
+                          xhr.upload.onprogress = (ev) => {
+                              if (ev.lengthComputable) {
+                                  setUploadProgress({ progress: (ev.loaded / ev.total) * 100, text: `Extracting ${filename.substring(0, 16)}...` });
+                              }
+                          };
+                          xhr.onload = () => resolve();
+                          xhr.onerror = () => resolve(); 
+                          xhr.send(formData);
+                      });
                   }
 
                   const arrayBuffer = await blob.arrayBuffer();
@@ -3835,6 +3846,8 @@ const initAudioEngine = async (explicitTracks = null) => {
                   });
               }
           }
+
+          setUploadProgress(null);
 
           if (newTracks.length > 0) {
               const newProject = {
@@ -3857,6 +3870,7 @@ const initAudioEngine = async (explicitTracks = null) => {
           }
       } catch (error) {
           console.error(error);
+          setUploadProgress(null);
           showToast("Failed to import ZIP: " + error.message, "error");
       }
   };
@@ -4942,11 +4956,17 @@ const initAudioEngine = async (explicitTracks = null) => {
       const files = Array.from(e.target?.files || e.dataTransfer?.files || []);
       if (!files.length) return;
 
+      setUploadProgress({ progress: 0, text: `Preparing ${files.length} file(s)...` });
+      const totalSize = files.reduce((acc, f) => acc + f.size, 0);
+      let loadedSize = 0;
+
       const newSamples = [];
-      for (const file of files) {
+      for (let i = 0; i < files.length; i++) {
+          const file = files[i];
           const isAudio = file.type.startsWith('audio/') || file.name.toLowerCase().match(/\.(wav|mp3|ogg|flac|m4a)$/);
           if (!isAudio) { 
               showToast(`Skipped unsupported file: ${file.name}`, "error"); 
+              loadedSize += file.size;
               continue; 
           }
 
@@ -4961,16 +4981,44 @@ const initAudioEngine = async (explicitTracks = null) => {
           const formData = new FormData(); formData.append('audio', file);
 
           if (authTokenRef.current && !authTokenRef.current.startsWith('local_token_')) {
-              fetch(`${API_BASE_URL}/api/samples/upload/${sampleId}`, { method: 'POST', headers: { 'Authorization': `Bearer ${authTokenRef.current}` }, body: formData }).catch(() => {});
+              try {
+                  await new Promise((resolve, reject) => {
+                      const xhr = new XMLHttpRequest();
+                      xhr.open('POST', `${API_BASE_URL}/api/samples/upload/${sampleId}`);
+                      xhr.setRequestHeader('Authorization', `Bearer ${authTokenRef.current}`);
+                      xhr.upload.onprogress = (ev) => {
+                          if (ev.lengthComputable) {
+                              const overallPercent = totalSize > 0 ? ((loadedSize + ev.loaded) / totalSize) * 100 : 100;
+                              setUploadProgress({ progress: overallPercent, text: `Uploading ${i + 1}/${files.length}...` });
+                          }
+                      };
+                      xhr.onload = () => resolve();
+                      xhr.onerror = reject;
+                      xhr.send(formData);
+                  });
+              } catch(err) {
+                  console.warn("Upload failed for", file.name);
+              }
+          } else {
+              setUploadProgress({ progress: ((loadedSize + file.size) / totalSize) * 100, text: `Processing ${i + 1}/${files.length}...` });
           }
-
-          const arrayBuffer = await file.arrayBuffer();
-          if (!audioCtxRef.current) await initAudioEngine();
-          const audioBuffer = await audioCtxRef.current.decodeAudioData(arrayBuffer);
-          globalAudioBufferCache.set(sampleId, { buffer: audioBuffer, duration: audioBuffer.duration });
           
-          newSamples.push({ id: sampleId, name: safeName });
+          loadedSize += file.size;
+
+          try {
+              const arrayBuffer = await file.arrayBuffer();
+              if (!audioCtxRef.current) await initAudioEngine();
+              const audioBuffer = await audioCtxRef.current.decodeAudioData(arrayBuffer);
+              globalAudioBufferCache.set(sampleId, { buffer: audioBuffer, duration: audioBuffer.duration });
+              newSamples.push({ id: sampleId, name: safeName });
+              
+              idb.set('samples', { id: sampleId, data: arrayBuffer.slice(0) }).catch(()=>{});
+          } catch (err) {
+              showToast(`Failed to decode: ${file.name}`, "error");
+          }
       }
+
+      setUploadProgress(null);
 
       if (newSamples.length > 0) {
           setUserSamples(prev => [...newSamples, ...prev]);
@@ -6242,29 +6290,40 @@ const initAudioEngine = async (explicitTracks = null) => {
           showToast("Must be connected to server to upload plugins.", "error");
           return;
       }
+      
+      setUploadProgress({ progress: 0, text: 'Uploading plugin...' });
       const formData = new FormData();
       formData.append('plugin', file);
       try {
-          const res = await fetch(`${API_BASE_URL}/api/plugins/upload`, {
-              method: 'POST',
-              headers: { 'Authorization': `Bearer ${authTokenRef.current}` },
-              body: formData
-          });
-          if (res.ok) {
-              const data = await res.json();
-              showToast("Plugin uploaded!", "success");
-              const script = document.createElement('script');
-              script.src = `${API_BASE_URL}${data.url}?_t=${Date.now()}`; // CACHE BUST
-              script.onload = () => {
-                  const unique = Array.from(new Map(window.FreeDawPlugins.map(p => [p.id, p])).values());
-                  window.FreeDawPlugins = unique;
-                  setCustomPlugins([...unique]);
+          const data = await new Promise((resolve, reject) => {
+              const xhr = new XMLHttpRequest();
+              xhr.open('POST', `${API_BASE_URL}/api/plugins/upload`);
+              xhr.setRequestHeader('Authorization', `Bearer ${authTokenRef.current}`);
+              xhr.upload.onprogress = (ev) => {
+                  if (ev.lengthComputable) {
+                      setUploadProgress({ progress: (ev.loaded / ev.total) * 100, text: 'Uploading plugin...' });
+                  }
               };
-              document.head.appendChild(script);
-          } else {
-              showToast("Upload failed.", "error");
-          }
+              xhr.onload = () => {
+                  if (xhr.status >= 200 && xhr.status < 300) resolve(JSON.parse(xhr.responseText));
+                  else reject(new Error('Upload failed'));
+              };
+              xhr.onerror = reject;
+              xhr.send(formData);
+          });
+          
+          setUploadProgress(null);
+          showToast("Plugin uploaded!", "success");
+          const script = document.createElement('script');
+          script.src = `${API_BASE_URL}${data.url}?_t=${Date.now()}`; // CACHE BUST
+          script.onload = () => {
+              const unique = Array.from(new Map(window.FreeDawPlugins.map(p => [p.id, p])).values());
+              window.FreeDawPlugins = unique;
+              setCustomPlugins([...unique]);
+          };
+          document.head.appendChild(script);
       } catch (err) {
+          setUploadProgress(null);
           showToast("Failed to upload plugin.", "error");
       }
   };
@@ -7764,7 +7823,25 @@ const initAudioEngine = async (explicitTracks = null) => {
           try {
               const sampleId = `import_${Date.now()}`;
               const formData = new FormData(); formData.append('audio', file);
-              await fetch(`${API_BASE_URL}/api/samples/upload/${sampleId}`, { method: 'POST', headers: { 'Authorization': `Bearer ${authTokenRef.current}` }, body: formData });
+              
+              setUploadProgress({ progress: 0, text: `Uploading ${file.name.substring(0, 16)}...` });
+              if (authTokenRef.current && !authTokenRef.current.startsWith('local_token_')) {
+                  await new Promise((resolve, reject) => {
+                      const xhr = new XMLHttpRequest();
+                      xhr.open('POST', `${API_BASE_URL}/api/samples/upload/${sampleId}`);
+                      xhr.setRequestHeader('Authorization', `Bearer ${authTokenRef.current}`);
+                      xhr.upload.onprogress = (ev) => {
+                          if (ev.lengthComputable) {
+                              setUploadProgress({ progress: (ev.loaded / ev.total) * 100, text: `Uploading ${file.name.substring(0, 16)}...` });
+                          }
+                      };
+                      xhr.onload = () => resolve();
+                      xhr.onerror = reject;
+                      xhr.send(formData);
+                  });
+              }
+              setUploadProgress(null);
+
               const arrayBuffer = await file.arrayBuffer();
               if (!audioCtxRef.current) await initAudioEngine();
               const audioBuffer = await audioCtxRef.current.decodeAudioData(arrayBuffer);
@@ -7773,7 +7850,10 @@ const initAudioEngine = async (explicitTracks = null) => {
               const newClip = { id: Date.now(), start: beat, duration: Math.max(1, durBeats), sampleId };
               dispatchDawAction({ type: 'ADD_CLIP', payload: { trackId: finalTrackId, clip: newClip } });
               showToast(`Imported Audio: ${file.name}`, 'success');
-          } catch (err) { showToast("Failed to process audio file.", "error"); }
+          } catch (err) { 
+              setUploadProgress(null);
+              showToast("Failed to process audio file.", "error"); 
+          }
       }
   }, [dragHover, BEAT_WIDTH, initAudioEngine]);
 
@@ -7966,7 +8046,20 @@ const initAudioEngine = async (explicitTracks = null) => {
                         </div>
                     </>
                 )}
-                {toasts.map(t => <div key={t.id} className={`fixed bottom-4 right-4 border px-4 py-3 rounded-sm z-50 shadow-lg font-bold uppercase tracking-wider ${t.type === 'success' ? 'bg-[#222] border-green-500 text-green-500' : t.type === 'error' ? 'bg-[#222] border-red-500 text-red-500' : 'bg-[#222] border-cyan-500 text-cyan-500'}`}>{t.message}</div>)}
+                <div className="fixed bottom-4 right-4 z-[110] flex flex-col gap-2 pointer-events-none">
+                    {uploadProgress && (
+                        <div className="flex flex-col gap-2 px-4 py-3 rounded-sm shadow-lg border bg-[#222] border-cyan-500 w-64 pointer-events-auto">
+                            <div className="flex justify-between items-center">
+                                <span className="text-[10px] font-bold text-cyan-500 uppercase tracking-wider truncate mr-2">{uploadProgress.text}</span>
+                                <span className="text-[10px] font-mono text-neutral-400 shrink-0">{Math.round(uploadProgress.progress)}%</span>
+                            </div>
+                            <div className="h-1.5 w-full bg-[#111] rounded-full overflow-hidden border border-[#333]">
+                                <div className="h-full bg-cyan-500 transition-all duration-75" style={{ width: `${uploadProgress.progress}%` }} />
+                            </div>
+                        </div>
+                    )}
+                    {toasts.map(t => <div key={t.id} className={`border px-4 py-3 rounded-sm shadow-lg font-bold uppercase tracking-wider pointer-events-auto ${t.type === 'success' ? 'bg-[#222] border-green-500 text-green-500' : t.type === 'error' ? 'bg-[#222] border-red-500 text-red-500' : 'bg-[#222] border-cyan-500 text-cyan-500'}`}>{t.message}</div>)}
+                </div>
                 
                 {/* Cropper Modal */}
                 {cropImageSrc && (
@@ -9869,8 +9962,19 @@ const initAudioEngine = async (explicitTracks = null) => {
             
             {/* Global Toasts (Overlaying main content) */}
             <div className="absolute bottom-4 right-4 z-[110] flex flex-col gap-2 pointer-events-none">
+               {uploadProgress && (
+                 <div className="flex flex-col gap-2 px-4 py-3 rounded-xl shadow-2xl backdrop-blur-md border bg-neutral-900/90 border-cyan-500/50 w-64 pointer-events-auto">
+                    <div className="flex justify-between items-center">
+                        <span className="text-[10px] font-bold text-cyan-400 uppercase tracking-wider truncate mr-2">{uploadProgress.text}</span>
+                        <span className="text-[10px] font-mono text-neutral-400 shrink-0">{Math.round(uploadProgress.progress)}%</span>
+                    </div>
+                    <div className="h-1.5 w-full bg-neutral-800 rounded-full overflow-hidden border border-neutral-700/50">
+                        <div className="h-full bg-cyan-500 transition-all duration-75" style={{ width: `${uploadProgress.progress}%` }} />
+                    </div>
+                 </div>
+               )}
                {toasts.map(toast => (
-                 <div key={toast.id} className={`flex items-center gap-3 px-4 py-3 rounded-xl shadow-2xl backdrop-blur-md border ${toast.type === 'success' ? 'bg-green-500/10 border-green-500/20 text-green-400' : toast.type === 'error' ? 'bg-red-500/10 border-red-500/20 text-red-400' : 'bg-blue-500/10 border-blue-500/20 text-blue-400'}`}>
+                 <div key={toast.id} className={`flex items-center gap-3 px-4 py-3 rounded-xl shadow-2xl backdrop-blur-md border pointer-events-auto ${toast.type === 'success' ? 'bg-green-500/10 border-green-500/20 text-green-400' : toast.type === 'error' ? 'bg-red-500/10 border-red-500/20 text-red-400' : 'bg-blue-500/10 border-blue-500/20 text-blue-400'}`}>
                     {toast.type === 'success' ? <CheckCircle2 size={16} /> : toast.type === 'error' ? <AlertTriangle size={16} /> : <Info size={16} />}
                     <span className="text-sm font-medium">{toast.message}</span>
                  </div>
