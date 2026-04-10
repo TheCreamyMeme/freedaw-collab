@@ -578,6 +578,40 @@ const getAutomationConstraints = (paramKey) => {
     return { min: 0, max: 100 };
 };
 
+const traverseFileTree = async (item, path = '') => {
+    return new Promise((resolve) => {
+        if (item.isFile) {
+            item.file((file) => {
+                Object.defineProperty(file, 'webkitRelativePath', {
+                    value: path + file.name,
+                    configurable: true,
+                    enumerable: true,
+                    writable: true
+                });
+                resolve([file]);
+            });
+        } else if (item.isDirectory) {
+            const dirReader = item.createReader();
+            const entries = [];
+            const readEntries = () => {
+                dirReader.readEntries(async (results) => {
+                    if (!results.length) {
+                        const promises = entries.map(e => traverseFileTree(e, path + item.name + '/'));
+                        const files = await Promise.all(promises);
+                        resolve(files.flat());
+                    } else {
+                        entries.push(...results);
+                        readEntries();
+                    }
+                });
+            };
+            readEntries();
+        } else {
+            resolve([]);
+        }
+    });
+};
+
 // --- Recursive Tree Logic for Sample Folders ---
 const buildSampleTree = (samples) => {
     const root = { name: 'Root', isDir: true, children: {}, path: 'root' };
